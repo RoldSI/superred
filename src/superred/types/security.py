@@ -50,6 +50,10 @@ class SecurityDomain:
     def __delattr__(self, _name: str) -> None:
         raise AttributeError("SecurityDomain is immutable")
 
+    def __repr__(self) -> str:
+        names = sorted(t.name for t in self._tags)
+        return f"SecurityDomain({{{', '.join(names)}}})"
+
     @property
     def tags(self) -> frozenset[SecurityDomainTag]:
         return self._tags
@@ -90,10 +94,28 @@ class SecurityDomain:
 def _antichains(
     tree_members: list[SecurityDomainTag],
 ) -> list[frozenset[SecurityDomainTag]]:
-    """Compute antichains for one tree: empty set, or any single node at each depth."""
-    result: list[frozenset[SecurityDomainTag]] = [frozenset()]
-    for tag in tree_members:
-        result.append(frozenset({tag}))
+    """Compute all antichains for one tree.
+
+    An antichain is a set of nodes where no node is an ancestor of any other.
+    This includes the empty set, singletons, and multi-element sets of
+    mutually incomparable nodes (e.g. siblings).
+    """
+
+    def _is_antichain(candidate: frozenset[SecurityDomainTag]) -> bool:
+        members = list(candidate)
+        for i in range(len(members)):
+            for j in range(len(members)):
+                if i != j and members[i].includes(members[j]):
+                    return False
+        return True
+
+    # Generate all subsets of tree_members and filter to antichains.
+    result: list[frozenset[SecurityDomainTag]] = []
+    n = len(tree_members)
+    for mask in range(1 << n):
+        subset = frozenset(tree_members[i] for i in range(n) if mask & (1 << i))
+        if _is_antichain(subset):
+            result.append(subset)
     return result
 
 
@@ -106,6 +128,18 @@ class Budget:
     max_tokens: int | None = None
     max_wall_seconds: float | None = None
     max_cost_usd: float | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "max_iterations",
+            "max_model_calls",
+            "max_tokens",
+            "max_wall_seconds",
+            "max_cost_usd",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} must not be negative, got {value}")
 
 
 @dataclass(frozen=True)

@@ -72,6 +72,38 @@ class TestSecurityDomain:
         # Two independent roots: {}, {user}, {ext}, {user, ext}
         assert len(combos) == 4
 
+    def test_distinct_combinations_branching(self):
+        root = SecurityDomainTag(name="ext")
+        child_a = SecurityDomainTag(name="web", parent=root)
+        child_b = SecurityDomainTag(name="email", parent=root)
+        domain = SecurityDomain(frozenset({root, child_a, child_b}))
+        combos = domain.distinct_combinations()
+        names = [frozenset(t.name for t in c) for c in combos]
+        assert frozenset() in names
+        assert frozenset({"ext"}) in names
+        assert frozenset({"web"}) in names
+        assert frozenset({"email"}) in names
+        assert frozenset({"web", "email"}) in names  # siblings
+        assert len(combos) == 5
+
+    def test_immutability_setattr(self):
+        tag = SecurityDomainTag(name="user")
+        domain = SecurityDomain(frozenset({tag}))
+        with pytest.raises(AttributeError, match="immutable"):
+            domain.x = 42
+
+    def test_immutability_delattr(self):
+        tag = SecurityDomainTag(name="user")
+        domain = SecurityDomain(frozenset({tag}))
+        with pytest.raises(AttributeError, match="immutable"):
+            del domain._tags
+
+    def test_repr(self):
+        r = SecurityDomainTag(name="ext")
+        c = SecurityDomainTag(name="web", parent=r)
+        domain = SecurityDomain(frozenset({r, c}))
+        assert repr(domain) == "SecurityDomain({ext, web})"
+
 
 class TestThreatModel:
     def test_frozen(self):
@@ -87,6 +119,25 @@ class TestThreatModel:
             tm.name = "other"
 
 
+class TestThreatModelFields:
+    def test_field_access(self):
+        b = Budget(max_iterations=10)
+        tm = ThreatModel(
+            name="multi",
+            controllables=frozenset({"user_input", "system_prompt"}),
+            observables=frozenset({"final_output"}),
+            feedback=frozenset({"score", "reason"}),
+            budget=b,
+        )
+        assert tm.name == "multi"
+        assert "user_input" in tm.controllables
+        assert "system_prompt" in tm.controllables
+        assert tm.observables == frozenset({"final_output"})
+        assert tm.feedback == frozenset({"score", "reason"})
+        assert tm.budget is b
+        assert tm.budget.max_iterations == 10
+
+
 class TestBudget:
     def test_defaults_none(self):
         b = Budget()
@@ -98,3 +149,21 @@ class TestBudget:
         assert b.max_iterations == 25
         assert b.max_cost_usd == 5.0
         assert b.max_model_calls is None
+
+    def test_frozen(self):
+        b = Budget(max_iterations=10)
+        with pytest.raises(AttributeError):
+            b.max_iterations = 20
+
+    def test_rejects_negative_iterations(self):
+        with pytest.raises(ValueError, match="max_iterations"):
+            Budget(max_iterations=-1)
+
+    def test_rejects_negative_cost(self):
+        with pytest.raises(ValueError, match="max_cost_usd"):
+            Budget(max_cost_usd=-0.5)
+
+    def test_allows_zero(self):
+        b = Budget(max_iterations=0, max_cost_usd=0.0)
+        assert b.max_iterations == 0
+        assert b.max_cost_usd == 0.0
