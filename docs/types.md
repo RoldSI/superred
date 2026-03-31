@@ -14,19 +14,27 @@
 
 Frozen dataclass. Currently just `description: str`. Exists as a dedicated type (rather than a raw string) so it can be extended later with structured goal representations.
 
-## ConfigSpec & StateSpec (`state.py`)
+## State types (`state.py`)
 
-Two intentionally distinct concepts:
+Three intentionally distinct spec types:
+
+### ManualSpec (frozen)
+
+User-provided setup value: `name`, `description`. For secrets, API keys, credentials. Provided by the user through the controller, not by tasks. Example: `ManualSpec("openai_api_key", "OpenAI API key for the target model")`.
 
 ### ConfigSpec (frozen)
 
 Pre-run configuration slot: `name`, `security_domain: SecurityDomainTag`, `description`. Used by tasks to set up initial state on the target. The description documents the accepted format — that is the contract between task and target.
 
-### StateSpec (frozen)
+### QuerySpec (frozen)
 
-Post-run queryable state: `name`, `description`. Used by the evaluator to query ground-truth state after a run. No security domain — this is evaluation data, not an attack surface.
+Post-run interaction: `name`, `description`, `params: list[QueryParam]`. Used by the evaluator to query ground-truth state or perform actions after a run. No security domain — this is evaluation data, not an attack surface. Params are empty for simple getters.
 
-**Design decision**: Config and state are separate because what you set before a run (e.g. seed a database) is not what you query after (e.g. the model's response). A target may expose completely different specs for each.
+### QueryParam (frozen)
+
+A parameter for a QuerySpec: `name`, `description`.
+
+**Design decision**: Manual, config, and query are separate because they have different actors (user, task, evaluator), different lifecycles (once, per-task, post-run), and different security concerns.
 
 ## Controllable (`controllable.py`)
 

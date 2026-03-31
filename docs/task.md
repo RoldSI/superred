@@ -14,7 +14,7 @@ class RAGSecretTask(Task[MyRAGTarget]):
         return {"db_seed": "INSERT INTO docs VALUES ('secret: abc123')"}
 
     async def evaluate(self, trajectory, target) -> EvaluationResult:
-        response = target.get_state("last_response")
+        response = target.query("last_response")
         ...
 ```
 
@@ -25,6 +25,11 @@ class GenericSecretTask(Task[Target]):
         spec = next(s for s in target.config_specs if "secret" in s.description.lower())
         target.set_config(spec.name, "my_secret")
         return {spec.name: "my_secret"}
+
+    async def evaluate(self, trajectory, target) -> EvaluationResult:
+        for spec in target.query_specs:
+            value = target.query(spec.name)
+            ...
 ```
 
 ## Stateless design
@@ -36,12 +41,12 @@ Tasks hold no reference to the target. `configure` returns what it set (framewor
 ## Methods
 
 - `goal -> Goal` — property, the adversarial objective.
-- `configure(target) -> dict[str, str]` — set pre-run config, return what was set. Raise `NotApplicable` if incompatible.
-- `evaluate(trajectory, target) -> EvaluationResult` — query post-run state, assess success.
+- `configure(target) -> dict[str, str]` — set pre-run config via `target.set_config()`, return what was set. Raise `NotApplicable` if incompatible.
+- `evaluate(trajectory, target) -> EvaluationResult` — query post-run ground truth via `target.query()`, assess success.
 
 ## Design decisions
 
-- **Generics via TypeVar**: `T_Target = TypeVar("T_Target", bound=Target)` ensures the same concrete target type flows through both `configure` and `evaluate`. A `Task[MyRAGTarget]` gets `MyRAGTarget` in both methods.
+- **Generics via TypeVar**: `T_Target = TypeVar("T_Target", bound=Target)` ensures the same concrete target type flows through `configure`. The evaluator receives the base `Target` type since it uses the generic query interface.
 - **`configure` returns what it set**: The framework caches this dict. Separates the act of configuring from the record of what was configured.
-- **`evaluate` receives target, not cached state**: The evaluator queries post-run ground truth on demand via `target.get_state()`. Post-run state may differ from initial config.
+- **`evaluate` receives target for queries**: The evaluator discovers available queries via `target.query_specs` and calls `target.query(name, **params)`. Post-run state may differ from initial config.
 - **`NotApplicable` exception**: A task that cannot work with a given target raises this from `configure`. Named without `Error` suffix (suppressed via `noqa: N818`) because it signals incompatibility, not a bug.

@@ -10,7 +10,7 @@ superred is a modular framework for red-teaming AI systems. It models the intera
     v
   Task[T_Target]
     |  configure(target) -> dict[str, str]   (pre-run config)
-    |  evaluate(trajectory, target)          (post-run ground truth)
+    |  evaluate(trajectory, target)          (post-run queries)
     v
   +---------------------------+
   | Superred Controller (TBD)  |
@@ -32,6 +32,9 @@ Target.run(trajectory, send_event):
 ## Initialization and Run Loop
 
 ```
+0. User provides manual values (API keys etc.)
+   -> target.set_manual(values)
+
 1. Task.configure(target)
    -> sets pre-run config via target.set_config()
    -> returns cached config dict
@@ -48,36 +51,39 @@ Target.run(trajectory, send_event):
       -> archives trajectory
 
 4. Task.evaluate(trajectory, target)
-   -> queries post-run state via target.get_state()
+   -> queries post-run ground truth via target.query(name, **params)
 
 5. Optimizer.teardown()
+6. Target.teardown()
 ```
 
 ## Key Design Decisions
 
-1. **Config vs state are distinct**: `ConfigSpec`/`set_config` is pre-run setup (what the task configures). `StateSpec`/`get_state` is post-run ground truth (what the evaluator queries). These are intentionally separate on the Target.
+1. **Three distinct target surfaces**: `ManualSpec`/`set_manual` for user-provided secrets (via controller), `ConfigSpec`/`set_config` for task-set pre-run config, `QuerySpec`/`query` for post-run evaluation queries. These are intentionally separate.
 
-2. **Tasks are stateless**: `configure` returns what it set (framework caches this). `evaluate` receives the target for on-demand queries. No internal target reference.
+2. **Post-run queries are parameterized**: `QuerySpec` can declare `params: list[QueryParam]`. The evaluator calls `target.query(name, **params)`. This supports both simple getters and actions.
 
-3. **Tasks are type-bound via generics**: `Task[MyRAGTarget]` gets type-safe access to the concrete target. `Task[Target]` discovers capabilities at runtime via `config_specs`/`state_specs`.
+3. **Tasks are stateless**: `configure` returns what it set (framework caches this). `evaluate` receives the target for on-demand queries. No internal target reference.
 
-4. **Synchronous event-response**: The target pauses at each controllable, sends an event via `send_event` callback, and blocks until the optimizer returns a response.
+4. **Tasks are type-bound via generics**: `Task[MyRAGTarget]` gets type-safe access to the concrete target. `Task[Target]` discovers capabilities at runtime via `config_specs`/`query_specs`.
 
-5. **State is always text**: ConfigSpec and StateSpec values are strings. The description documents the format contract. The target interprets the text (run SQL, parse JSON, etc.).
+5. **Synchronous event-response**: The target pauses at each controllable, sends an event via `send_event` callback, and blocks until the optimizer returns a response.
 
-6. **Runtime-defined types**: SecurityDomainTag and TrajectoryEntryType are frozen dataclasses, not enums. Target systems define their own instances at runtime.
+6. **Values are always text**: ConfigSpec, ManualSpec, QuerySpec — all text. The description documents the format contract. The target interprets the text.
 
-7. **Thread-safe trajectory**: Trajectory uses a threading.Lock for all public methods.
+7. **Runtime-defined types**: SecurityDomainTag and TrajectoryEntryType are frozen dataclasses, not enums. Target systems define their own instances at runtime.
 
-8. **Non-blocking consumption only**: Use `drain()` (new since last call) or `snapshot()` (entire history).
+8. **Thread-safe trajectory**: Trajectory uses a threading.Lock for all public methods.
 
-9. **EventResponse references Event**: Enables the planned controller to correlate events and responses across queues.
+9. **Non-blocking consumption only**: Use `drain()` (new since last call) or `snapshot()` (entire history).
 
-10. **SecurityClaim composes**: From tasks (`from_tasks`) or from other claims (`from_claims`). Lazy chaining for claims-of-claims. Re-iterable since tasks are stateless.
+10. **EventResponse references Event**: Enables the planned controller to correlate events and responses across queues.
+
+11. **SecurityClaim composes**: From tasks (`from_tasks`) or from other claims (`from_claims`). Lazy chaining for claims-of-claims. Re-iterable since tasks are stateless.
 
 ## Planned: Controller
 
-A controller will sit between target and optimizer with two queues (target-->controller, controller-->optimizer). The controller records all events and responses for observability and replay. The `EventHandler` callback abstraction already supports this — the target doesn't know whether it's talking to the optimizer directly or through a controller.
+A controller will sit between target and optimizer with two queues (target-->controller, controller-->optimizer). The controller records all events and responses for observability and replay. The `EventHandler` callback abstraction already supports this — the target doesn't know whether it's talking to the optimizer directly or through a controller. The controller also handles collecting manual values from the user.
 
 ## File Map
 
@@ -90,7 +96,7 @@ src/superred/core/
     security_claim.py  -- SecurityClaim (composable task iterator)
   types/
     goal.py            -- Goal
-    state.py           -- ConfigSpec (pre-run), StateSpec (post-run)
+    state.py           -- ManualSpec, ConfigSpec, QuerySpec, QueryParam
     controllable.py    -- ControllableSpec, Controllable, RequestAnswerPair
     observable.py      -- Observable, ObservableValue
     event.py           -- Event, EventResponse, Controllable*Event,
@@ -103,7 +109,7 @@ src/superred/core/
 ## Detailed Component Documentation
 
 - [Optimizer](optimizer.md) -- the optimizer interface and lifecycle
-- [Target](target.md) -- target interface, config/state separation
+- [Target](target.md) -- target interface, manual/config/query separation
 - [Task](task.md) -- task generics, stateless design
 - [SecurityClaim](security_claim.md) -- composable task collections
 - [Types Reference](types.md) -- all core types, design decisions, relationships
