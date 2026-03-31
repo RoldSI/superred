@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from superred.core.types.security import SecurityDomainTag
+
 
 @dataclass(frozen=True)
 class Observable:
@@ -22,6 +24,7 @@ class Observable:
     """
 
     name: str
+    security_domain: SecurityDomainTag
     description: str = ""
     observable_type: str = "text"
 

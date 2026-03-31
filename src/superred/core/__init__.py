@@ -1,6 +1,6 @@
 """Core interfaces and types for the superred framework."""
 
-from superred.core.interfaces import Optimizer
+from superred.core.interfaces import EventHandler, Optimizer, Target
 from superred.core.types import (
     FEEDBACK,
     MODEL_REQUEST,
@@ -29,7 +29,9 @@ from superred.core.types import (
 
 __all__ = [
     # Interfaces
+    "EventHandler",
     "Optimizer",
+    "Target",
     # Types
     "Controllable",
     "ControllableInjection",

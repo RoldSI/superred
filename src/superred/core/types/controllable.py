@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from superred.core.types.security import SecurityDomainTag
+
 
 @dataclass(frozen=True)
 class ControllableSpec:
@@ -29,6 +31,7 @@ class ControllableSpec:
     """
 
     name: str
+    security_domain: SecurityDomainTag
     description: str = ""
     value_type: str = "text"
     required: bool = False
