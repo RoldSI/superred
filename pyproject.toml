@@ -22,10 +22,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Security",
 ]
+dependencies = ["click>=8.1", "pyyaml>=6.0"]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "mypy>=1.10",
     "ruff>=0.4",
 ]
@@ -33,7 +35,14 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/superred"]
 
+[project.scripts]
+superred = "superred.cli.main:cli"
+
 # Entry point groups for plugin discovery
+[project.entry-points."superred.targets"]
+
+[project.entry-points."superred.tasks"]
+
 [project.entry-points."superred.optimizers"]
 
 [tool.mypy]
