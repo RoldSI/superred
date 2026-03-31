@@ -1,0 +1,118 @@
+"""Task interface.
+
+A task defines an adversarial objective against a target. It is generic over
+the target type: a task can be bound to a specific target class (accessing
+its concrete API) or to the base ``Target`` (working with any target via
+runtime discovery of config specs).
+
+Tasks are stateless:
+- ``configure`` sets initial config on the target via ``target.set_config()``
+  and returns what was set (framework caches this).
+- ``evaluate`` receives the trajectory, the target's post-run state specs
+  (what can be queried), and the target itself for ground-truth queries.
+
+Config (pre-run) and state (post-run) are intentionally distinct.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
+
+from superred.core.interfaces.target import Target
+from superred.core.types.feedback import EvaluationResult
+from superred.core.types.goal import Goal
+from superred.core.types.trajectory import Trajectory
+
+T_Target = TypeVar("T_Target", bound=Target)
+
+
+class NotApplicable(Exception):  # noqa: N818
+    """Raised by :meth:`Task.configure` when the task cannot work with the given target."""
+
+
+class Task(ABC, Generic[T_Target]):
+    """Base class for all tasks.
+
+    Tasks are stateless — they do not hold a reference to the target.
+
+    Bind to a specific target for type-safe access::
+
+        class RAGSecretTask(Task[MyRAGTarget]):
+            async def configure(self, target: MyRAGTarget) -> dict[str, str]:
+                secret = generate_secret()
+                target.set_config("db_seed", f"INSERT INTO docs VALUES ('{secret}')")
+                return {"db_seed": f"INSERT INTO docs VALUES ('{secret}')"}
+
+            async def evaluate(self, trajectory, state_specs, target) -> EvaluationResult:
+                # query post-run ground truth
+                response = target.get_state("last_response")
+                ...
+
+    Or bind to ``Target`` for a generic task::
+
+        class GenericSecretTask(Task[Target]):
+            async def configure(self, target: Target) -> dict[str, str]:
+                spec = next(s for s in target.config_specs if "secret" in s.description.lower())
+                secret = generate_secret()
+                target.set_config(spec.name, secret)
+                return {spec.name: secret}
+
+            async def evaluate(self, trajectory, state_specs, target) -> EvaluationResult:
+                # discover queryable state and check ground truth
+                for spec in state_specs:
+                    value = target.get_state(spec.name)
+                    ...
+    """
+
+    @property
+    @abstractmethod
+    def goal(self) -> Goal:
+        """The adversarial goal this task defines."""
+        ...
+
+    @abstractmethod
+    async def configure(self, target: T_Target) -> dict[str, str]:
+        """Configure the target's initial state for this task.
+
+        Use ``target.set_config(name, value)`` to set config slots and
+        ``target.config_specs`` to discover available slots. Return all
+        config that was set — the framework caches this.
+
+        Args:
+            target: The target to configure.
+
+        Returns:
+            A dict mapping config spec names to the values that were set.
+
+        Raises:
+            NotApplicable: If this task cannot work with this target.
+        """
+        ...
+
+    @abstractmethod
+    async def evaluate(
+        self,
+        trajectory: Trajectory,
+        target: Target,
+    ) -> EvaluationResult:
+        """Evaluate a run trajectory against this task's goal.
+
+        The evaluator receives:
+        - The run trajectory.
+        - The list of post-run state specs (name + description of what
+          can be queried).
+        - The target for on-demand ground-truth queries via
+          ``target.get_state(name)``.
+
+        The state queried here is *post-run* ground truth, distinct from
+        the initial config set during :meth:`configure`.
+
+        Args:
+            trajectory: The completed run trajectory.
+            target: The target, for querying post-run state.
+
+        Returns:
+            The evaluation result.
+        """
+        ...

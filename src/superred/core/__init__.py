@@ -1,10 +1,18 @@
 """Core interfaces and types for the superred framework."""
 
-from superred.core.interfaces import EventHandler, Optimizer, Target
+from superred.core.interfaces import (
+    EventHandler,
+    NotApplicable,
+    Optimizer,
+    SecurityClaim,
+    Target,
+    Task,
+)
 from superred.core.types import (
     FEEDBACK,
     MODEL_REQUEST,
     MODEL_RESPONSE,
+    ConfigSpec,
     Controllable,
     ControllableInjection,
     ControllablePostCallEvent,
@@ -22,6 +30,7 @@ from superred.core.types import (
     Score,
     SecurityDomain,
     SecurityDomainTag,
+    StateSpec,
     Trajectory,
     TrajectoryEntry,
     TrajectoryEntryType,
@@ -30,9 +39,13 @@ from superred.core.types import (
 __all__ = [
     # Interfaces
     "EventHandler",
+    "NotApplicable",
     "Optimizer",
+    "SecurityClaim",
     "Target",
+    "Task",
     # Types
+    "ConfigSpec",
     "Controllable",
     "ControllableInjection",
     "ControllablePostCallEvent",
@@ -53,6 +66,7 @@ __all__ = [
     "Score",
     "SecurityDomain",
     "SecurityDomainTag",
+    "StateSpec",
     "Trajectory",
     "TrajectoryEntry",
     "TrajectoryEntryType",
