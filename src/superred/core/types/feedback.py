@@ -16,7 +16,7 @@ class Score:
     """A single evaluation score.
 
     Attributes:
-        value: Numeric score. Meaning is relative/comparative only.
+        value: Numeric score.  Meaning is relative / comparative only.
         name: Name of this score dimension (e.g. "asr", "utility_degradation").
         maximize: Whether higher values are better.
         metadata: Additional evaluator-specific metadata.
@@ -51,15 +51,8 @@ class EvaluationResult:
 class FeedbackResult:
     """Complete feedback for one optimizer iteration.
 
-    Bundles the evaluation result with the trajectory and controllable values
-    that produced it, giving the optimizer full context for its next step.
-
-    Attributes:
-        evaluation: The evaluation result from the task module.
-        controllable_values_used: The controllable values that were applied.
-        run_id: Identifier of the run that produced this feedback.
-        iteration: The iteration number within the optimization loop.
-        metadata: Additional metadata.
+    Bundles the evaluation result with the controllable values that produced
+    it, giving the optimizer full context for its next step.
     """
 
     evaluation: EvaluationResult

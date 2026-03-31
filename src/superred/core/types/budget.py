@@ -17,15 +17,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class BudgetUsage:
-    """Actual resource consumption tracked during execution.
-
-    Attributes:
-        input_tokens: Total input tokens consumed.
-        output_tokens: Total output tokens consumed.
-        iterations: Number of optimization iterations completed.
-        cost_usd: Total monetary cost in USD.
-        wall_clock_seconds: Elapsed wall-clock time.
-    """
+    """Actual resource consumption tracked during execution."""
 
     input_tokens: int = 0
     output_tokens: int = 0
@@ -45,14 +37,7 @@ class BudgetUsage:
 
 @dataclass
 class BudgetEstimate:
-    """A cost estimate from an optimizer, propagated up the hierarchy.
-
-    Attributes:
-        estimated_iterations: Expected number of iterations.
-        estimated_input_tokens_per_iteration: Expected input tokens per iteration.
-        estimated_output_tokens_per_iteration: Expected output tokens per iteration.
-        confidence: Confidence level in [0, 1]. 0 means unknown.
-    """
+    """A cost estimate from an optimizer, propagated up the hierarchy."""
 
     estimated_iterations: int = 0
     estimated_input_tokens_per_iteration: int = 0
@@ -74,19 +59,11 @@ class BudgetEstimate:
 
 
 @dataclass
-class Budget:
+class HierarchicalBudget:
     """A hierarchical budget entity that tracks limits and consumption.
 
     Supports spawning child budgets whose allocations are bounded by the
     parent's remaining capacity.
-
-    Attributes:
-        max_input_tokens: Maximum input tokens allowed (0 = unlimited).
-        max_output_tokens: Maximum output tokens allowed (0 = unlimited).
-        max_iterations: Maximum optimization iterations (0 = unlimited).
-        max_cost_usd: Maximum monetary cost in USD (0 = unlimited).
-        max_wall_clock_seconds: Maximum wall-clock time (0 = unlimited).
-        usage: Current consumption.
     """
 
     max_input_tokens: int = 0
@@ -95,33 +72,29 @@ class Budget:
     max_cost_usd: float = 0.0
     max_wall_clock_seconds: float = 0.0
     usage: BudgetUsage = field(default_factory=BudgetUsage)
-    _children: list[Budget] = field(default_factory=list, repr=False)
-    _parent: Budget | None = field(default=None, repr=False)
+    _children: list[HierarchicalBudget] = field(default_factory=list, repr=False)
+    _parent: HierarchicalBudget | None = field(default=None, repr=False)
 
     @property
     def remaining_input_tokens(self) -> int | None:
-        """Remaining input tokens, or None if unlimited."""
         if self.max_input_tokens == 0:
             return None
         return max(0, self.max_input_tokens - self.usage.input_tokens)
 
     @property
     def remaining_output_tokens(self) -> int | None:
-        """Remaining output tokens, or None if unlimited."""
         if self.max_output_tokens == 0:
             return None
         return max(0, self.max_output_tokens - self.usage.output_tokens)
 
     @property
     def remaining_iterations(self) -> int | None:
-        """Remaining iterations, or None if unlimited."""
         if self.max_iterations == 0:
             return None
         return max(0, self.max_iterations - self.usage.iterations)
 
     @property
     def is_exhausted(self) -> bool:
-        """Whether any hard budget limit has been reached."""
         if self.max_input_tokens > 0 and self.usage.input_tokens >= self.max_input_tokens:
             return True
         if self.max_output_tokens > 0 and self.usage.output_tokens >= self.max_output_tokens:
@@ -144,13 +117,9 @@ class Budget:
         max_iterations: int = 0,
         max_cost_usd: float = 0.0,
         max_wall_clock_seconds: float = 0.0,
-    ) -> Budget:
-        """Create a child budget bounded by this budget's remaining capacity.
-
-        The child's limits are capped at the parent's remaining budget for each
-        dimension. A value of 0 inherits the parent's remaining capacity.
-        """
-        child = Budget(
+    ) -> HierarchicalBudget:
+        """Create a child budget bounded by this budget's remaining capacity."""
+        child = HierarchicalBudget(
             max_input_tokens=self._cap(max_input_tokens, self.remaining_input_tokens),
             max_output_tokens=self._cap(max_output_tokens, self.remaining_output_tokens),
             max_iterations=self._cap(max_iterations, self.remaining_iterations),

@@ -10,16 +10,17 @@ restricts C to user surfaces with minimal O and F; white-box exposes everything.
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
 
-class SecurityDomain(enum.Enum):
+class SecurityDomain(str, Enum):
     """Default security domain vocabulary.
 
     These tags annotate every controllable, observable, and feedback interface
     to indicate which security boundary it belongs to. Target modules may extend
-    this with custom tags via :class:`SecurityTag`.
+    this with custom string tags.
     """
 
     USER = "user"
@@ -30,45 +31,75 @@ class SecurityDomain(enum.Enum):
     MODEL = "model"
     VERIFIER = "verifier"
     CODE = "code"
+    CUSTOM = "custom"
+
+
+class InterfaceRole(str, Enum):
+    """Role of an interface in the threat model."""
+
+    CONTROLLABLE = "controllable"
+    OBSERVABLE = "observable"
+    FEEDBACK = "feedback"
+
+
+class PropertyKind(str, Enum):
+    """Primitive security property families from the contextual agent security
+    framework.  Attack classes (indirect prompt injection, jailbreak, task
+    drift, ...) are violations of one or more of these families, not primitive
+    claim types themselves."""
+
+    TASK_ALIGNMENT = "task_alignment"
+    ACTION_ALIGNMENT = "action_alignment"
+    AUTHORIZED_INSTRUCTION_FOLLOWING = "authorized_instruction_following"
+    DATA_ISOLATION = "data_isolation"
 
 
 @dataclass(frozen=True)
-class SecurityTag:
-    """A security domain annotation on an interface item.
+class InterfaceSpec:
+    """Specification of a single interface point (controllable, observable,
+    or feedback channel) in the target system."""
 
-    Uses :class:`SecurityDomain` for standard tags, or a custom string for
-    target-specific extensions.
-    """
-
-    domain: SecurityDomain | str
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, SecurityTag):
-            return self._key == other._key
-        return NotImplemented
-
-    def __hash__(self) -> int:
-        return hash(self._key)
-
-    @property
-    def _key(self) -> str:
-        if isinstance(self.domain, SecurityDomain):
-            return self.domain.value
-        return self.domain
-
-    def __repr__(self) -> str:
-        return f"SecurityTag({self._key!r})"
+    name: str
+    role: InterfaceRole
+    domains: frozenset[SecurityDomain | str]
+    description: str
+    schema: dict[str, Any] = field(default_factory=dict)
 
 
-# Convenience constructors for default domains
-USER = SecurityTag(SecurityDomain.USER)
-EXTERNAL_DATA = SecurityTag(SecurityDomain.EXTERNAL_DATA)
-TOOL_CATALOG = SecurityTag(SecurityDomain.TOOL_CATALOG)
-INTERNAL_CONTEXT = SecurityTag(SecurityDomain.INTERNAL_CONTEXT)
-MEMORY = SecurityTag(SecurityDomain.MEMORY)
-MODEL = SecurityTag(SecurityDomain.MODEL)
-VERIFIER = SecurityTag(SecurityDomain.VERIFIER)
-CODE = SecurityTag(SecurityDomain.CODE)
+@dataclass(frozen=True)
+class RuntimeParamSpec:
+    """Specification of a runtime parameter required by a target module."""
+
+    name: str
+    description: str
+    required: bool
+    secret: bool = False
+    default: Any = None
+
+
+@dataclass(frozen=True)
+class TargetMetadata:
+    """Descriptive metadata for a target module."""
+
+    target_id: str
+    display_name: str
+    description: str
+    version: str
+    observability_tier: str
+    supports_parallel_runs: bool = False
+
+
+@dataclass(frozen=True)
+class Budget:
+    """Resource constraints for an optimization / evaluation run.
+    All fields are optional — ``None`` means unlimited."""
+
+    max_iterations: int | None = None
+    max_model_calls: int | None = None
+    max_input_tokens: int | None = None
+    max_output_tokens: int | None = None
+    max_wall_clock_seconds: float | None = None
+    max_cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -76,32 +107,17 @@ class ThreatModel:
     """A budgeted access profile defining what the optimizer may access.
 
     The controller builds threat models by selecting subsets of the target's
-    full interface set. The optimizer receives only what the threat model exposes.
+    full interface set.  The optimizer receives only what the threat model
+    exposes.
 
     Attributes:
-        name: Human-readable identifier (e.g. "user_only", "user+external").
-        controllable_tags: Security tags for controllables exposed to optimizer.
-        observable_tags: Security tags for observables exposed to optimizer.
-        feedback_tags: Security tags for feedback channels exposed to optimizer.
-        budget_constraints: Named budget limits (see :class:`Budget`).
-        description: Optional free-text description of the threat scenario.
+        allowed_controllables: Interface names exposed as controllables.
+        allowed_observables: Interface names exposed as observables.
+        allowed_feedback: Interface names exposed as feedback channels.
+        budget: Resource constraints for the evaluation.
     """
 
-    name: str
-    controllable_tags: frozenset[SecurityTag] = field(default_factory=frozenset)
-    observable_tags: frozenset[SecurityTag] = field(default_factory=frozenset)
-    feedback_tags: frozenset[SecurityTag] = field(default_factory=frozenset)
-    budget_constraints: dict[str, float] = field(default_factory=dict)
-    description: str = ""
-
-    def exposes_controllable(self, tag: SecurityTag) -> bool:
-        """Check whether this threat model exposes a controllable with the given tag."""
-        return tag in self.controllable_tags
-
-    def exposes_observable(self, tag: SecurityTag) -> bool:
-        """Check whether this threat model exposes an observable with the given tag."""
-        return tag in self.observable_tags
-
-    def exposes_feedback(self, tag: SecurityTag) -> bool:
-        """Check whether this threat model exposes a feedback channel with the given tag."""
-        return tag in self.feedback_tags
+    allowed_controllables: frozenset[str]
+    allowed_observables: frozenset[str]
+    allowed_feedback: frozenset[str]
+    budget: Budget

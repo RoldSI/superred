@@ -1,0 +1,23 @@
+target:
+  type: agentdojo
+  params:
+    suite: workspace
+    model: gpt-4o-mini-2024-07-18
+    benchmark_version: "v1.2.2"
+
+optimizer:
+  type: llm_mutator
+  params:
+    attacker_model: gpt-4o-mini
+    attacker_api_key: ${OPENAI_API_KEY}
+    max_iterations: 10
+
+threat_models:
+  - profile: user_external
+
+budget:
+  max_iterations: 10
+  max_target_queries: 10
+
+max_tasks: 5
+output: results/agentdojo_single.json

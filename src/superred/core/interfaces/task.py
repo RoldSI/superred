@@ -1,145 +1,193 @@
-"""Task module interface (Interface B — task/security-specification side).
+"""Task module interface and security claim protocols.
 
-A task module carries the security specification for an evaluation: the
-adversarial goal, the evaluator/judge, and the feedback signal. It is fully
-separate from the target module, allowing the same target to be evaluated
-against many tasks without modification.
+A task module carries the security specification for a given evaluation: the
+goal, the evaluator / judge, the feedback signal, and the security claims.
+It is fully separate from the target module — it is only configured with one
+at runtime via ``bind(target)`` and then becomes the controller-facing
+interface for that evaluation.
 
-At runtime, the task module acts as an **interceptor** between the controller
-and the target module. It also acts as an **iterator** over tasks, enabling
-composition of multiple task modules into benchmarks.
+Security claims are modelled as target-agnostic predicates over normalised
+execution context, action and observation records, and an oracle bundle.
+The four first-class claim families come directly from the contextual agent
+security framework.
 
-Instantiation hierarchy:
-    controller → task module (via Interface B) → target module (via Interface B)
-
-Plugin authors implement this ABC.
+Plugin authors implement classes conforming to :class:`TaskModuleInterface`,
+:class:`BoundTaskTargetInterface`, :class:`EvaluatedRunInterface`,
+:class:`SecurityClaim`, and :class:`OracleBundle`.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Iterator
-from typing import Any
+from typing import Any, Mapping, Optional, Protocol, Sequence, runtime_checkable
 
-from superred.core.types.controllable import Controllable
-from superred.core.types.feedback import EvaluationResult
-from superred.core.types.observable import StaticObservable
-from superred.core.types.threat_model import SecurityTag
-from superred.core.types.trajectory import Trajectory
+from superred.core.interfaces.target import TargetModuleInterface
+from superred.core.types.context import (
+    ActionRecord,
+    ContextSnapshot,
+    ObservationRecord,
+    TurnResult,
+)
+from superred.core.types.security_claims import ClaimVerdict, OracleEvidence
+from superred.core.types.task import TaskDefinition, TaskFeedback
+from superred.core.types.threat_model import (
+    InterfaceSpec,
+    PropertyKind,
+    TargetMetadata,
+    ThreatModel,
+)
+from superred.core.types.trajectory import TraceEvent
 
 
-class TaskModuleInterface(ABC):
-    """Abstract interface that every task module must implement.
+# ------------------------------------------------------------------
+# Oracle and claim protocols
+# ------------------------------------------------------------------
 
-    A task module:
-    1. Wraps a target module (received at init or via :meth:`set_target`).
-    2. Defines the adversarial goal and success criteria.
-    3. Evaluates trajectories and produces feedback.
-    4. Iterates over multiple tasks (for benchmark composition).
 
-    Lifecycle:
-        1. Instantiate with target module and configuration.
-        2. Iterate over tasks via ``for task in task_module:``.
-        3. For each task, read the goal, run the target, evaluate the trajectory.
-        4. Call :meth:`teardown` when done.
+@runtime_checkable
+class OracleBundle(Protocol):
+    """Bundle of oracle functions used to evaluate security claims.
+
+    Oracles recover instruction attribution, source attribution, and
+    objective alignment from normalised execution artefacts.  They are
+    target-independent by construction.
     """
 
-    # ------------------------------------------------------------------
-    # Goal and task specification
-    # ------------------------------------------------------------------
+    def instruction_attribution(
+        self,
+        *,
+        context: ContextSnapshot,
+        action: ActionRecord,
+    ) -> OracleEvidence: ...
 
-    @abstractmethod
-    def get_goal(self) -> str:
-        """Return a free-text description of the current adversarial goal.
+    def source_attribution(
+        self,
+        *,
+        observation: ObservationRecord,
+    ) -> OracleEvidence: ...
 
-        This is what the optimizer tries to achieve. It should be specific
-        enough for the optimizer to act on (e.g. "exfiltrate the user's
-        API key via tool call injection") rather than generic.
-        """
-        ...
+    def prompt_objective(
+        self,
+        *,
+        user_prompt: str,
+    ) -> OracleEvidence: ...
 
-    @abstractmethod
-    def get_success_criteria(self) -> str:
-        """Return a description of what constitutes a successful attack.
+    def trajectory_objective(
+        self,
+        *,
+        trajectory: Sequence[tuple[ActionRecord, ObservationRecord]],
+    ) -> OracleEvidence: ...
 
-        Used by the evaluator and also exposed to the optimizer for guidance.
-        """
-        ...
+    def action_objective_alignment(
+        self,
+        *,
+        context: ContextSnapshot,
+        action: ActionRecord,
+    ) -> OracleEvidence: ...
 
-    # ------------------------------------------------------------------
-    # Evaluation
-    # ------------------------------------------------------------------
 
-    @abstractmethod
-    def evaluate(self, trajectory: Trajectory) -> EvaluationResult:
-        """Evaluate a completed trajectory against the current task.
+@runtime_checkable
+class SecurityClaim(Protocol):
+    """A target-agnostic security predicate.
 
-        This is the judge/verifier. It examines the trajectory and produces
-        an :class:`EvaluationResult` with success/failure, scores, and
-        optional rationale.
+    Claims evaluate a normalised context snapshot plus action / observation
+    records through a bundle of target-independent oracle interfaces.
+    """
 
-        Args:
-            trajectory: The complete trajectory from one target run.
+    claim_id: str
+    property_kind: PropertyKind
+    description: str
 
-        Returns:
-            Evaluation result with scores and success determination.
-        """
-        ...
+    def required_oracles(self) -> frozenset[str]: ...
 
-    # ------------------------------------------------------------------
-    # Iterator over tasks (for benchmark composition)
-    # ------------------------------------------------------------------
+    def required_interfaces(self) -> frozenset[str]: ...
 
-    @abstractmethod
-    def __iter__(self) -> Iterator[TaskModuleInterface]:
-        """Iterate over tasks in this module.
+    def evaluate(
+        self,
+        *,
+        context: ContextSnapshot,
+        action: ActionRecord,
+        observation: Optional[ObservationRecord],
+        oracles: OracleBundle,
+    ) -> ClaimVerdict: ...
 
-        For a single-task module, yields ``self`` once. For a composite
-        benchmark, yields each constituent task module in sequence.
 
-        The controller calls ``next()`` to advance to the next task. Each
-        yielded task module has its own goal, criteria, and evaluator.
-        """
-        ...
+# ------------------------------------------------------------------
+# Evaluated run interface
+# ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Target module access
-    # ------------------------------------------------------------------
 
-    @abstractmethod
-    def get_controllables(self) -> list[Controllable]:
-        """Return controllables from the underlying target module.
+@runtime_checkable
+class EvaluatedRunInterface(Protocol):
+    """Session interface for a single evaluation run, including task feedback.
 
-        The task module may filter or augment these (e.g. adding
-        task-specific controllables), but typically passes them through.
-        """
-        ...
+    Like :class:`TargetRunInterface` but adds ``latest_feedback()`` so that
+    the controller can read evaluator output without collapsing it into
+    target-generated observables.
+    """
 
-    @abstractmethod
-    def get_static_observables(self) -> list[StaticObservable]:
-        """Return static observables from the underlying target module.
+    def threat_model(self) -> ThreatModel: ...
 
-        May include task-specific static information (e.g. the goal
-        description as a static observable).
-        """
-        ...
+    def available_controllables(self) -> Sequence[InterfaceSpec]: ...
 
-    @abstractmethod
-    def get_security_tags(self) -> frozenset[SecurityTag]:
-        """Return all security tags from the underlying target, plus any task-specific ones."""
-        ...
+    def available_observables(self) -> Sequence[InterfaceSpec]: ...
 
-    # ------------------------------------------------------------------
-    # Lifecycle — with backward-compatible defaults
-    # ------------------------------------------------------------------
+    def apply_controllables(self, values: Mapping[str, Any]) -> None: ...
 
-    def teardown(self) -> None:
-        """Release resources. Override for cleanup."""
+    def step(self) -> TurnResult: ...
 
-    def get_task_count(self) -> int | None:
-        """Return the total number of tasks, or None if unknown/infinite."""
-        return None
+    def latest_feedback(self) -> Optional[TaskFeedback]: ...
 
-    def get_metadata(self) -> dict[str, Any]:
-        """Return task module metadata for discovery and documentation."""
-        return {}
+    def trace(self) -> Sequence[TraceEvent]: ...
+
+    def close(self) -> None: ...
+
+
+# ------------------------------------------------------------------
+# Bound task-target composite
+# ------------------------------------------------------------------
+
+
+@runtime_checkable
+class BoundTaskTargetInterface(Protocol):
+    """Controller-facing view after a task module has bound to a target.
+
+    After ``task.bind(target)``, the task module becomes the
+    controller-facing interface for that evaluation.  This preserves
+    portability across targets while allowing target-specific adaptation
+    only in the binding step.
+    """
+
+    def metadata(self) -> TargetMetadata: ...
+
+    def task_definition(self) -> TaskDefinition: ...
+
+    def claims(self) -> Sequence[SecurityClaim]: ...
+
+    def open_run(
+        self,
+        *,
+        threat_model: ThreatModel,
+        runtime_params: Mapping[str, Any],
+    ) -> EvaluatedRunInterface: ...
+
+
+# ------------------------------------------------------------------
+# Task module interface
+# ------------------------------------------------------------------
+
+
+@runtime_checkable
+class TaskModuleInterface(Protocol):
+    """Top-level task module that is separate from any target.
+
+    A task module defines the evaluation objective, verifier logic, and
+    security claims independently of any specific target.  At runtime it
+    binds to a target module and becomes the controller-facing interface
+    for that evaluation.
+    """
+
+    def task_definition(self) -> TaskDefinition: ...
+
+    def claims(self) -> Sequence[SecurityClaim]: ...
+
+    def bind(self, target: TargetModuleInterface) -> BoundTaskTargetInterface: ...

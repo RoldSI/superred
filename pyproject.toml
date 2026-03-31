@@ -23,12 +23,24 @@ classifiers = [
     "Topic :: Security",
 ]
 
+dependencies = [
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "httpx>=0.25",
+    "openai>=1.0",
+]
+
 [project.optional-dependencies]
+agentdojo = ["agentdojo>=0.1"]
+rl = ["vllm>=0.4", "transformers>=4.40"]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.4",
 ]
+
+[project.scripts]
+superred = "superred.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/superred"]

@@ -1,0 +1,27 @@
+# Experiment 3b: Composition Ablation -- LLM Mutator Only
+# Matched budget: 25 iterations total, all for LLM Mutator.
+
+target:
+  type: agentdojo
+  params:
+    suite: workspace
+    model: gpt-4o-mini-2024-07-18
+    benchmark_version: "v1.2.2"
+    defense: null
+
+optimizer:
+  type: llm_mutator
+  params:
+    attacker_model: gpt-4o-mini
+    attacker_api_key: ${OPENAI_API_KEY}
+    max_iterations: 25
+
+threat_models:
+  - profile: user_external
+
+budget:
+  max_iterations: 25
+  max_target_queries: 25
+
+max_tasks: 20
+output: results/exp3_llm.json

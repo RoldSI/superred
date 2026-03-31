@@ -14,24 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from superred.core.types.threat_model import SecurityTag
-
 
 @dataclass(frozen=True)
 class ObservableSpec:
-    """Specification of an observable information source.
-
-    Attributes:
-        name: Unique identifier within the target module.
-        security_tag: Security domain this observable belongs to.
-        description: Human-readable description.
-        observable_type: Type of information ("trajectory", "static_text",
-            "static_code", "static_config", "static_json").
-        metadata: Additional target-specific metadata.
-    """
+    """Specification of an observable information source."""
 
     name: str
-    security_tag: SecurityTag
+    domains: frozenset[str]
     description: str = ""
     observable_type: str = "trajectory"
     metadata: dict[str, Any] = field(default_factory=dict)
