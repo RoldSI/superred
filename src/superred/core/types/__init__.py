@@ -11,6 +11,7 @@ from superred.core.types.event import (
     ControllablePreCallEvent,
     Event,
     EventResponse,
+    OptimizerDoneEvent,
 )
 from superred.core.types.feedback import EvaluationResult, FeedbackResult, Score
 from superred.core.types.goal import Goal
@@ -26,7 +27,6 @@ from superred.core.types.trajectory import (
 )
 
 __all__ = [
-    "Artifact",
     "Controllable",
     "ControllableInjection",
     "ControllablePostCallEvent",
@@ -41,6 +41,7 @@ __all__ = [
     "MODEL_REQUEST",
     "MODEL_RESPONSE",
     "Observable",
+    "OptimizerDoneEvent",
     "ObservableValue",
     "RequestAnswerPair",
     "Score",
