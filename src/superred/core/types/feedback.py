@@ -8,7 +8,6 @@ and optional sub-scores for multi-objective analysis (e.g. Pareto frontiers).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -16,16 +15,12 @@ class Score:
     """A single evaluation score.
 
     Attributes:
-        value: Numeric score. Meaning is relative/comparative only.
+        value: Numeric score. Meaning is relative/comparative only. Higher values are better.
         name: Name of this score dimension (e.g. "asr", "utility_degradation").
-        maximize: Whether higher values are better.
-        metadata: Additional evaluator-specific metadata.
     """
 
     value: float
     name: str = "primary"
-    maximize: bool = True
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -35,16 +30,15 @@ class EvaluationResult:
     Attributes:
         success: Whether the adversarial goal was achieved (binary).
         primary_score: The main score used for optimization.
-        sub_scores: Optional additional scores for multi-objective analysis.
+        sub_scores: Named sub-scores for multi-objective analysis, keyed by
+            what each score evaluates (e.g. ``{"asr": Score(...), ...}``).
         rationale: Optional free-text explanation from the evaluator.
-        metadata: Additional evaluator-specific metadata.
     """
 
     success: bool
     primary_score: Score
-    sub_scores: list[Score] = field(default_factory=list)
+    sub_scores: dict[str, Score] = field(default_factory=dict)
     rationale: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -56,14 +50,6 @@ class FeedbackResult:
 
     Attributes:
         evaluation: The evaluation result from the task module.
-        controllable_values_used: The controllable values that were applied.
-        run_id: Identifier of the run that produced this feedback.
-        iteration: The iteration number within the optimization loop.
-        metadata: Additional metadata.
     """
 
     evaluation: EvaluationResult
-    controllable_values_used: dict[str, Any] = field(default_factory=dict)
-    run_id: str = ""
-    iteration: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)

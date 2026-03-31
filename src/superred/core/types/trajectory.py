@@ -1,152 +1,146 @@
-"""Canonical event-based trajectory for representing a single run.
+"""Trajectory: the ordered sequence of entries from a single run.
 
-A run produces a trajectory T = <e1, ..., en> where each event captures an
-atomic operation in the target system. This schema is grounded in OpenTelemetry
-GenAI conventions and OpenInference semantics, with W3C PROV-style provenance.
+A run produces a trajectory T = <e1, ..., en> where each entry captures an
+atomic operation in the target system.
 
-Large payloads are stored in a typed artifact store referenced by events,
-keeping the trace lightweight while supporting text, JSON, images, and files.
+Each entry's content is determined by its :class:`TrajectoryEntryType`.
+
+All public methods are thread-safe: :meth:`emit`, :meth:`drain`,
+:meth:`snapshot`, and :meth:`close` may be called concurrently from
+multiple threads.
 """
 
 from __future__ import annotations
 
-import enum
-import uuid
+import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from superred.core.types.threat_model import SecurityTag
-
-
-class OperationType(enum.Enum):
-    """Canonical vocabulary of operation types in a trajectory."""
-
-    USER_INPUT = "user_input"
-    SYSTEM_CONTEXT = "system_context"
-    MODEL_REQUEST = "model_request"
-    MODEL_RESPONSE = "model_response"
-    TOOL_CALL = "tool_call"
-    TOOL_RESULT = "tool_result"
-    RETRIEVAL_QUERY = "retrieval_query"
-    RETRIEVAL_RESULT = "retrieval_result"
-    MEMORY_READ = "memory_read"
-    MEMORY_WRITE = "memory_write"
-    VERIFIER_INPUT = "verifier_input"
-    VERIFIER_RESULT = "verifier_result"
-    INJECTION = "injection"
-    ERROR = "error"
-    CUSTOM = "custom"
+from superred.core.types.feedback import FeedbackResult
 
 
 @dataclass(frozen=True)
-class CostRecord:
-    """Token and monetary cost for a single operation.
+class TrajectoryEntryType:
+    """A runtime-registered type of trajectory entry.
+
+    Each entry type declares the Python type of content that entries of
+    this type carry.  Entry types are defined by target systems and
+    registered on a :class:`Trajectory` instance.  Only
+    :data:`MODEL_REQUEST` and :data:`MODEL_RESPONSE` are available by
+    default.
 
     Attributes:
-        input_tokens: Number of input tokens consumed.
-        output_tokens: Number of output tokens produced.
-        total_tokens: Total tokens (may differ from sum if caching applies).
-        cost_usd: Monetary cost in USD, if known.
-        model: Model identifier, if applicable.
+        name: Unique human-readable identifier.
+        description: Human-readable description.
+        content_type: The Python type that :attr:`TrajectoryEntry.content`
+            must be for entries of this type.
     """
 
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
-    cost_usd: float | None = None
-    model: str | None = None
+    name: str
+    description: str
+    actor: str
+    content_type: type[Any]
 
 
-@dataclass(frozen=True)
-class Artifact:
-    """A typed payload referenced by trace events.
+# Default entry types — always available on every trajectory.
+MODEL_REQUEST = TrajectoryEntryType(
+    name="model_request",
+    description="Prompt sent to the LLM model by the AI system",
+    actor="AI system",
+    content_type=str,
+)
+MODEL_RESPONSE = TrajectoryEntryType(
+    name="model_response",
+    description="Response received from the LLM model",
+    actor="LLM model",
+    content_type=str,
+)
+FEEDBACK = TrajectoryEntryType(
+    name="feedback",
+    description="Evaluation feedback for a run",
+    actor="task evaluator",
+    content_type=FeedbackResult,
+)
 
-    Keeps large data out of the trace itself while maintaining typed references.
-
-    Attributes:
-        artifact_id: Unique identifier.
-        mime_type: MIME type (e.g. "text/plain", "application/json", "image/png").
-        data: The actual payload. Type depends on mime_type.
-        label: Optional human-readable label.
-    """
-
-    artifact_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    mime_type: str = "text/plain"
-    data: Any = None
-    label: str = ""
+DEFAULT_ENTRY_TYPES: frozenset[TrajectoryEntryType] = frozenset(
+    {MODEL_REQUEST, MODEL_RESPONSE, FEEDBACK}
+)
 
 
 @dataclass
-class TraceEvent:
-    """A single event in a canonical trajectory.
+class TrajectoryEntry:
+    """A single entry in a trajectory.
+
+    The shape of :attr:`content` is determined by :attr:`entry_type` —
+    see :attr:`TrajectoryEntryType.content_type`.
 
     Attributes:
-        event_id: Unique identifier for this event.
-        parent_id: ID of the parent event (for nesting/causality), or None.
-        timestamp: When the event occurred.
-        actor: Identifier of the component that produced this event.
-        operation: The type of operation.
-        security_tags: Security domain tags for this event.
-        inputs: Typed input data or artifact references.
-        outputs: Typed output data or artifact references.
-        cost: Token/monetary cost, if applicable.
-        metadata: Arbitrary additional metadata.
+        entry_type: The type of this entry.
+        content: Payload whose type matches ``entry_type.content_type``.
+        timestamp: When the entry was created.
     """
 
-    event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    parent_id: str | None = None
+    entry_type: TrajectoryEntryType
+    content: Any
     timestamp: datetime = field(default_factory=datetime.now)
-    actor: str = ""
-    operation: OperationType = OperationType.CUSTOM
-    security_tags: frozenset[SecurityTag] = field(default_factory=frozenset)
-    inputs: dict[str, Any] = field(default_factory=dict)
-    outputs: dict[str, Any] = field(default_factory=dict)
-    cost: CostRecord | None = None
-    artifacts: list[Artifact] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
 class Trajectory:
-    """A complete trajectory for one run of the target system.
+    """A thread-safe stream of trajectory entries for one run.
 
-    Attributes:
-        run_id: Unique identifier for this run.
-        events: Ordered list of trace events.
-        total_cost: Aggregated cost across all events.
-        metadata: Run-level metadata (e.g. threat model name, timestamps).
+    The target system calls :meth:`emit` to push entries and :meth:`close`
+    to signal completion. Consumers read via :meth:`drain` (new entries
+    since last drain) or :meth:`snapshot` (full trajectory so far).
+
+    Entry types are registered at construction. The defaults
+    (:data:`MODEL_REQUEST`, :data:`MODEL_RESPONSE`) are always available;
+    targets add their own via *entry_types*.
+
+    All public methods are safe to call concurrently from multiple threads.
     """
 
-    run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    events: list[TraceEvent] = field(default_factory=list)
-    total_cost: CostRecord = field(default_factory=CostRecord)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    def __init__(
+        self,
+        entry_types: Sequence[TrajectoryEntryType] = (),
+    ) -> None:
+        self._lock = threading.Lock()
+        self._entry_types: frozenset[TrajectoryEntryType] = DEFAULT_ENTRY_TYPES | frozenset(
+            entry_types
+        )
+        self._entries: list[TrajectoryEntry] = []
+        self._closed: bool = False
+        self._drain_cursor: int = 0
 
-    def append(self, event: TraceEvent) -> None:
-        """Append an event to the trajectory."""
-        self.events.append(event)
+    def emit(self, entry: TrajectoryEntry) -> None:
+        """Push an entry into the stream (producer side).
 
-    def filter_by_tags(self, tags: frozenset[SecurityTag]) -> Trajectory:
-        """Return a new trajectory containing only events matching any of the given tags.
-
-        This implements the projection operator O(M, T) — filtering the full
-        trajectory by the security tags exposed in a threat model.
+        Raises:
+            RuntimeError: If the trajectory has already been closed.
         """
-        filtered = [e for e in self.events if e.security_tags & tags]
-        return Trajectory(
-            run_id=self.run_id,
-            events=filtered,
-            total_cost=self.total_cost,
-            metadata=self.metadata,
-        )
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Cannot emit to a closed trajectory")
+            self._entries.append(entry)
 
-    def filter_by_operations(self, ops: set[OperationType]) -> Trajectory:
-        """Return a new trajectory containing only events of the given operation types."""
-        filtered = [e for e in self.events if e.operation in ops]
-        return Trajectory(
-            run_id=self.run_id,
-            events=filtered,
-            total_cost=self.total_cost,
-            metadata=self.metadata,
-        )
+    def close(self) -> None:
+        """Signal that no more entries will be emitted."""
+        with self._lock:
+            self._closed = True
+
+    def snapshot(self) -> list[TrajectoryEntry]:
+        """Return all entries emitted so far without advancing the drain cursor."""
+        with self._lock:
+            return list(self._entries)
+
+    def drain(self) -> list[TrajectoryEntry]:
+        """Return all entries emitted since the last ``drain()`` call.
+
+        Non-blocking: returns immediately with whatever is available.
+        If no new entries exist, returns an empty list.
+        """
+        with self._lock:
+            new_entries = self._entries[self._drain_cursor :]
+            self._drain_cursor = len(self._entries)
+            return new_entries

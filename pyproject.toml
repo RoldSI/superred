@@ -35,8 +35,6 @@ packages = ["src/superred"]
 
 # Entry point groups for plugin discovery
 [project.entry-points."superred.optimizers"]
-[project.entry-points."superred.targets"]
-[project.entry-points."superred.tasks"]
 
 [tool.mypy]
 python_version = "3.11"
