@@ -44,9 +44,9 @@ class Task(ABC, Generic[T_Target]):
                 target.set_config("db_seed", f"INSERT INTO docs VALUES ('{secret}')")
                 return {"db_seed": f"INSERT INTO docs VALUES ('{secret}')"}
 
-            async def evaluate(self, trajectory, state_specs, target) -> EvaluationResult:
+            async def evaluate(self, trajectory, target) -> EvaluationResult:
                 # query post-run ground truth
-                response = target.get_state("last_response")
+                response = target.query("last_response")
                 ...
 
     Or bind to ``Target`` for a generic task::
@@ -58,10 +58,10 @@ class Task(ABC, Generic[T_Target]):
                 target.set_config(spec.name, secret)
                 return {spec.name: secret}
 
-            async def evaluate(self, trajectory, state_specs, target) -> EvaluationResult:
-                # discover queryable state and check ground truth
-                for spec in state_specs:
-                    value = target.get_state(spec.name)
+            async def evaluate(self, trajectory, target) -> EvaluationResult:
+                # discover available queries and check ground truth
+                for spec in target.query_specs:
+                    value = target.query(spec.name)
                     ...
     """
 
@@ -72,7 +72,7 @@ class Task(ABC, Generic[T_Target]):
         ...
 
     @abstractmethod
-    async def configure(self, target: T_Target) -> dict[str, str]:
+    async def configure_target(self, target: T_Target) -> dict[str, str]:
         """Configure the target's initial state for this task.
 
         Use ``target.set_config(name, value)`` to set config slots and
@@ -100,17 +100,16 @@ class Task(ABC, Generic[T_Target]):
 
         The evaluator receives:
         - The run trajectory.
-        - The list of post-run state specs (name + description of what
-          can be queried).
-        - The target for on-demand ground-truth queries via
-          ``target.get_state(name)``.
+        - The target for on-demand post-run queries via
+          ``target.query(name, **params)``. Use ``target.query_specs``
+          to discover available queries and their parameters.
 
-        The state queried here is *post-run* ground truth, distinct from
+        The queries here access *post-run* ground truth, distinct from
         the initial config set during :meth:`configure`.
 
         Args:
             trajectory: The completed run trajectory.
-            target: The target, for querying post-run state.
+            target: The target, for post-run queries.
 
         Returns:
             The evaluation result.

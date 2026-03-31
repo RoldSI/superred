@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.observable import ObservableValue
-from superred.core.types.state import ConfigSpec, StateSpec
+from superred.core.types.state import ConfigSpec, QuerySpec
 from superred.core.types.trajectory import Trajectory
 
 # The callback the target uses to send events and receive responses.
@@ -31,8 +31,8 @@ class Target(ABC):
     Implementors override:
         - :attr:`config_specs` — declare pre-run configuration slots.
         - :meth:`set_config` — accept a configuration value.
-        - :attr:`state_specs` — declare post-run queryable state.
-        - :meth:`get_state` — return a state value for evaluation.
+        - :attr:`query_specs` — declare post-run interactions.
+        - :meth:`query` — execute a post-run query.
         - :meth:`get_controllables` — declare runtime injection points.
         - :meth:`get_observables` — provide static context.
         - :meth:`run` — execute one run.
@@ -63,28 +63,31 @@ class Target(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # Post-run state (evaluator queries these after a run)
+    # Post-run queries (evaluator uses these after a run)
     # ------------------------------------------------------------------
 
     @property
     @abstractmethod
-    def state_specs(self) -> list[StateSpec]:
-        """Queryable state available after a run.
+    def query_specs(self) -> list[QuerySpec]:
+        """Interactions available after a run.
 
-        Each spec declares a named state that the evaluator can query
-        for ground-truth evaluation. These are distinct from config specs.
+        Each spec declares a named query the evaluator can call,
+        optionally with parameters. These are distinct from config specs.
         """
         ...
 
     @abstractmethod
-    def get_state(self, name: str) -> str:
-        """Query a state value after a run.
+    def query(self, name: str, **params: str) -> str:
+        """Execute a post-run query.
+
+        May be a simple getter (no params) or an action with parameters.
 
         Args:
-            name: Must match a :attr:`StateSpec.name` from :attr:`state_specs`.
+            name: Must match a :attr:`QuerySpec.name` from :attr:`query_specs`.
+            **params: Keyword arguments matching the spec's params.
 
         Returns:
-            The current text value of that state.
+            The text result of the query.
         """
         ...
 
@@ -122,4 +125,9 @@ class Target(ABC):
             trajectory: The trajectory to emit entries into.
             send_event: Callback to send an event and await a response.
         """
+        ...
+
+    @abstractmethod
+    async def teardown(self) -> None:
+        """Release resources. Called after evaluation is done."""
         ...

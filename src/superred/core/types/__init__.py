@@ -17,7 +17,7 @@ from superred.core.types.feedback import EvaluationResult, FeedbackResult, Score
 from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security import SecurityDomain, SecurityDomainTag
-from superred.core.types.state import ConfigSpec, StateSpec
+from superred.core.types.state import ConfigSpec, QueryParam, QuerySpec
 from superred.core.types.trajectory import (
     FEEDBACK,
     MODEL_REQUEST,
@@ -49,7 +49,8 @@ __all__ = [
     "Score",
     "SecurityDomain",
     "SecurityDomainTag",
-    "StateSpec",
+    "QueryParam",
+    "QuerySpec",
     "Trajectory",
     "TrajectoryEntry",
     "TrajectoryEntryType",
