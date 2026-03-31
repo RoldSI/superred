@@ -103,5 +103,7 @@ src/superred/core/
 ## Detailed Component Documentation
 
 - [Optimizer](optimizer.md) -- the optimizer interface and lifecycle
-- [Target & Task](target_task.md) -- target, task, security claims, config/state
+- [Target](target.md) -- target interface, config/state separation
+- [Task](task.md) -- task generics, stateless design
+- [SecurityClaim](security_claim.md) -- composable task collections
 - [Types Reference](types.md) -- all core types, design decisions, relationships
