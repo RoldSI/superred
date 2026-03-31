@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from superred.core.types.security import SecurityDomainTag
+from superred.core.types.security_domain import SecurityDomainTag
 
 
 @dataclass(frozen=True)

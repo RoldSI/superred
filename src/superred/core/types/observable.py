@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from superred.core.types.security import SecurityDomainTag
+from superred.core.types.security_domain import SecurityDomainTag
 
 
 @dataclass(frozen=True)

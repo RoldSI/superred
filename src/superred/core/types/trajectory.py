@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from superred.core.types.feedback import FeedbackResult
+from superred.core.types.evaluation import FeedbackResult
 
 
 @dataclass(frozen=True)

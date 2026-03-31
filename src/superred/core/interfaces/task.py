@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
 from superred.core.interfaces.target import Target
-from superred.core.types.feedback import EvaluationResult
+from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.trajectory import Trajectory
 

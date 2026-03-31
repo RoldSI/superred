@@ -1,6 +1,6 @@
 """Tests for SecurityDomain.distinct_combinations — 100% branch coverage."""
 
-from superred.core.types.security import SecurityDomain, SecurityDomainTag
+from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 
 
 def _names(combo: frozenset[SecurityDomainTag]) -> frozenset[str]:

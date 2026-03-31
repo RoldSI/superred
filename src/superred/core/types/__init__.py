@@ -5,6 +5,7 @@ from superred.core.types.controllable import (
     ControllableSpec,
     RequestAnswerPair,
 )
+from superred.core.types.evaluation import EvaluationResult, FeedbackResult, Score
 from superred.core.types.event import (
     ControllableInjection,
     ControllablePostCallEvent,
@@ -13,10 +14,9 @@ from superred.core.types.event import (
     EventResponse,
     OptimizerDoneEvent,
 )
-from superred.core.types.feedback import EvaluationResult, FeedbackResult, Score
 from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
-from superred.core.types.security import SecurityDomain, SecurityDomainTag
+from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, ManualSpec, QueryParam, QuerySpec
 from superred.core.types.trajectory import (
     FEEDBACK,
