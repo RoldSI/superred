@@ -14,11 +14,25 @@
 
 Frozen dataclass. Currently just `description: str`. Exists as a dedicated type (rather than a raw string) so it can be extended later with structured goal representations.
 
+## ConfigSpec & StateSpec (`state.py`)
+
+Two intentionally distinct concepts:
+
+### ConfigSpec (frozen)
+
+Pre-run configuration slot: `name`, `security_domain: SecurityDomainTag`, `description`. Used by tasks to set up initial state on the target. The description documents the accepted format — that is the contract between task and target.
+
+### StateSpec (frozen)
+
+Post-run queryable state: `name`, `description`. Used by the evaluator to query ground-truth state after a run. No security domain — this is evaluation data, not an attack surface.
+
+**Design decision**: Config and state are separate because what you set before a run (e.g. seed a database) is not what you query after (e.g. the model's response). A target may expose completely different specs for each.
+
 ## Controllable (`controllable.py`)
 
 ### ControllableSpec (frozen)
 
-Declares an injection point: name, description, value_type, whether required.
+Declares an injection point: `name`, `security_domain`, `description`, `value_type`, whether `required`.
 
 ### Controllable (mutable)
 
@@ -30,21 +44,15 @@ A `ControllableSpec` plus a running `history: list[RequestAnswerPair]`. Mutable 
 
 A single request-answer interaction with a controllable.
 
-### ControllableValue was removed
-
-Replaced by `ControllableInjection` in `event.py`. The injection references the event it responds to (via the base `EventResponse.event` field), which in turn references the controllable. No need for a separate name-based lookup.
-
 ## Observable (`observable.py`)
 
 ### Observable (frozen)
 
-Specification of a static observable (name, description, type). Was previously called `ObservableSpec`.
+Specification of a static observable: `name`, `security_domain`, `description`, `observable_type`.
 
 ### ObservableValue (frozen)
 
-An Observable with its content. Passed to optimizer at initialization. Was previously called `Observable`.
-
-**Rename rationale**: The old names (`ObservableSpec`/`Observable`) didn't match the Controllable pattern (`ControllableSpec`/`Controllable`). Now: `Observable` is the spec, `ObservableValue` is spec+content.
+An Observable with its content. Passed to optimizer at initialization.
 
 ## Event System (`event.py`)
 
