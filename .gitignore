@@ -9,3 +9,6 @@ venv/
 *.egg
 .mypy_cache/
 .ruff_cache/
+.coverage
+coverage.json
+.pytest_cache/

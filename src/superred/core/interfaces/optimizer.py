@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from superred.core.types.controllable import Controllable
-from superred.core.types.event import Event, EventResponse
+from superred.core.types.event import Event, EventResponse, OptimizerDoneEvent
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import Trajectory
@@ -26,22 +26,30 @@ from superred.core.types.trajectory import Trajectory
 class Optimizer(ABC):
     """Base class for all optimizers.
 
-    Optimizers are event-driven: the framework calls :meth:`handle_event`
-    each time an event occurs during a target run. The optimizer reads the
-    live trajectory stream to understand the current run state, then returns
-    a response.
+    Optimizers are event-driven: the framework dispatches events via
+    :meth:`_handle_event` each time an event occurs during a target run.
 
     The base class maintains a full history of past runs so that optimizer
     implementations can query previous trajectories without any bookkeeping.
-    Implementors only need to override :meth:`on_event`.
+
+    Implementors override:
+        - :meth:`initialize` — setup before the first run.
+        - :meth:`on_event` — respond to each event during a run.
+        - :meth:`on_pre_run` (optional) — called after trajectory is set,
+          before the target starts.
+        - :meth:`on_post_run` (optional) — called after the run ends, before
+          the trajectory is archived. Return an :class:`OptimizerDoneEvent`
+          to signal the optimizer is finished.
 
     Lifecycle:
         1. Instantiate with configuration.
         2. Call :meth:`initialize` with goal, controllables, observables.
         3. For each run:
-            a. Call :meth:`on_run_start` with the new trajectory.
-            b. For each event: call :meth:`handle_event`.
-            c. Call :meth:`on_run_end` when the run completes.
+            a. Framework calls :meth:`_on_run_start` (sets trajectory,
+               then calls :meth:`on_pre_run`).
+            b. For each event: framework calls :meth:`_handle_event`.
+            c. Framework calls :meth:`_on_run_end` (calls :meth:`on_post_run`,
+               then archives trajectory). Returns OptimizerDoneEvent | None.
         4. Call :meth:`teardown` when evaluation is done.
     """
 
@@ -70,30 +78,55 @@ class Optimizer(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # Run lifecycle hooks (called by framework)
+    # Run lifecycle — internal (called by framework)
     # ------------------------------------------------------------------
 
-    def on_run_start(self, trajectory: Trajectory) -> None:
-        """Called by the framework when a new run begins.
+    def _on_run_start(self, trajectory: Trajectory) -> None:
+        """Framework-facing: set trajectory then call :meth:`on_pre_run`.
 
-        Stores the trajectory as the current run. Override to add custom
-        logic, but call ``super().on_run_start(trajectory)`` to preserve
-        history tracking.
+        Do not override. Override :meth:`on_pre_run` instead.
         """
         self._current_trajectory = trajectory
+        self.pre_run()
 
-    def on_run_end(self) -> None:
-        """Called by the framework when the current run ends.
+    def _on_run_end(self) -> OptimizerDoneEvent | None:
+        """Framework-facing: call :meth:`on_post_run` then archive trajectory.
 
-        Moves the current trajectory to history. Override to add custom
-        logic, but call ``super().on_run_end()`` to preserve history tracking.
+        Do not override. Override :meth:`on_post_run` instead.
 
-        Raises:
-            AssertionError: If no run is currently active.
+        Returns:
+            An :class:`OptimizerDoneEvent` if the optimizer signals it is
+            done, or ``None`` to continue.
         """
-        assert self._current_trajectory is not None, "on_run_end called without an active run"
+        assert self._current_trajectory is not None, "_on_run_end called without an active run"
+        done = self.post_run()
         self._past_trajectories.append(self._current_trajectory)
         self._current_trajectory = None
+        return done
+
+    # ------------------------------------------------------------------
+    # Run lifecycle — overridable hooks
+    # ------------------------------------------------------------------
+
+    def pre_run(self) -> None:
+        """Called after the trajectory is set, before the target starts.
+
+        The current trajectory is available via :attr:`current_trajectory`.
+        Override for custom pre-run logic.
+        """
+
+    def post_run(self) -> OptimizerDoneEvent | None:
+        """Called after the run ends, before the trajectory is archived.
+
+        The current trajectory is still available via
+        :attr:`current_trajectory`.
+
+        Returns:
+            An :class:`OptimizerDoneEvent` to signal the optimizer is
+            finished (goal achieved, budget exhausted, etc.), or ``None``
+            to continue with more runs.
+        """
+        return None
 
     # ------------------------------------------------------------------
     # Event handler (the main interface to implement)
@@ -107,9 +140,9 @@ class Optimizer(ABC):
         to dispatch on event type::
 
             if isinstance(event, ControllablePreCallEvent):
-                ...  # return ControllablePreCallResponse(value=...)
+                ...  # return ControllableInjection(event=event, value=...)
             elif isinstance(event, ControllablePostCallEvent):
-                ...  # return ControllablePostCallResponse()
+                ...  # return ControllableInjection(event=event, value=...)
 
         The current trajectory is available via :attr:`current_trajectory`.
 
@@ -124,8 +157,7 @@ class Optimizer(ABC):
     async def _handle_event(self, event: Event) -> EventResponse:
         """Framework-facing wrapper around :meth:`on_event`.
 
-        Handles base-class bookkeeping and delegates to the optimizer's
-        :meth:`on_event` implementation. Do not override this method.
+        Do not override this method.
         """
         return await self.on_event(event)
 

@@ -85,3 +85,16 @@ class ControllableInjection(EventResponse):
     """
 
     value: str
+
+
+# -- Optimizer lifecycle events ----------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True)
+class OptimizerDoneEvent(Event):
+    """The optimizer signals that it has finished optimizing.
+
+    Returned from :meth:`Optimizer.on_post_run` to indicate the optimizer
+    considers itself done (e.g. goal achieved, budget exhausted).
+    The framework should stop scheduling further runs.
+    """
