@@ -1,6 +1,6 @@
 # Target Interface
 
-The AI system under test. Exposes five surfaces:
+The AI system under test. Exposes six surfaces:
 
 ## Manual setup (user-provided via controller)
 - `manual_specs -> list[ManualSpec]` — declares required user-provided values (API keys, credentials).
@@ -20,6 +20,9 @@ Manual, config, and query are **intentionally distinct**:
 - Manual = user secrets, provided once via controller.
 - Config = task-set pre-run state, set per task.
 - Query = post-run ground truth, may differ from what was configured.
+
+## Security domain
+- `security_domain -> SecurityDomain` — the security domain forest defined by this target. Classifies controllables and observables into a hierarchy of trust boundaries. Used by the controller to filter events by scope.
 
 ## Runtime surfaces
 - `get_controllables() -> list[Controllable]` — injection points the optimizer can manipulate during a run.

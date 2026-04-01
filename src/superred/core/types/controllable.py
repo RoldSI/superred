@@ -26,15 +26,12 @@ class ControllableSpec:
         description: Human-readable description of the injection point.
         value_type: Expected type of the controllable value ("text", "json",
             "modifier", "binary").
-        required: Whether the optimizer must provide a value for this
-            controllable on every run (vs. leaving it at default).
     """
 
     name: str
     security_domain: SecurityDomainTag
     description: str = ""
     value_type: str = "text"
-    required: bool = False
 
 
 @dataclass(frozen=True)

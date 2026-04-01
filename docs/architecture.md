@@ -81,14 +81,45 @@ Target.run(trajectory, send_event):
 
 11. **SecurityClaim composes**: From tasks (`from_tasks`) or from other claims (`from_claims`). Lazy chaining for claims-of-claims. Re-iterable since tasks are stateless.
 
-## Planned: Controller
+## Controller (`core/controller.py`)
 
-A controller will sit between target and optimizer with two queues (target-->controller, controller-->optimizer). The controller records all events and responses for observability and replay. The `EventHandler` callback abstraction already supports this — the target doesn't know whether it's talking to the optimizer directly or through a controller. The controller also handles collecting manual values from the user.
+The controller orchestrates red-teaming evaluations. It sits between target and optimizer, managing the event loop, security domain filtering, evaluation, and score tracking.
+
+### Run flow
+
+```
+controller.run():
+  1. target.set_manual(manual_values)
+  2. For each task in security_claim:
+     a. task.configure_target(target)
+     b. optimizer.initialize(goal, controllables, observables)
+     c. Run loop (up to max_runs_per_task):
+        - Create Trajectory
+        - optimizer._on_run_start(trajectory)
+        - target.run(trajectory, controller._handle_event)
+        - optimizer._on_run_end()
+        - task.evaluate(trajectory, target)
+        - Append FeedbackResult → close trajectory
+        - Break on OptimizerDoneEvent
+     d. Collect TaskResult (best score, success, trajectories)
+  3. Print summary, teardown optimizer + target
+  4. Return ControllerResult
+```
+
+### Security domain filtering
+
+Events for controllables outside the active `security_domain_tag` are answered with `NoModification` without consulting the optimizer. Uses `SecurityDomainTag.includes()` to check scope.
+
+### Result types
+
+- `TaskResult` (frozen): task, best_score, best_evaluation, trajectories, success.
+- `ControllerResult` (frozen): task_results, skipped_tasks.
 
 ## File Map
 
 ```
 src/superred/core/
+  controller.py        -- Controller, TaskResult, ControllerResult
   interfaces/
     optimizer.py       -- Optimizer ABC
     target.py          -- Target ABC, EventHandler type alias
@@ -100,14 +131,16 @@ src/superred/core/
     controllable.py    -- ControllableSpec, Controllable, RequestAnswerPair
     observable.py      -- Observable, ObservableValue
     event.py           -- Event, EventResponse, Controllable*Event,
-                          ControllableInjection, OptimizerDoneEvent
+                          ControllableInjection, NoModification,
+                          OptimizerDoneEvent
     trajectory.py      -- TrajectoryEntryType, TrajectoryEntry, Trajectory
-    feedback.py        -- Score, EvaluationResult, FeedbackResult
-    security.py        -- SecurityDomainTag, SecurityDomain
+    evaluation.py      -- Score, EvaluationResult, FeedbackResult
+    security_domain.py -- SecurityDomainTag, SecurityDomain
 ```
 
 ## Detailed Component Documentation
 
+- [Controller](controller.md) -- the orchestrator: event loop, filtering, evaluation
 - [Optimizer](optimizer.md) -- the optimizer interface and lifecycle
 - [Target](target.md) -- target interface, manual/config/query separation
 - [Task](task.md) -- task generics, stateless design

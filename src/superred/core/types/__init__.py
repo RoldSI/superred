@@ -12,6 +12,7 @@ from superred.core.types.event import (
     ControllablePreCallEvent,
     Event,
     EventResponse,
+    NoModification,
     OptimizerDoneEvent,
 )
 from superred.core.types.goal import Goal
@@ -43,6 +44,7 @@ __all__ = [
     "ManualSpec",
     "MODEL_REQUEST",
     "MODEL_RESPONSE",
+    "NoModification",
     "Observable",
     "OptimizerDoneEvent",
     "ObservableValue",

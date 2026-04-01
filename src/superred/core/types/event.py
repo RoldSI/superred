@@ -87,6 +87,15 @@ class ControllableInjection(EventResponse):
     value: str
 
 
+@dataclass(frozen=True, kw_only=True)
+class NoModification(EventResponse):
+    """No modification — controllable is outside the active security domain scope.
+
+    Returned by the controller when an event's controllable falls outside
+    the security domain tag being tested, so the optimizer is not consulted.
+    """
+
+
 # -- Optimizer lifecycle events ----------------------------------------------
 
 

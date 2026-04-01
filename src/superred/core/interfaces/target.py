@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.observable import ObservableValue
+from superred.core.types.security_domain import SecurityDomain
 from superred.core.types.state import ConfigSpec, ManualSpec, QuerySpec
 from superred.core.types.trajectory import Trajectory
 
@@ -115,6 +116,20 @@ class Target(ABC):
 
         Returns:
             The text result of the query.
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # Security domain
+    # ------------------------------------------------------------------
+
+    @property
+    @abstractmethod
+    def security_domain(self) -> SecurityDomain:
+        """The security domain forest defined by this target system.
+
+        The domain classifies controllables and observables into a
+        hierarchy of trust boundaries.
         """
         ...
 

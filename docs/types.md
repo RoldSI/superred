@@ -84,6 +84,10 @@ Fired after a controllable's value was used. Fields: `controllable`, `request`, 
 
 The optimizer's injection. Field: `value: str`. Inherits `event` from EventResponse. Replaces the old `ControllableValue`, `ControllablePreCallResponse`, and `ControllablePostCallResponse`.
 
+### NoModification (frozen, kw_only, extends EventResponse)
+
+Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Inherits `event` from EventResponse. No extra fields.
+
 ### OptimizerDoneEvent (frozen, kw_only, extends Event)
 
 Returned from `Optimizer.post_run()` to signal the optimizer is finished (goal achieved, budget exhausted). The framework stops scheduling runs. Has no extra fields beyond the base Event.
@@ -129,7 +133,7 @@ Stream of TrajectoryEntry objects for one run. Thread-safe via `threading.Lock`.
 
 **Design decision**: `drain()` has a single cursor. If multiple threads drain, they share it. The planned controller architecture uses separate Trajectory instances for separate consumers, so this is not a limitation.
 
-## Feedback (`feedback.py`)
+## Feedback (`evaluation.py`)
 
 ### Score (frozen)
 
@@ -145,7 +149,7 @@ Binary `success` + `primary_score` + optional `sub_scores: dict[str, Score]` + `
 
 Wraps an EvaluationResult. Also a default TrajectoryEntryType (`FEEDBACK`) so feedback flows through the trajectory stream like any other entry.
 
-## Security Domains (`security.py`)
+## Security Domains (`security_domain.py`)
 
 ### SecurityDomainTag (frozen)
 
