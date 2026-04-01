@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from superred.core.types.controllable import Controllable
+from superred.core.types.trajectory import Trajectory
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -96,14 +97,44 @@ class NoModification(EventResponse):
     """
 
 
-# -- Optimizer lifecycle events ----------------------------------------------
+# -- Run lifecycle events ----------------------------------------------------
 
 
 @dataclass(frozen=True, kw_only=True)
-class OptimizerDoneEvent(Event):
-    """The optimizer signals that it has finished optimizing.
+class RunStartEvent(Event):
+    """Signals the start of a new target run.
 
-    Returned from :meth:`Optimizer.on_post_run` to indicate the optimizer
-    considers itself done (e.g. goal achieved, budget exhausted).
-    The framework should stop scheduling further runs.
+    Sent by the controller before ``target.run()`` begins.
+
+    Attributes:
+        trajectory: The trajectory for the new run.
     """
+
+    trajectory: Trajectory
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunEndEvent(Event):
+    """Signals the end of a target run.
+
+    Sent by the controller after ``target.run()`` completes.
+
+    Attributes:
+        trajectory: The trajectory for the completed run.
+    """
+
+    trajectory: Trajectory
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunEndResponse(EventResponse):
+    """Response to a :class:`RunEndEvent`.
+
+    Set ``done=True`` to signal the optimizer wants to stop
+    (e.g. goal achieved, budget exhausted).
+
+    Attributes:
+        done: Whether the optimizer considers itself finished.
+    """
+
+    done: bool = False

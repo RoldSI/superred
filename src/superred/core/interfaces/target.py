@@ -19,7 +19,7 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.observable import ObservableValue
 from superred.core.types.security_domain import SecurityDomain
-from superred.core.types.state import ConfigSpec, ManualSpec, QuerySpec
+from superred.core.types.state import ConfigSpec, QuerySpec
 from superred.core.types.trajectory import Trajectory
 
 # The callback the target uses to send events and receive responses.
@@ -29,42 +29,21 @@ EventHandler = Callable[[Event], Awaitable[EventResponse]]
 class Target(ABC):
     """Base class for all targets (AI systems under test).
 
+    Manual values (API keys, credentials) are passed directly to the
+    target's constructor — not through the framework.
+
     Implementors override:
-        - :attr:`manual_specs` — declare required user-provided values.
-        - :meth:`set_manual` — accept all user-provided values.
         - :attr:`config_specs` — declare pre-run configuration slots.
         - :meth:`set_config` — accept a configuration value.
         - :attr:`query_specs` — declare post-run interactions.
         - :meth:`query` — execute a post-run query.
+        - :attr:`security_domain` — the security domain forest.
         - :meth:`get_controllables` — declare runtime injection points.
         - :meth:`get_observables` — provide static context.
         - :meth:`run` — execute one run.
+        - :meth:`cleanup` — reset state after a run.
         - :meth:`teardown` — release resources.
     """
-
-    # ------------------------------------------------------------------
-    # Manual setup (user provides these via the controller)
-    # ------------------------------------------------------------------
-
-    @property
-    @abstractmethod
-    def manual_specs(self) -> list[ManualSpec]:
-        """Values that must be provided by the user (e.g. API keys).
-
-        These are not set by tasks — they are provided by the user
-        through the controller before any runs.
-        """
-        ...
-
-    @abstractmethod
-    def set_manual(self, values: dict[str, str]) -> None:
-        """Submit all user-provided values at once.
-
-        Args:
-            values: A dict mapping :attr:`ManualSpec.name` to its value.
-                Must include all names from :attr:`manual_specs`.
-        """
-        ...
 
     # ------------------------------------------------------------------
     # Pre-run configuration (task sets these before a run)
@@ -170,6 +149,16 @@ class Target(ABC):
         ...
 
     @abstractmethod
+    async def cleanup(self) -> None:
+        """Reset state after a run and its evaluation.
+
+        Called by the controller after each run's evaluation, before the
+        next run begins. Implement to clear databases, reset containers,
+        etc. May be a no-op, but must be explicit.
+        """
+        ...
+
+    @abstractmethod
     async def teardown(self) -> None:
-        """Release resources. Called after evaluation is done."""
+        """Release resources. Called after all evaluation is done."""
         ...

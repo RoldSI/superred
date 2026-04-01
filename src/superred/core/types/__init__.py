@@ -1,5 +1,6 @@
 """Shared types used across all superred interfaces."""
 
+from superred.core.types.channel import EventChannel, EventEnvelope
 from superred.core.types.controllable import (
     Controllable,
     ControllableSpec,
@@ -13,7 +14,9 @@ from superred.core.types.event import (
     Event,
     EventResponse,
     NoModification,
-    OptimizerDoneEvent,
+    RunEndEvent,
+    RunEndResponse,
+    RunStartEvent,
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
@@ -36,9 +39,11 @@ __all__ = [
     "ControllablePreCallEvent",
     "ControllableSpec",
     "EvaluationResult",
-    "FEEDBACK",
+    "EventChannel",
+    "EventEnvelope",
     "Event",
     "EventResponse",
+    "FEEDBACK",
     "FeedbackResult",
     "Goal",
     "ManualSpec",
@@ -46,14 +51,16 @@ __all__ = [
     "MODEL_RESPONSE",
     "NoModification",
     "Observable",
-    "OptimizerDoneEvent",
     "ObservableValue",
+    "QueryParam",
+    "QuerySpec",
     "RequestAnswerPair",
+    "RunEndEvent",
+    "RunEndResponse",
+    "RunStartEvent",
     "Score",
     "SecurityDomain",
     "SecurityDomainTag",
-    "QueryParam",
-    "QuerySpec",
     "Trajectory",
     "TrajectoryEntry",
     "TrajectoryEntryType",

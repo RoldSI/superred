@@ -1,5 +1,6 @@
 """Core interfaces and types for the superred framework."""
 
+from superred.core.controller import Controller, ControllerResult, RunResult, TaskResult
 from superred.core.interfaces import (
     EventHandler,
     NotApplicable,
@@ -20,6 +21,8 @@ from superred.core.types import (
     ControllableSpec,
     EvaluationResult,
     Event,
+    EventChannel,
+    EventEnvelope,
     EventResponse,
     FeedbackResult,
     Goal,
@@ -27,10 +30,12 @@ from superred.core.types import (
     NoModification,
     Observable,
     ObservableValue,
-    OptimizerDoneEvent,
     QueryParam,
     QuerySpec,
     RequestAnswerPair,
+    RunEndEvent,
+    RunEndResponse,
+    RunStartEvent,
     Score,
     SecurityDomain,
     SecurityDomainTag,
@@ -40,6 +45,11 @@ from superred.core.types import (
 )
 
 __all__ = [
+    # Controller
+    "Controller",
+    "ControllerResult",
+    "RunResult",
+    "TaskResult",
     # Interfaces
     "EventHandler",
     "NotApplicable",
@@ -56,6 +66,8 @@ __all__ = [
     "ControllableSpec",
     "EvaluationResult",
     "Event",
+    "EventChannel",
+    "EventEnvelope",
     "EventResponse",
     "FEEDBACK",
     "FeedbackResult",
@@ -66,13 +78,15 @@ __all__ = [
     "NoModification",
     "Observable",
     "ObservableValue",
-    "OptimizerDoneEvent",
+    "QueryParam",
+    "QuerySpec",
     "RequestAnswerPair",
+    "RunEndEvent",
+    "RunEndResponse",
+    "RunStartEvent",
     "Score",
     "SecurityDomain",
     "SecurityDomainTag",
-    "QueryParam",
-    "QuerySpec",
     "Trajectory",
     "TrajectoryEntry",
     "TrajectoryEntryType",

@@ -39,27 +39,22 @@ class Task(ABC, Generic[T_Target]):
     Bind to a specific target for type-safe access::
 
         class RAGSecretTask(Task[MyRAGTarget]):
-            async def configure(self, target: MyRAGTarget) -> dict[str, str]:
+            async def configure_target(self, target: MyRAGTarget) -> None:
                 secret = generate_secret()
                 target.set_config("db_seed", f"INSERT INTO docs VALUES ('{secret}')")
-                return {"db_seed": f"INSERT INTO docs VALUES ('{secret}')"}
 
             async def evaluate(self, trajectory, target) -> EvaluationResult:
-                # query post-run ground truth
                 response = target.query("last_response")
                 ...
 
     Or bind to ``Target`` for a generic task::
 
         class GenericSecretTask(Task[Target]):
-            async def configure(self, target: Target) -> dict[str, str]:
+            async def configure_target(self, target: Target) -> None:
                 spec = next(s for s in target.config_specs if "secret" in s.description.lower())
-                secret = generate_secret()
-                target.set_config(spec.name, secret)
-                return {spec.name: secret}
+                target.set_config(spec.name, generate_secret())
 
             async def evaluate(self, trajectory, target) -> EvaluationResult:
-                # discover available queries and check ground truth
                 for spec in target.query_specs:
                     value = target.query(spec.name)
                     ...
@@ -72,18 +67,14 @@ class Task(ABC, Generic[T_Target]):
         ...
 
     @abstractmethod
-    async def configure_target(self, target: T_Target) -> dict[str, str]:
+    async def configure_target(self, target: T_Target) -> None:
         """Configure the target's initial state for this task.
 
         Use ``target.set_config(name, value)`` to set config slots and
-        ``target.config_specs`` to discover available slots. Return all
-        config that was set — the framework caches this.
+        ``target.config_specs`` to discover available slots.
 
         Args:
             target: The target to configure.
-
-        Returns:
-            A dict mapping config spec names to the values that were set.
 
         Raises:
             NotApplicable: If this task cannot work with this target.

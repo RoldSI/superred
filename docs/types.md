@@ -88,13 +88,37 @@ The optimizer's injection. Field: `value: str`. Inherits `event` from EventRespo
 
 Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Inherits `event` from EventResponse. No extra fields.
 
-### OptimizerDoneEvent (frozen, kw_only, extends Event)
+### RunStartEvent (frozen, kw_only, extends Event)
 
-Returned from `Optimizer.post_run()` to signal the optimizer is finished (goal achieved, budget exhausted). The framework stops scheduling runs. Has no extra fields beyond the base Event.
+Signals the start of a new target run. Field: `trajectory: Trajectory`. Sent by the controller before `target.run()`. Replaces the old `_on_run_start` hook.
+
+### RunEndEvent (frozen, kw_only, extends Event)
+
+Signals the end of a target run. Field: `trajectory: Trajectory`. Sent by the controller after `target.run()` completes. Replaces the old `_on_run_end` hook.
+
+### RunEndResponse (frozen, kw_only, extends EventResponse)
+
+Response to `RunEndEvent`. Field: `done: bool = False`. Set `done=True` to signal the optimizer wants to stop. Replaces the old `OptimizerDoneEvent`.
 
 **Design decision**: A single response type for both pre-call and post-call events. The inherited `event` field distinguishes which event type triggered it.
 
 **Design decision**: `kw_only=True` on all event dataclasses. This avoids the Python dataclass inheritance ordering problem (parent has fields with defaults, child has required fields). All construction is keyword-based.
+
+## Event Channel (`channel.py`)
+
+### EventEnvelope
+
+Pairs an event with its response mechanism. The receiver calls `respond(response)` exactly once. Thread-safe — `respond()` uses `call_soon_threadsafe` and a `threading.Lock` to safely cross thread boundaries.
+
+### EventChannel
+
+Thread-safe bidirectional event-response channel. The send side puts events and awaits responses (`send(event) -> EventResponse`). The receive side pulls events at its own pace (`receive() -> EventEnvelope | None`). Supports `async for` iteration.
+
+- `send(event)`: Creates a future, wraps event + future in an envelope, puts on queue, awaits future.
+- `receive()`: Pulls next envelope from queue. Returns `None` when channel is closed.
+- `close()`: Thread-safe. Puts sentinel on queue via `call_soon_threadsafe`.
+
+**Design decision**: Uses `asyncio.Queue` internally — all queue access happens on the event loop thread. Thread safety for `respond()` and `close()` comes from `call_soon_threadsafe` bridging. The interface is designed so a future process-safe implementation can be swapped in.
 
 ## Trajectory (`trajectory.py`)
 
