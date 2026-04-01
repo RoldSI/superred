@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Sequence
 
 from superred.interfaces.target import Target
@@ -113,6 +114,7 @@ class Controller:
                     # and the optimizer loop exits gracefully.
                     event_ch.sender.close()
                     await loop_task
+                    response_ch.sender.close()
 
                 # Archive trajectory and call post-run hooks
                 optimizer._on_run_end()
@@ -139,7 +141,7 @@ class Controller:
                     trajectory=trajectory,
                     evaluation=evaluation,
                     claim_verdicts=claim_verdicts,
-                    budget_used=budget.usage,
+                    budget_used=replace(budget.usage),
                     threat_model=tm,
                     optimizer_metadata=optimizer.get_metadata(),
                 )
@@ -148,8 +150,10 @@ class Controller:
                 if post_run_signal is not None or budget.exhausted:
                     break
 
-            await optimizer.teardown()
         finally:
-            await target.teardown()
+            try:
+                await optimizer.teardown()
+            finally:
+                await target.teardown()
 
         return result

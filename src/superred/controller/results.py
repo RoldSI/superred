@@ -55,3 +55,36 @@ class EvalResult:
             )
             result[tm_name] = successes / total if total > 0 else 0.0
         return result
+
+    def cost_per_success(self) -> dict[str, float]:
+        """Compute cost per successful run for each threat model."""
+        result = {}
+        for tm_name, task_results in self.task_results.items():
+            successes = sum(
+                sum(1 for r in tr.runs if r.evaluation.success)
+                for tr in task_results
+            )
+            total_cost = sum(
+                r.budget_used.cost_usd
+                for tr in task_results for r in tr.runs
+            )
+            result[tm_name] = total_cost / successes if successes > 0 else float('inf')
+        return result
+
+    def time_to_first_success(self) -> dict[str, int]:
+        """Return the index of the first successful run for each threat model."""
+        result = {}
+        for tm_name, task_results in self.task_results.items():
+            first = None
+            for tr in task_results:
+                for i, r in enumerate(tr.runs):
+                    if r.evaluation.success:
+                        if first is None or i < first:
+                            first = i
+                        break
+            result[tm_name] = first if first is not None else -1
+        return result
+
+    def utility_degradation(self) -> dict[str, float]:
+        """Placeholder -- requires baseline utility measurement."""
+        return {tm_name: 0.0 for tm_name in self.task_results}

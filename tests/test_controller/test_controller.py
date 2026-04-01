@@ -119,7 +119,7 @@ class TestController:
 
         tm = ThreatModel(
             name="user_only",
-            controllables=frozenset({"user_input"}),
+            controllables=frozenset({"user"}),
             observables=frozenset(),
             feedback=frozenset(),
             budget=Budget(max_iterations=5),
@@ -143,7 +143,7 @@ class TestController:
 
         tm = ThreatModel(
             name="user_only",
-            controllables=frozenset({"user_input"}),
+            controllables=frozenset({"user"}),
             observables=frozenset(),
             feedback=frozenset(),
             budget=Budget(max_iterations=3),
@@ -164,7 +164,7 @@ class TestController:
 
         tm = ThreatModel(
             name="user_only",
-            controllables=frozenset({"user_input"}),
+            controllables=frozenset({"user"}),
             observables=frozenset(),
             feedback=frozenset(),
             budget=Budget(max_iterations=10),

@@ -49,7 +49,7 @@ class TestThreatModelFilter:
     async def test_passes_allowed_domain(self):
         tm = ThreatModel(
             name="user_only",
-            controllables=frozenset({"input"}),
+            controllables=frozenset({"user"}),
             observables=frozenset(),
             feedback=frozenset(),
             budget=Budget(),

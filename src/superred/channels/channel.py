@@ -51,6 +51,7 @@ class AsyncReceiver(Generic[T]):
         except asyncio.QueueEmpty:
             return None
         if item is _SENTINEL:
+            self._queue.put_nowait(_SENTINEL)  # re-queue for other consumers
             return None
         return item  # type: ignore[return-value]
 

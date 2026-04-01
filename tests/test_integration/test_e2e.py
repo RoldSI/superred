@@ -128,7 +128,7 @@ class TestEndToEnd:
 
         tm = ThreatModel(
             name="user+external",
-            controllables=frozenset({"user_input", "web_search"}),
+            controllables=frozenset({"user", "external"}),
             observables=frozenset({"system_desc"}),
             feedback=frozenset(),
             budget=Budget(max_iterations=5),
@@ -169,7 +169,7 @@ class TestEndToEnd:
 
         tm = ThreatModel(
             name="user+external",
-            controllables=frozenset({"user_input", "web_search"}),
+            controllables=frozenset({"user", "external"}),
             observables=frozenset(),
             feedback=frozenset(),
             budget=Budget(max_iterations=100),
@@ -198,7 +198,7 @@ class TestEndToEnd:
 
             tm = ThreatModel(
                 name=tm_name,
-                controllables=frozenset({"user_input", "web_search"}),
+                controllables=frozenset({"user", "external"}),
                 observables=frozenset(),
                 feedback=frozenset(),
                 budget=Budget(max_iterations=1),

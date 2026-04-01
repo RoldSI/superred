@@ -129,11 +129,8 @@ def threat_model_filter(tm: ThreatModel) -> Middleware[Event]:
     """Middleware that drops events whose security_domain is outside the threat model's scope.
 
     The threat model's scope is determined by its ``controllables``,
-    ``observables``, ``feedback`` sets *and* its ``name``.  An event's
-    ``security_domain.name`` is checked against the union of those sets
-    and tested for inclusion in the threat-model name (which conventionally
-    encodes the primary domain, e.g. ``"user_only"`` scopes to the
-    ``"user"`` domain).
+    ``observables``, and ``feedback`` sets.  An event's
+    ``security_domain.name`` is checked against the union of those sets.
 
     Events with ``security_domain=None`` always pass through (they are
     framework events like OptimizerDoneEvent).
@@ -141,12 +138,7 @@ def threat_model_filter(tm: ThreatModel) -> Middleware[Event]:
     allowed_names: frozenset[str] = tm.controllables | tm.observables | tm.feedback
 
     def _is_allowed(domain_name: str) -> bool:
-        if domain_name in allowed_names:
-            return True
-        # Convention: domain is allowed if its name appears in the TM name.
-        if domain_name in tm.name:
-            return True
-        return False
+        return domain_name in allowed_names
 
     def _apply(ch: Channel[Event]) -> Channel[Event]:
         async def _process(item: Event, sender: AsyncSender[Event]) -> bool:
