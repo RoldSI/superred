@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import ClassVar
 
 from superred.core.types.controllable import Controllable
-from superred.core.types.trajectory import Trajectory
+from superred.core.types.trajectory import ReadableTrajectory
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,10 +118,11 @@ class RunStartEvent(Event):
     Valid responses: any :class:`EventResponse`.
 
     Attributes:
-        trajectory: The trajectory for the new run.
+        trajectory: The trajectory for the new run (may be a
+            :class:`FilteredTrajectory` when sent to the optimizer).
     """
 
-    trajectory: Trajectory
+    trajectory: ReadableTrajectory
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -132,10 +133,11 @@ class RunEndEvent(Event):
     Valid responses: :class:`RunEndResponse`.
 
     Attributes:
-        trajectory: The trajectory for the completed run.
+        trajectory: The trajectory for the completed run (may be a
+            :class:`FilteredTrajectory` when sent to the optimizer).
     """
 
-    trajectory: Trajectory
+    trajectory: ReadableTrajectory
 
 
 @dataclass(frozen=True, kw_only=True)

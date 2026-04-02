@@ -81,16 +81,15 @@ The base class provides `_dispatch()` which:
 3. Archives trajectory to `_past_trajectories` on `RunEndEvent`, clears `_current_trajectory`
 4. Calls `envelope.respond(response)` to deliver the response back through the channel
 
-**Exception safety**: If `on_event()` raises, `_dispatch` still runs the post-dispatch lifecycle (trajectory archiving) and responds to the envelope with a fallback `EventResponse(event=event)`. This ensures the sender never deadlocks. The exception is then re-raised.
+**Exception safety**: If `on_event()` raises, `_dispatch` still runs the post-dispatch lifecycle (trajectory archiving) and rejects the envelope (propagating the exception to the sender). The exception is then re-raised.
 
 Use `_dispatch` from custom `run()` implementations to retain automatic trajectory tracking. Advanced optimizers can handle envelopes directly if they want full control.
 
-## Exception handling in default `run()`
+## Exception handling
 
-The default `run()` wraps each `_dispatch()` call in `try/except`:
-- On exception, it stores the first error and **continues draining the channel** with fallback responses. This prevents the controller from deadlocking on subsequent `channel.send()` calls.
-- After the channel closes (iteration ends), it re-raises the stored error.
-- The controller's `await optimizer_task` then surfaces the exception.
+The default `run()` iterates the channel via `async for envelope in channel: await self._dispatch(envelope)`.
+
+If `on_event()` raises, `_dispatch` rejects the envelope (propagating the exception to the sender) and re-raises. The exception exits `run()` and the controller detects the failure. The controller then poisons the channel via `channel.set_error()`, ensuring no other `channel.send()` call deadlocks.
 
 ## Lifecycle events
 
@@ -103,8 +102,8 @@ These flow through the channel like any other event. No special methods to overr
 
 ## History tracking
 
-- `current_trajectory -> Trajectory | None` — trajectory for the currently active run. Set by `_dispatch` on `RunStartEvent`, cleared on `RunEndEvent`. `None` between runs.
-- `past_trajectories -> list[Trajectory]` — all completed run trajectories, oldest first. Archived by `_dispatch` on `RunEndEvent`.
+- `current_trajectory -> ReadableTrajectory | None` — trajectory for the currently active run. When provided by the controller, this is a `FilteredTrajectory` that only exposes entries within the security domain scope. Set by `_dispatch` on `RunStartEvent`, cleared on `RunEndEvent`. `None` between runs.
+- `past_trajectories -> list[ReadableTrajectory]` — all completed run trajectories, oldest first. Archived by `_dispatch` on `RunEndEvent`.
 
 Both managed automatically by `_dispatch()`. If you override `run()` and don't use `_dispatch`, you manage trajectory state yourself.
 

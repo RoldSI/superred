@@ -37,7 +37,11 @@ from superred.core.types.event import (
     RunStartEvent,
 )
 from superred.core.types.security_domain import SecurityDomainTag
-from superred.core.types.trajectory import FEEDBACK, Trajectory, TrajectoryEntry
+from superred.core.types.trajectory import (
+    FEEDBACK,
+    Trajectory,
+    TrajectoryEntry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,9 +194,16 @@ class Controller:
         # Configure target (NotApplicable propagates to caller)
         await task.configure_target(self._target)
 
-        # Initialize optimizer with this task's goal and surfaces
-        controllables = self._target.get_controllables()
-        observables = self._target.get_observables()
+        # Initialize optimizer with filtered surfaces (only in-scope items)
+        scope = self._security_domain_tag
+        controllables = [
+            c for c in self._target.get_controllables()
+            if scope.includes(c.spec.security_domain)
+        ]
+        observables = [
+            o for o in self._target.get_observables()
+            if scope.includes(o.observable.security_domain)
+        ]
         await self._optimizer.initialize(task.goal, controllables, observables)
 
         # Create channel and launch optimizer as concurrent task.
@@ -284,21 +295,39 @@ class Controller:
             A tuple of (trajectory, evaluation, done) where done is True
             if the optimizer wants to stop.
         """
-        trajectory = Trajectory()
+        scope = self._security_domain_tag
+        trajectory = Trajectory(filtered_scope=scope)
 
-        # Signal run start (bypasses middleware — goes direct to optimizer)
-        await channel.send(RunStartEvent(trajectory=trajectory))
+        # Signal run start — optimizer gets filtered view
+        await channel.send(RunStartEvent(trajectory=trajectory.filtered))
 
         # Run target — events go through middleware stack
         await self._target.run(trajectory, send_event)
 
-        # Signal run end (bypasses middleware — goes direct to optimizer)
-        end_response = await channel.send(RunEndEvent(trajectory=trajectory))
+        # Signal run end — optimizer gets filtered view
+        end_response = await channel.send(RunEndEvent(trajectory=trajectory.filtered))
 
-        # Evaluate and append feedback
+        # Evaluate (task sees full trajectory)
         evaluation = await task.evaluate(trajectory, self._target)
-        feedback = FeedbackResult(evaluation=evaluation)
-        trajectory.emit(TrajectoryEntry(entry_type=FEEDBACK, content=feedback))
+
+        # Filter sub_scores to only include in-scope scores, then append
+        # feedback to trajectory. primary_score, success, and rationale
+        # are always included (the optimizer needs the main signal).
+        filtered_sub = {
+            k: v for k, v in evaluation.sub_scores.items()
+            if scope.includes(v.security_domain)
+        }
+        filtered_eval = EvaluationResult(
+            success=evaluation.success,
+            primary_score=evaluation.primary_score,
+            sub_scores=filtered_sub,
+            rationale=evaluation.rationale,
+        )
+        trajectory.emit(TrajectoryEntry(
+            entry_type=FEEDBACK,
+            content=FeedbackResult(evaluation=filtered_eval),
+            security_domain=scope,
+        ))
         trajectory.close()
 
         done = isinstance(end_response, RunEndResponse) and end_response.done

@@ -6,15 +6,33 @@ import pytest
 
 from superred.core.controller import Controller, ControllerResult
 from superred.core.interfaces.security_claim import SecurityClaim
-from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.interfaces.target import EventHandler, Target
+from superred.core.types.controllable import Controllable, ControllableSpec
+from superred.core.types.evaluation import (
+    EvaluationResult,
+    FeedbackResult,
+    Score,
+)
 from superred.core.types.event import (
     ControllableInjection,
     ControllablePreCallEvent,
+    Event,
+    EventResponse,
     NoModification,
     RunEndEvent,
+    RunEndResponse,
     RunStartEvent,
 )
-from superred.core.types.trajectory import FEEDBACK, MODEL_REQUEST, Trajectory, TrajectoryEntry
+from superred.core.types.goal import Goal
+from superred.core.types.observable import Observable, ObservableValue
+from superred.core.types.trajectory import (
+    FEEDBACK,
+    MODEL_REQUEST,
+    MODEL_RESPONSE,
+    FilteredTrajectory,
+    Trajectory,
+    TrajectoryEntry,
+)
 
 from .conftest import (
     EXTERNAL_TAG,
@@ -42,8 +60,13 @@ class VaryingScoreTask(StubTask):
         super().__init__()
         self._scores = iter(scores)
 
-    async def evaluate(self, trajectory: Trajectory, target: object) -> EvaluationResult:
-        return EvaluationResult(success=False, primary_score=Score(value=next(self._scores)))
+    async def evaluate(
+        self, trajectory: Trajectory, target: object,
+    ) -> EvaluationResult:
+        return EvaluationResult(
+            success=False,
+            primary_score=Score(value=next(self._scores), security_domain=EXTERNAL_TAG),
+        )
 
 
 class FailingRunTarget(StubTarget):
@@ -56,7 +79,9 @@ class FailingRunTarget(StubTarget):
 class FailingEvalTask(StubTask):
     """Task whose evaluate() raises RuntimeError."""
 
-    async def evaluate(self, trajectory: object, target: object) -> EvaluationResult:
+    async def evaluate(
+        self, trajectory: object, target: object,
+    ) -> EvaluationResult:
         raise RuntimeError("evaluation exploded")
 
 
@@ -67,11 +92,15 @@ class AlternatingSuccessTask(StubTask):
         super().__init__()
         self._call_count = 0
 
-    async def evaluate(self, trajectory: Trajectory, target: object) -> EvaluationResult:
+    async def evaluate(
+        self, trajectory: Trajectory, target: object,
+    ) -> EvaluationResult:
         self._call_count += 1
         return EvaluationResult(
             success=(self._call_count == 1),
-            primary_score=Score(value=float(self._call_count)),
+            primary_score=Score(
+                value=float(self._call_count), security_domain=EXTERNAL_TAG,
+            ),
         )
 
 
@@ -468,4 +497,355 @@ class TestRunLoopEdgeCases:
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
         with pytest.raises(RuntimeError, match="closed"):
-            traj.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content="x"))
+            traj.emit(TrajectoryEntry(
+                entry_type=MODEL_REQUEST, content="x", security_domain=EXTERNAL_TAG,
+            ))
+
+
+# ---------------------------------------------------------------------------
+# Controllable / observable filtering for optimizer
+# ---------------------------------------------------------------------------
+
+
+class _MultiControllableTarget(StubTarget):
+    """Target with both in-scope and out-of-scope controllables + observables."""
+
+    def get_controllables(self) -> list[Controllable]:
+        return [
+            Controllable(spec=ControllableSpec(
+                name="external_input", security_domain=EXTERNAL_TAG,
+            )),
+            Controllable(spec=ControllableSpec(
+                name="internal_input", security_domain=INTERNAL_TAG,
+            )),
+        ]
+
+    def get_observables(self) -> list[ObservableValue]:
+        ext_obs = Observable(
+            name="ext_obs", security_domain=EXTERNAL_TAG, description="visible",
+        )
+        int_obs = Observable(
+            name="int_obs", security_domain=INTERNAL_TAG, description="hidden",
+        )
+        return [
+            ObservableValue(observable=ext_obs, content="ext_data"),
+            ObservableValue(observable=int_obs, content="int_data"),
+        ]
+
+
+class _CapturingOptimizer(StubOptimizer):
+    """Optimizer that records what it received during initialize()."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(done=True)
+        self.received_controllables: list[Controllable] = []
+        self.received_observables: list[ObservableValue] = []
+        self.received_trajectories: list[object] = []
+
+    async def initialize(
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+    ) -> None:
+        self.received_controllables = list(controllables)
+        self.received_observables = list(observables)
+
+    async def on_event(self, event: Event) -> EventResponse:
+        if isinstance(event, RunStartEvent):
+            self.received_trajectories.append(event.trajectory)
+            return EventResponse(event=event)
+        if isinstance(event, RunEndEvent):
+            return RunEndResponse(event=event, done=True)
+        return ControllableInjection(event=event, value="x")
+
+
+class TestControllableObservableFiltering:
+    async def test_out_of_scope_controllable_excluded(self) -> None:
+        """Optimizer only receives controllables within scope."""
+        optimizer = _CapturingOptimizer()
+        controller = Controller(
+            optimizer=optimizer,
+            target=_MultiControllableTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        await controller.run()
+        names = [c.spec.name for c in optimizer.received_controllables]
+        assert "external_input" in names
+        assert "internal_input" not in names
+
+    async def test_out_of_scope_observable_excluded(self) -> None:
+        """Optimizer only receives observables within scope."""
+        optimizer = _CapturingOptimizer()
+        controller = Controller(
+            optimizer=optimizer,
+            target=_MultiControllableTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        await controller.run()
+        names = [o.observable.name for o in optimizer.received_observables]
+        assert "ext_obs" in names
+        assert "int_obs" not in names
+
+    async def test_root_scope_includes_all(self) -> None:
+        """Root scope includes all controllables and observables."""
+        optimizer = _CapturingOptimizer()
+        controller = Controller(
+            optimizer=optimizer,
+            target=_MultiControllableTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=ROOT_TAG,
+        )
+        await controller.run()
+        assert len(optimizer.received_controllables) == 2
+        assert len(optimizer.received_observables) == 2
+
+
+# ---------------------------------------------------------------------------
+# Optimizer receives FilteredTrajectory
+# ---------------------------------------------------------------------------
+
+
+class TestOptimizerReceivesFilteredTrajectory:
+    async def test_run_start_carries_filtered_trajectory(self) -> None:
+        """RunStartEvent sent to optimizer carries a FilteredTrajectory."""
+        optimizer = _CapturingOptimizer()
+        controller = Controller(
+            optimizer=optimizer, target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        await controller.run()
+        assert len(optimizer.received_trajectories) == 1
+        assert isinstance(optimizer.received_trajectories[0], FilteredTrajectory)
+
+    async def test_filtered_trajectory_hides_out_of_scope_entries(self) -> None:
+        """Entries emitted with out-of-scope tags are invisible to optimizer."""
+
+        class _TaggingTarget(StubTarget):
+            async def run(
+                self, trajectory: Trajectory, send_event: EventHandler,
+            ) -> None:
+                self.run_count += 1
+                # Emit entries at different scopes
+                trajectory.emit(TrajectoryEntry(
+                    entry_type=MODEL_REQUEST, content="external",
+                    security_domain=EXTERNAL_TAG,
+                ))
+                trajectory.emit(TrajectoryEntry(
+                    entry_type=MODEL_RESPONSE, content="internal",
+                    security_domain=INTERNAL_TAG,
+                ))
+                # Still fire controllable event so optimizer responds
+                ctrl = Controllable(
+                    spec=ControllableSpec(
+                        name="user_input", security_domain=EXTERNAL_TAG,
+                    ),
+                )
+                await send_event(
+                    ControllablePreCallEvent(controllable=ctrl, request="q"),
+                )
+
+        snapshot_contents: list[str] = []
+
+        class _SnapshotOptimizer(StubOptimizer):
+            async def on_event(self, event: Event) -> EventResponse:
+                if isinstance(event, RunEndEvent):
+                    # Read from the filtered trajectory
+                    traj = event.trajectory
+                    for e in traj.snapshot():
+                        snapshot_contents.append(e.content)
+                    return RunEndResponse(event=event, done=True)
+                return await super().on_event(event)
+
+        controller = Controller(
+            optimizer=_SnapshotOptimizer(done=True),
+            target=_TaggingTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        await controller.run()
+
+        # Optimizer should only see the external entry, not internal
+        assert "external" in snapshot_contents
+        assert "internal" not in snapshot_contents
+
+
+# ---------------------------------------------------------------------------
+# Multi-entry feedback
+# ---------------------------------------------------------------------------
+
+
+class _ScopedScoresTask(StubTask):
+    """Task that returns sub_scores scoped to different security domains."""
+
+    async def evaluate(
+        self, trajectory: Trajectory, target: Target,
+    ) -> EvaluationResult:
+        return EvaluationResult(
+            success=True,
+            primary_score=Score(value=0.9, security_domain=ROOT_TAG),
+            sub_scores={
+                "external_asr": Score(
+                    value=0.8, name="external_asr", security_domain=EXTERNAL_TAG,
+                ),
+                "internal_leak": Score(
+                    value=0.3, name="internal_leak", security_domain=INTERNAL_TAG,
+                ),
+            },
+        )
+
+
+class TestScopedScoreFiltering:
+    async def test_sub_scores_filtered_by_scope(self) -> None:
+        """Controller filters out-of-scope sub_scores from feedback."""
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        result = await controller.run()
+        entries = result.task_results[0].runs[0].trajectory.snapshot()
+        feedback = [e for e in entries if e.entry_type is FEEDBACK]
+
+        # One feedback entry at the scope level
+        assert len(feedback) == 1
+        fb = feedback[0].content
+        assert isinstance(fb, FeedbackResult)
+
+        # primary_score always included
+        assert fb.evaluation.primary_score.value == 0.9
+
+        # external_asr in scope (EXTERNAL includes EXTERNAL)
+        assert "external_asr" in fb.evaluation.sub_scores
+
+        # internal_leak out of scope (EXTERNAL does not include INTERNAL)
+        assert "internal_leak" not in fb.evaluation.sub_scores
+
+    async def test_root_scope_keeps_all_sub_scores(self) -> None:
+        """Root scope includes everything — all sub_scores preserved."""
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
+            security_domain_tag=ROOT_TAG,
+        )
+        result = await controller.run()
+        entries = result.task_results[0].runs[0].trajectory.snapshot()
+        feedback = [e for e in entries if e.entry_type is FEEDBACK]
+        fb = feedback[0].content
+        assert isinstance(fb, FeedbackResult)
+        assert "external_asr" in fb.evaluation.sub_scores
+        assert "internal_leak" in fb.evaluation.sub_scores
+
+    async def test_optimizer_sees_filtered_scores_on_next_run(self) -> None:
+        """On run 2, optimizer reads run 1's feedback with filtered sub_scores."""
+        sub_score_names_seen: list[str] = []
+        run_count = 0
+
+        class _FeedbackReadingOptimizer(StubOptimizer):
+            async def on_event(self, event: Event) -> EventResponse:
+                nonlocal run_count
+                if isinstance(event, RunStartEvent):
+                    run_count += 1
+                    if run_count == 2:
+                        for past in self.past_trajectories:
+                            for entry in past.snapshot():
+                                if entry.entry_type is FEEDBACK:
+                                    fb = entry.content
+                                    if isinstance(fb, FeedbackResult):
+                                        sub_score_names_seen.extend(
+                                            fb.evaluation.sub_scores.keys(),
+                                        )
+                    return EventResponse(event=event)
+                if isinstance(event, RunEndEvent):
+                    return RunEndResponse(event=event, done=run_count >= 2)
+                return ControllableInjection(event=event, value="x")
+
+        controller = Controller(
+            optimizer=_FeedbackReadingOptimizer(),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+            max_runs_per_task=2,
+        )
+        await controller.run()
+
+        assert "external_asr" in sub_score_names_seen
+        assert "internal_leak" not in sub_score_names_seen
+
+    async def test_primary_score_included_even_when_out_of_scope(self) -> None:
+        """primary_score is always in the feedback, even if its domain
+        is outside the tested scope (optimizer needs the main signal)."""
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
+            # EXTERNAL scope, but primary_score has ROOT domain
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        result = await controller.run()
+        entries = result.task_results[0].runs[0].trajectory.snapshot()
+        feedback = [e for e in entries if e.entry_type is FEEDBACK]
+        fb = feedback[0].content
+        assert isinstance(fb, FeedbackResult)
+        # primary_score domain is ROOT, scope is EXTERNAL — still included
+        assert fb.evaluation.primary_score.value == 0.9
+        assert fb.evaluation.primary_score.security_domain is ROOT_TAG
+
+    async def test_all_sub_scores_out_of_scope(self) -> None:
+        """When every sub_score is out of scope, feedback has empty sub_scores."""
+
+        class _AllOutOfScopeTask(StubTask):
+            async def evaluate(
+                self, trajectory: Trajectory, target: Target,
+            ) -> EvaluationResult:
+                return EvaluationResult(
+                    success=True,
+                    primary_score=Score(value=0.5, security_domain=ROOT_TAG),
+                    sub_scores={
+                        "a": Score(value=0.1, security_domain=INTERNAL_TAG, name="a"),
+                        "b": Score(value=0.2, security_domain=INTERNAL_TAG, name="b"),
+                    },
+                )
+
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([_AllOutOfScopeTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        result = await controller.run()
+        entries = result.task_results[0].runs[0].trajectory.snapshot()
+        feedback = [e for e in entries if e.entry_type is FEEDBACK]
+        fb = feedback[0].content
+        assert isinstance(fb, FeedbackResult)
+        assert fb.evaluation.sub_scores == {}
+        # primary_score and success still present
+        assert fb.evaluation.primary_score.value == 0.5
+        assert fb.evaluation.success is True
+
+    async def test_success_and_rationale_preserved_in_filtered_feedback(self) -> None:
+        """success and rationale are always included in filtered feedback."""
+
+        class _RationaleTask(StubTask):
+            async def evaluate(
+                self, trajectory: Trajectory, target: Target,
+            ) -> EvaluationResult:
+                return EvaluationResult(
+                    success=False,
+                    primary_score=Score(value=0.1, security_domain=EXTERNAL_TAG),
+                    rationale="Attack partially succeeded",
+                )
+
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([_RationaleTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        result = await controller.run()
+        entries = result.task_results[0].runs[0].trajectory.snapshot()
+        feedback = [e for e in entries if e.entry_type is FEEDBACK]
+        fb = feedback[0].content
+        assert isinstance(fb, FeedbackResult)
+        assert fb.evaluation.success is False
+        assert fb.evaluation.rationale == "Attack partially succeeded"

@@ -28,13 +28,14 @@ The controller does not create an asyncio event loop — the caller provides it 
 
 1. **Per task** (from security claim):
    - `task.configure_target(target)` — if `NotApplicable`, skip task.
-   - `optimizer.initialize(goal, controllables, observables)`.
+   - `optimizer.initialize(goal, filtered_controllables, filtered_observables)` — only controllables and observables within the security domain scope are passed.
    - Create `EventChannel`, launch `optimizer.run(channel)` as concurrent `asyncio.Task`.
    - **Run loop** (until optimizer signals done or `max_runs_per_task`):
-     - Send `RunStartEvent(trajectory)` through channel.
-     - `target.run(trajectory, send_event)` — `send_event` bridges to channel with security domain filtering.
-     - Send `RunEndEvent(trajectory)` through channel — check `RunEndResponse.done`.
-     - `task.evaluate(trajectory, target)` — append `FeedbackResult` to trajectory, close it.
+     - Create `Trajectory(filtered_scope=scope)`, access `trajectory.filtered` for optimizer's view.
+     - Send `RunStartEvent(filtered_trajectory)` through channel — optimizer gets filtered view.
+     - `target.run(trajectory, send_event)` — target works with full trajectory; `send_event` bridges to channel with security domain filtering.
+     - Send `RunEndEvent(filtered_trajectory)` through channel — check `RunEndResponse.done`.
+     - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores), appends one FEEDBACK entry to the trajectory, then closes it.
      - `target.cleanup()` — reset target state for next run.
      - Track best score, success across runs.
      - If `done=True`, break.
@@ -60,13 +61,15 @@ Users can add custom middleware (logging, tracing, budget enforcement) by extend
 
 ## Security domain filtering
 
-The controller filters events based on the `security_domain_tag` parameter:
+The controller enforces the security domain scope across **all optimizer inputs**:
 
-- For `ControllablePreCallEvent` and `ControllablePostCallEvent`: check `security_domain_tag.includes(event.controllable.spec.security_domain)`.
-- **In scope**: Forward through channel to optimizer, return its response.
-- **Out of scope**: Return `NoModification(event=event)` without consulting the optimizer.
+1. **Controllables**: Filtered with `scope.includes(c.spec.security_domain)` before `optimizer.initialize()`. Out-of-scope controllables are never exposed to the optimizer.
+2. **Observables**: Filtered with `scope.includes(o.observable.security_domain)` before `optimizer.initialize()`. Out-of-scope observables are never exposed to the optimizer.
+3. **Events**: `ControllablePreCallEvent` and `ControllablePostCallEvent` for out-of-scope controllables are answered with `NoModification` without reaching the optimizer. Implemented as the `security_domain_filter` middleware composed onto `channel.send`.
+4. **Trajectory**: The optimizer receives a `FilteredTrajectory` (via `RunStartEvent`/`RunEndEvent`) that only exposes entries within the security domain scope.
+5. **Feedback**: Each `Score` in the `EvaluationResult` carries a `security_domain`. The controller filters `sub_scores` to only include in-scope scores before writing the FEEDBACK entry to the trajectory. `primary_score`, `success`, and `rationale` are always included (the optimizer needs the main optimization signal).
 
-Filtering is implemented as the `security_domain_filter` middleware, composed onto `channel.send` before events reach the channel. This allows testing specific security boundaries — scoping to `external` tests only external-facing controllables, while scoping to `root` tests everything.
+This allows testing specific security boundaries — scoping to `external` tests only external-facing surfaces, while scoping to `root` tests everything.
 
 ## Event log
 

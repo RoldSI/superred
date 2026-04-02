@@ -134,7 +134,9 @@ class TestTrajectoryMutations:
     def test_emit_checks_closed_not_open(self) -> None:
         """Kills: `if self._closed` mutated to `if not self._closed`."""
         t = Trajectory()
-        entry = TrajectoryEntry(entry_type=MODEL_REQUEST, content="x")
+        entry = TrajectoryEntry(
+            entry_type=MODEL_REQUEST, content="x", security_domain=EXTERNAL_TAG,
+        )
         t.emit(entry)  # should work when open
         t.close()
         with pytest.raises(RuntimeError):
@@ -144,7 +146,9 @@ class TestTrajectoryMutations:
         """Kills: `self._drain_cursor = len(self._entries)` mutated to
         `self._drain_cursor = 0` or removed entirely."""
         t = Trajectory()
-        t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content="a"))
+        t.emit(TrajectoryEntry(
+            entry_type=MODEL_REQUEST, content="a", security_domain=EXTERNAL_TAG,
+        ))
         first = t.drain()
         assert len(first) == 1
         second = t.drain()
@@ -154,9 +158,13 @@ class TestTrajectoryMutations:
         """Kills: `self._entries[self._drain_cursor:]` mutated to
         `self._entries[0:]`."""
         t = Trajectory()
-        t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content="a"))
+        t.emit(TrajectoryEntry(
+            entry_type=MODEL_REQUEST, content="a", security_domain=EXTERNAL_TAG,
+        ))
         t.drain()  # advance cursor
-        t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content="b"))
+        t.emit(TrajectoryEntry(
+            entry_type=MODEL_REQUEST, content="b", security_domain=EXTERNAL_TAG,
+        ))
         result = t.drain()
         assert len(result) == 1
         assert result[0].content == "b"
@@ -164,7 +172,9 @@ class TestTrajectoryMutations:
     def test_snapshot_does_not_advance_cursor(self) -> None:
         """Kills: snapshot() accidentally using drain cursor logic."""
         t = Trajectory()
-        t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content="a"))
+        t.emit(TrajectoryEntry(
+            entry_type=MODEL_REQUEST, content="a", security_domain=EXTERNAL_TAG,
+        ))
         t.snapshot()
         assert len(t.drain()) == 1  # drain should still see it
 
@@ -365,9 +375,12 @@ class TestControllerRunMutations:
         scores = iter([0.8, 0.5])
 
         class ScoredTask(StubTask):
-            async def evaluate(self, trajectory: Trajectory, target: object) -> EvaluationResult:
+            async def evaluate(
+                self, trajectory: Trajectory, target: object,
+            ) -> EvaluationResult:
                 return EvaluationResult(
-                    success=False, primary_score=Score(value=next(scores))
+                    success=False,
+                    primary_score=Score(value=next(scores), security_domain=EXTERNAL_TAG),
                 )
 
         controller = Controller(
@@ -385,12 +398,22 @@ class TestControllerRunMutations:
         from .conftest import CountingOptimizer
 
         evals = iter([
-            EvaluationResult(success=False, primary_score=Score(0.5), rationale="first"),
-            EvaluationResult(success=False, primary_score=Score(0.5), rationale="second"),
+            EvaluationResult(
+                success=False,
+                primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+                rationale="first",
+            ),
+            EvaluationResult(
+                success=False,
+                primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+                rationale="second",
+            ),
         ])
 
         class TiedTask(StubTask):
-            async def evaluate(self, trajectory: Trajectory, target: object) -> EvaluationResult:
+            async def evaluate(
+                self, trajectory: Trajectory, target: object,
+            ) -> EvaluationResult:
                 return next(evals)
 
         controller = Controller(
@@ -415,7 +438,9 @@ class TestControllerRunMutations:
         traj = result.task_results[0].runs[0].trajectory
         # Trajectory must be closed — emitting should raise
         with pytest.raises(RuntimeError, match="closed"):
-            traj.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content="x"))
+            traj.emit(TrajectoryEntry(
+                entry_type=MODEL_REQUEST, content="x", security_domain=EXTERNAL_TAG,
+            ))
 
     async def test_initialize_called(self) -> None:
         """Kills: `optimizer.initialize()` call removed."""
@@ -502,8 +527,13 @@ class TestBestScoreMCDC:
         scores = iter([0.3, 0.7])
 
         class S(StubTask):
-            async def evaluate(self, traj: Trajectory, t: object) -> EvaluationResult:
-                return EvaluationResult(success=False, primary_score=Score(next(scores)))
+            async def evaluate(
+                self, traj: Trajectory, t: object,
+            ) -> EvaluationResult:
+                return EvaluationResult(
+                    success=False,
+                    primary_score=Score(next(scores), security_domain=EXTERNAL_TAG),
+                )
 
         controller = Controller(
             optimizer=CountingOptimizer(stop_after=2), target=StubTarget(),
@@ -520,8 +550,13 @@ class TestBestScoreMCDC:
         scores = iter([0.9, 0.1])
 
         class S(StubTask):
-            async def evaluate(self, traj: Trajectory, t: object) -> EvaluationResult:
-                return EvaluationResult(success=False, primary_score=Score(next(scores)))
+            async def evaluate(
+                self, traj: Trajectory, t: object,
+            ) -> EvaluationResult:
+                return EvaluationResult(
+                    success=False,
+                    primary_score=Score(next(scores), security_domain=EXTERNAL_TAG),
+                )
 
         controller = Controller(
             optimizer=CountingOptimizer(stop_after=2), target=StubTarget(),
@@ -541,6 +576,28 @@ class TestBestScoreMCDC:
 # MC/DC: security_domain.py:104 — same pattern, tested via
 # distinct_combinations property tests which exercise both root and child nodes.
 # ---------------------------------------------------------------------------
+
+
+class TestControllerDefaultValues:
+    def test_max_runs_per_task_default_is_100(self) -> None:
+        """Kills mutant 9: `max_runs_per_task: int = 100` → `101`.
+        Verifies the default value is exactly 100."""
+        controller = Controller(
+            optimizer=StubOptimizer(),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        assert controller._max_runs_per_task == 100
+
+    def test_controller_result_skipped_defaults_empty(self) -> None:
+        """Kills mutant 8: `skipped_tasks = field(default_factory=list)` → `None`.
+        Verifies ControllerResult can be constructed without skipped_tasks."""
+        from superred.core.controller import ControllerResult
+
+        result = ControllerResult(task_results=[])
+        assert result.skipped_tasks == []
+        assert isinstance(result.skipped_tasks, list)
 
 
 class TestRunEndResponseDefault:

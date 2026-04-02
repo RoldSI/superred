@@ -217,10 +217,12 @@ class StubTask(Task[Target]):
     async def configure_target(self, target: Target) -> None:
         pass
 
-    async def evaluate(self, trajectory: Trajectory, target: Target) -> EvaluationResult:
+    async def evaluate(
+        self, trajectory: Trajectory, target: Target,
+    ) -> EvaluationResult:
         return EvaluationResult(
             success=self._success,
-            primary_score=Score(value=self._score),
+            primary_score=Score(value=self._score, security_domain=EXTERNAL_TAG),
         )
 
 
@@ -234,7 +236,9 @@ class NotApplicableTask(Task[Target]):
     async def configure_target(self, target: Target) -> None:
         raise NotApplicable("Not applicable to this target")
 
-    async def evaluate(self, trajectory: Trajectory, target: Target) -> EvaluationResult:
+    async def evaluate(
+        self, trajectory: Trajectory, target: Target,
+    ) -> EvaluationResult:
         raise AssertionError("Should not be called")
 
 

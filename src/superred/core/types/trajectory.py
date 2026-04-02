@@ -4,10 +4,15 @@ A run produces a trajectory T = <e1, ..., en> where each entry captures an
 atomic operation in the target system.
 
 Each entry's content is determined by its :class:`TrajectoryEntryType`.
+Each entry is tagged with a :class:`SecurityDomainTag` indicating which
+security scope it belongs to.
 
 All public methods are thread-safe: :meth:`emit`, :meth:`drain`,
 :meth:`snapshot`, and :meth:`close` may be called concurrently from
 multiple threads.
+
+:class:`FilteredTrajectory` provides a read-only view filtered by a
+security domain scope.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from datetime import datetime
 from typing import Any
 
 from superred.core.types.evaluation import FeedbackResult
+from superred.core.types.security_domain import SecurityDomainTag
 
 
 @dataclass(frozen=True)
@@ -79,11 +85,13 @@ class TrajectoryEntry:
     Attributes:
         entry_type: The type of this entry.
         content: Payload whose type matches ``entry_type.content_type``.
+        security_domain: The security domain scope this entry belongs to.
         timestamp: When the entry was created.
     """
 
     entry_type: TrajectoryEntryType
     content: Any
+    security_domain: SecurityDomainTag
     timestamp: datetime = field(default_factory=datetime.now)
 
 
@@ -93,6 +101,10 @@ class Trajectory:
     The target system calls :meth:`emit` to push entries and :meth:`close`
     to signal completion. Consumers read via :meth:`drain` (new entries
     since last drain) or :meth:`snapshot` (full trajectory so far).
+
+    Pass *filtered_scope* to create a :class:`FilteredTrajectory` that
+    receives in-scope entries at emit time, accessible via :attr:`filtered`.
+    The filtered view holds no reference back to this trajectory.
 
     Entry types are registered at construction. The defaults
     (:data:`MODEL_REQUEST`, :data:`MODEL_RESPONSE`) are always available;
@@ -104,6 +116,7 @@ class Trajectory:
     def __init__(
         self,
         entry_types: Sequence[TrajectoryEntryType] = (),
+        filtered_scope: SecurityDomainTag | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self._entry_types: frozenset[TrajectoryEntryType] = DEFAULT_ENTRY_TYPES | frozenset(
@@ -112,9 +125,15 @@ class Trajectory:
         self._entries: list[TrajectoryEntry] = []
         self._closed: bool = False
         self._drain_cursor: int = 0
+        # Optional filtered view — set once at construction, immutable.
+        self._filter: tuple[SecurityDomainTag, FilteredTrajectory] | None = None
+        if filtered_scope is not None:
+            self._filter = (filtered_scope, FilteredTrajectory())
 
     def emit(self, entry: TrajectoryEntry) -> None:
         """Push an entry into the stream (producer side).
+
+        If a filtered view exists, matching entries are pushed to it.
 
         Raises:
             RuntimeError: If the trajectory has already been closed.
@@ -123,6 +142,10 @@ class Trajectory:
             if self._closed:
                 raise RuntimeError("Cannot emit to a closed trajectory")
             self._entries.append(entry)
+            if self._filter is not None:
+                scope, view = self._filter
+                if scope.includes(entry.security_domain):
+                    view._push(entry)
 
     def close(self) -> None:
         """Signal that no more entries will be emitted."""
@@ -144,3 +167,69 @@ class Trajectory:
             new_entries = self._entries[self._drain_cursor :]
             self._drain_cursor = len(self._entries)
             return new_entries
+
+    @property
+    def filtered(self) -> FilteredTrajectory:
+        """The filtered view, if *filtered_scope* was provided at construction.
+
+        Raises:
+            RuntimeError: If no filtered scope was configured.
+        """
+        if self._filter is None:
+            raise RuntimeError(
+                "No filtered view — pass filtered_scope to Trajectory constructor"
+            )
+        return self._filter[1]
+
+
+class FilteredTrajectory:
+    """Read-only view of trajectory entries within a security domain scope.
+
+    Created by passing *filtered_scope* to the :class:`Trajectory`
+    constructor, then accessed via :attr:`Trajectory.filtered`.  Entries
+    are pushed by the parent trajectory at emit time.
+
+    **Encapsulation**: This object holds **no reference** to the
+    underlying :class:`Trajectory`.  Entries flow one direction only
+    (push at emit time), so the consumer cannot reach unfiltered data
+    through any attribute, closure, or other mechanism.
+    ``__slots__`` prevents ``__dict__``, blocking arbitrary attribute
+    injection.
+
+    :meth:`snapshot` and :meth:`drain` are thread-safe.
+    """
+
+    __slots__ = ("_entries", "_lock", "_drain_cursor")
+
+    def __init__(self) -> None:
+        self._entries: list[TrajectoryEntry] = []
+        self._lock = threading.Lock()
+        self._drain_cursor: int = 0
+
+    def _push(self, entry: TrajectoryEntry) -> None:
+        """Receive a pre-filtered entry from the parent trajectory.
+
+        Called by :class:`Trajectory` during :meth:`~Trajectory.emit`.
+        Not part of the public API.
+        """
+        with self._lock:
+            self._entries.append(entry)
+
+    def snapshot(self) -> list[TrajectoryEntry]:
+        """Return all in-scope entries received so far."""
+        with self._lock:
+            return list(self._entries)
+
+    def drain(self) -> list[TrajectoryEntry]:
+        """Return in-scope entries received since the last ``drain()`` call.
+
+        Maintains its own cursor independent of the parent trajectory.
+        """
+        with self._lock:
+            new_entries = self._entries[self._drain_cursor :]
+            self._drain_cursor = len(self._entries)
+            return list(new_entries)
+
+
+ReadableTrajectory = Trajectory | FilteredTrajectory
+"""Type alias for objects that expose ``snapshot()`` and ``drain()``."""

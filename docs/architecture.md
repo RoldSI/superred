@@ -61,19 +61,21 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
         → sets pre-run config via target.set_config()
         → raises NotApplicable if incompatible (task skipped)
 
-     b. optimizer.initialize(goal, controllables, observables)
+     b. Filter controllables and observables by scope
+        optimizer.initialize(goal, filtered_controllables, filtered_observables)
 
      c. channel = EventChannel()
         optimizer_task = asyncio.create_task(optimizer.run(channel))
 
      d. For each run (until optimizer signals done or max_runs):
-        i.   channel.send(RunStartEvent(trajectory))
+        i.   Create Trajectory (full) and FilteredTrajectory (optimizer's view)
+             channel.send(RunStartEvent(filtered_trajectory))
         ii.  target.run(trajectory, send_event)
-             → send_event bridges to channel with security domain filtering
-        iii. channel.send(RunEndEvent(trajectory))
+             → target uses full trajectory; send_event bridges to channel with filtering
+        iii. channel.send(RunEndEvent(filtered_trajectory))
              → optimizer responds with RunEndResponse(done=True/False)
-        iv.  task.evaluate(trajectory, target)
-             → appends FeedbackResult to trajectory, closes it
+        iv.  task.evaluate(trajectory, target) → (EvaluationResult, list[FeedbackEntry])
+             → append domain-scoped feedback entries + overall to trajectory, close it
         v.   target.cleanup()
              → resets target state for next run
         vi.  If done=True, break
@@ -147,8 +149,9 @@ src/superred/core/
                           ControllablePostCallEvent, ControllableInjection,
                           NoModification, RunStartEvent, RunEndEvent,
                           RunEndResponse
-    trajectory.py      -- TrajectoryEntryType, TrajectoryEntry, Trajectory
-    evaluation.py      -- Score, EvaluationResult, FeedbackResult
+    trajectory.py      -- TrajectoryEntryType, TrajectoryEntry, Trajectory,
+                          FilteredTrajectory, ReadableTrajectory
+    evaluation.py      -- Score, EvaluationResult, FeedbackEntry, FeedbackResult
     security_domain.py -- SecurityDomainTag, SecurityDomain
 ```
 

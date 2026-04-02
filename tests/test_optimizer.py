@@ -189,6 +189,28 @@ class TestOptimizerExceptionHandling:
         with pytest.raises(ValueError, match="end failed"):
             await task
 
+    async def test_dispatch_error_on_run_end_without_trajectory(self) -> None:
+        """If on_event raises on RunEndEvent when _current_trajectory is None,
+        _dispatch still handles lifecycle correctly (no crash, no archive)."""
+
+        class FailOnEnd(MinimalOptimizer):
+            async def on_event(self, event: Event) -> EventResponse:
+                if isinstance(event, RunEndEvent):
+                    raise ValueError("end failed")
+                return await super().on_event(event)
+
+        opt = FailOnEnd()
+        channel = EventChannel()
+        task = asyncio.create_task(opt.run(channel))
+        # Send RunEndEvent WITHOUT a preceding RunStartEvent
+        with pytest.raises(ValueError, match="end failed"):
+            await channel.send(RunEndEvent(trajectory=Trajectory()))
+        assert opt.current_trajectory is None
+        assert opt.past_trajectories == []
+        channel.close()
+        with pytest.raises(ValueError, match="end failed"):
+            await task
+
     @pytest.mark.regression
     async def test_channel_poisoned_after_optimizer_crash(self) -> None:
         """After on_event raises, subsequent channel.send() calls raise

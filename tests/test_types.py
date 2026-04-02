@@ -62,25 +62,34 @@ class TestGoal:
 
 
 class TestScore:
-    def test_construction_with_defaults(self) -> None:
-        s = Score(value=0.5)
+    def test_construction(self) -> None:
+        tag = SecurityDomainTag("ext")
+        s = Score(value=0.5, security_domain=tag)
         assert s.value == 0.5
+        assert s.security_domain is tag
         assert s.name == "primary"
 
     def test_custom_name(self) -> None:
-        s = Score(value=1.0, name="asr")
+        tag = SecurityDomainTag("ext")
+        s = Score(value=1.0, security_domain=tag, name="asr")
         assert s.name == "asr"
 
     def test_frozen(self) -> None:
-        s = Score(value=0.5)
+        tag = SecurityDomainTag("ext")
+        s = Score(value=0.5, security_domain=tag)
         with pytest.raises(FrozenInstanceError):
             s.value = 1.0  # type: ignore[misc]
 
     @pytest.mark.parametrize("value", [0.0, -1.0, 1.0, float("inf"), float("-inf")])
     def test_accepts_any_float(self, value: float) -> None:
         """Score does not constrain value range -- that's the evaluator's job."""
-        s = Score(value=value)
+        tag = SecurityDomainTag("ext")
+        s = Score(value=value, security_domain=tag)
         assert s.value == value
+
+    def test_security_domain_is_required(self) -> None:
+        with pytest.raises(TypeError):
+            Score(value=0.5)  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -90,17 +99,21 @@ class TestScore:
 
 class TestEvaluationResult:
     def test_required_fields(self) -> None:
-        er = EvaluationResult(success=True, primary_score=Score(value=1.0))
+        tag = SecurityDomainTag("ext")
+        er = EvaluationResult(
+            success=True, primary_score=Score(value=1.0, security_domain=tag),
+        )
         assert er.success is True
         assert er.primary_score.value == 1.0
         assert er.sub_scores == {}
         assert er.rationale == ""
 
     def test_with_sub_scores_and_rationale(self) -> None:
-        sub = {"asr": Score(value=0.9, name="asr")}
+        tag = SecurityDomainTag("ext")
+        sub = {"asr": Score(value=0.9, security_domain=tag, name="asr")}
         er = EvaluationResult(
             success=False,
-            primary_score=Score(value=0.5),
+            primary_score=Score(value=0.5, security_domain=tag),
             sub_scores=sub,
             rationale="Partial extraction",
         )
@@ -108,7 +121,10 @@ class TestEvaluationResult:
         assert er.rationale == "Partial extraction"
 
     def test_frozen(self) -> None:
-        er = EvaluationResult(success=True, primary_score=Score(value=1.0))
+        tag = SecurityDomainTag("ext")
+        er = EvaluationResult(
+            success=True, primary_score=Score(value=1.0, security_domain=tag),
+        )
         with pytest.raises(FrozenInstanceError):
             er.success = False  # type: ignore[misc]
 
@@ -120,14 +136,22 @@ class TestEvaluationResult:
 
 class TestFeedbackResult:
     def test_wraps_evaluation(self) -> None:
-        ev = EvaluationResult(success=True, primary_score=Score(value=1.0))
+        tag = SecurityDomainTag("ext")
+        ev = EvaluationResult(
+            success=True, primary_score=Score(value=1.0, security_domain=tag),
+        )
         fb = FeedbackResult(evaluation=ev)
         assert fb.evaluation is ev
 
     def test_mutable(self) -> None:
         """FeedbackResult is a mutable dataclass (not frozen)."""
-        ev1 = EvaluationResult(success=True, primary_score=Score(value=1.0))
-        ev2 = EvaluationResult(success=False, primary_score=Score(value=0.0))
+        tag = SecurityDomainTag("ext")
+        ev1 = EvaluationResult(
+            success=True, primary_score=Score(value=1.0, security_domain=tag),
+        )
+        ev2 = EvaluationResult(
+            success=False, primary_score=Score(value=0.0, security_domain=tag),
+        )
         fb = FeedbackResult(evaluation=ev1)
         fb.evaluation = ev2
         assert fb.evaluation is ev2

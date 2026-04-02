@@ -25,7 +25,7 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse, RunEndEvent, RunStartEvent
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import Trajectory
+from superred.core.types.trajectory import ReadableTrajectory
 
 
 class Optimizer(ABC):
@@ -55,8 +55,8 @@ class Optimizer(ABC):
     """
 
     def __init__(self) -> None:
-        self._past_trajectories: list[Trajectory] = []
-        self._current_trajectory: Trajectory | None = None
+        self._past_trajectories: list[ReadableTrajectory] = []
+        self._current_trajectory: ReadableTrajectory | None = None
 
     # ------------------------------------------------------------------
     # Setup
@@ -188,12 +188,12 @@ class Optimizer(ABC):
     # ------------------------------------------------------------------
 
     @property
-    def past_trajectories(self) -> list[Trajectory]:
+    def past_trajectories(self) -> list[ReadableTrajectory]:
         """All completed run trajectories, oldest first."""
         return list(self._past_trajectories)
 
     @property
-    def current_trajectory(self) -> Trajectory | None:
+    def current_trajectory(self) -> ReadableTrajectory | None:
         """The trajectory for the currently active run, or None."""
         return self._current_trajectory
 

@@ -91,11 +91,11 @@ Returned by the controller when a controllable event falls outside the active se
 
 ### RunStartEvent (extends Event)
 
-Signals the start of a new target run. Field: `trajectory: Trajectory`. Sent by the controller before `target.run()`. The optimizer's `_dispatch` sets `_current_trajectory` from this.
+Signals the start of a new target run. Field: `trajectory: ReadableTrajectory`. When sent to the optimizer, this is a `FilteredTrajectory` (only entries within the security domain scope are visible). The optimizer's `_dispatch` sets `_current_trajectory` from this.
 
 ### RunEndEvent (extends Event)
 
-Signals the end of a target run. Field: `trajectory: Trajectory`. Sent by the controller after `target.run()` completes. The optimizer's `_dispatch` archives the trajectory from this.
+Signals the end of a target run. Field: `trajectory: ReadableTrajectory`. When sent to the optimizer, this is a `FilteredTrajectory`. The optimizer's `_dispatch` archives the trajectory from this.
 
 ### RunEndResponse (extends EventResponse)
 
@@ -165,7 +165,7 @@ Three defaults are always registered: `MODEL_REQUEST` (str), `MODEL_RESPONSE` (s
 
 ### TrajectoryEntry (mutable)
 
-A single entry: `entry_type: TrajectoryEntryType`, `content: Any`, `timestamp: datetime`. Content shape is determined by `entry_type.content_type`.
+A single entry: `entry_type: TrajectoryEntryType`, `content: Any`, `security_domain: SecurityDomainTag`, `timestamp: datetime`. Content shape is determined by `entry_type.content_type`. The `security_domain` is required — the target sets it when emitting, and the controller sets it for FEEDBACK entries.
 
 ### Trajectory (class, thread-safe)
 
@@ -180,11 +180,29 @@ Stream of TrajectoryEntry objects for one run. Thread-safe via `threading.Lock` 
 
 **Design decision**: Non-blocking consumption only. `drain()` is cursor-based for incremental reading. `snapshot()` provides full history. Both are thread-safe.
 
+### FilteredTrajectory (class, thread-safe)
+
+Read-only view of trajectory entries within a security domain scope. Created by passing ``filtered_scope`` to the :class:`Trajectory` constructor, accessed via ``trajectory.filtered``.
+
+**Public API**:
+- `snapshot()` — returns all in-scope entries received so far.
+- `drain()` — returns in-scope entries received since last drain. Maintains its own cursor.
+
+No `emit()` or `close()` — read-only. Uses `__slots__` to prevent `__dict__`.
+
+**Push-based encapsulation**: Entries are pushed from Trajectory to FilteredTrajectory at emit time. FilteredTrajectory holds **no reference** to the underlying Trajectory — not as an attribute, not in a closure, nowhere. This is a deliberate security boundary: the optimizer receives a FilteredTrajectory and cannot reach the unfiltered data through any mechanism.
+
+**Design decision**: Push-based rather than pull-based. Filtering happens once at emit time (efficient). The Trajectory holds a reference to its filtered view (parent → child), but the reverse direction is impossible. `__slots__` prevents arbitrary attribute injection. The scope is specified at Trajectory construction time — no post-hoc subscription machinery needed.
+
+### ReadableTrajectory (type alias)
+
+`ReadableTrajectory = Trajectory | FilteredTrajectory` — used in event types and optimizer annotations where either a full or filtered trajectory is accepted.
+
 ## Evaluation (`evaluation.py`)
 
 ### Score (frozen)
 
-A named numeric score. Higher is always better. Fields: `value: float`, `name: str` (default `"primary"`).
+A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag`, `name: str` (default `"primary"`). The security domain tags each score to a scope; the controller filters `sub_scores` by the active scope before writing feedback to the trajectory.
 
 ### EvaluationResult (frozen)
 
@@ -194,7 +212,7 @@ The result of evaluating one run:
 - `sub_scores: dict[str, Score]` — named sub-scores for multi-objective analysis (default empty).
 - `rationale: str` — optional free-text explanation from the evaluator (default empty).
 
-**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores.
+**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each score carries a `security_domain` — the controller filters sub_scores by the active scope before writing feedback to the trajectory, so the optimizer only sees scores within its security domain. `primary_score` is always included (the main optimization signal).
 
 ### FeedbackResult (mutable)
 

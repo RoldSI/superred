@@ -90,16 +90,21 @@ class Task(ABC, Generic[T_Target]):
         """Evaluate a run trajectory against this task's goal.
 
         The evaluator receives:
-        - The run trajectory.
+        - The full (unfiltered) run trajectory.
         - The target for on-demand post-run queries via
           ``target.query(name, **params)``. Use ``target.query_specs``
           to discover available queries and their parameters.
+
+        Each :class:`Score` in the result carries a ``security_domain``.
+        The controller filters ``sub_scores`` by the active scope before
+        writing feedback to the trajectory, so the optimizer only sees
+        scores within its security domain.
 
         The queries here access *post-run* ground truth, distinct from
         the initial config set during :meth:`configure`.
 
         Args:
-            trajectory: The completed run trajectory.
+            trajectory: The completed run trajectory (unfiltered).
             target: The target, for post-run queries.
 
         Returns:
