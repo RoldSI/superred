@@ -9,22 +9,26 @@ A task defines an adversarial objective against a target. Tasks are stateless an
 **Target-specific** — type-safe access to concrete target API:
 ```python
 class RAGSecretTask(Task[MyRAGTarget]):
-    async def configure(self, target: MyRAGTarget) -> dict[str, str]:
-        target.set_config("db_seed", "INSERT INTO docs VALUES ('secret: abc123')")
-        return {"db_seed": "INSERT INTO docs VALUES ('secret: abc123')"}
+    @property
+    def goal(self) -> Goal:
+        return Goal(description="Extract the secret from the RAG database")
+
+    async def configure_target(self, target: MyRAGTarget) -> None:
+        secret = generate_secret()
+        target.set_config("db_seed", f"INSERT INTO docs VALUES ('{secret}')")
 
     async def evaluate(self, trajectory, target) -> EvaluationResult:
         response = target.query("last_response")
+        success = secret in response
         ...
 ```
 
 **Generic** — discovers capabilities at runtime:
 ```python
 class GenericSecretTask(Task[Target]):
-    async def configure(self, target: Target) -> dict[str, str]:
+    async def configure_target(self, target: Target) -> None:
         spec = next(s for s in target.config_specs if "secret" in s.description.lower())
-        target.set_config(spec.name, "my_secret")
-        return {spec.name: "my_secret"}
+        target.set_config(spec.name, generate_secret())
 
     async def evaluate(self, trajectory, target) -> EvaluationResult:
         for spec in target.query_specs:
@@ -34,19 +38,19 @@ class GenericSecretTask(Task[Target]):
 
 ## Stateless design
 
-Tasks hold no reference to the target. `configure` returns what it set (framework caches). `evaluate` receives the target for on-demand ground-truth queries.
+Tasks hold no reference to the target. `configure_target` sets config and returns nothing. `evaluate` receives the target for on-demand ground-truth queries.
 
 **Why stateless**: Tasks are iterated from SecurityClaims repeatedly. Statelessness means no cleanup, no stale references, safe re-iteration.
 
 ## Methods
 
 - `goal -> Goal` — property, the adversarial objective.
-- `configure(target) -> dict[str, str]` — set pre-run config via `target.set_config()`, return what was set. Raise `NotApplicable` if incompatible.
+- `configure_target(target) -> None` — set pre-run config via `target.set_config()`. Raise `NotApplicable` if incompatible with this target.
 - `evaluate(trajectory, target) -> EvaluationResult` — query post-run ground truth via `target.query()`, assess success.
 
 ## Design decisions
 
-- **Generics via TypeVar**: `T_Target = TypeVar("T_Target", bound=Target)` ensures the same concrete target type flows through `configure`. The evaluator receives the base `Target` type since it uses the generic query interface.
-- **`configure` returns what it set**: The framework caches this dict. Separates the act of configuring from the record of what was configured.
+- **Generics via TypeVar**: `T_Target = TypeVar("T_Target", bound=Target)` ensures the same concrete target type flows through `configure_target`. The evaluator receives the base `Target` type since it uses the generic query interface.
+- **`configure_target` returns None**: Configuration is a side effect on the target. No need to return what was set — the target holds its own state.
 - **`evaluate` receives target for queries**: The evaluator discovers available queries via `target.query_specs` and calls `target.query(name, **params)`. Post-run state may differ from initial config.
-- **`NotApplicable` exception**: A task that cannot work with a given target raises this from `configure`. Named without `Error` suffix (suppressed via `noqa: N818`) because it signals incompatibility, not a bug.
+- **`NotApplicable` exception**: A task that cannot work with a given target raises this from `configure_target`. Named without `Error` suffix (suppressed via `noqa: N818`) because it signals incompatibility, not a bug. The controller catches this and skips the task.

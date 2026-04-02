@@ -1,43 +1,83 @@
 # Target Interface
 
-The AI system under test. Exposes six surfaces:
+The AI system under test. Exposes five surfaces and a lifecycle.
 
-## Manual setup (user-provided via controller)
-- `manual_specs -> list[ManualSpec]` — declares required user-provided values (API keys, credentials).
-- `set_manual(values: dict[str, str])` — submits all user values at once. Must include all names from `manual_specs`.
+## Manual values (constructor)
 
-These are not set by tasks — they are provided by the user through the controller before any runs.
+API keys, credentials, and other user-provided secrets are passed directly to the target's constructor — not through the framework. This keeps the Target ABC clean and makes instantiation explicit:
+
+```python
+target = MyDockerTarget(api_key="sk-...", image="my-app:latest")
+```
 
 ## Pre-run configuration (task-set)
+
 - `config_specs -> list[ConfigSpec]` — declares named text-valued config slots with security domains.
 - `set_config(name, value)` — accepts a config value before a run.
 
+Used by tasks to set up initial state. The description on each ConfigSpec documents the accepted format — that is the contract between task and target.
+
 ## Post-run queries (evaluator uses)
+
 - `query_specs -> list[QuerySpec]` — declares available post-run interactions (name, description, optional params).
 - `query(name, **params) -> str` — executes a post-run query. May be a simple getter (no params) or a parameterized action.
 
-Manual, config, and query are **intentionally distinct**:
-- Manual = user secrets, provided once via controller.
+Config and query are **intentionally distinct**:
 - Config = task-set pre-run state, set per task.
 - Query = post-run ground truth, may differ from what was configured.
 
 ## Security domain
+
 - `security_domain -> SecurityDomain` — the security domain forest defined by this target. Classifies controllables and observables into a hierarchy of trust boundaries. Used by the controller to filter events by scope.
 
 ## Runtime surfaces
-- `get_controllables() -> list[Controllable]` — injection points the optimizer can manipulate during a run.
-- `get_observables() -> list[ObservableValue]` — static context about the system.
+
+- `get_controllables() -> list[Controllable]` — injection points the optimizer can manipulate during a run. Each has a `security_domain` tag.
+- `get_observables() -> list[ObservableValue]` — static context about the system (system prompts, source code, configs). Each has a `security_domain` tag.
 
 ## Execution
-- `run(trajectory, send_event)` — execute one run. Emit entries to trajectory. Call `send_event(event)` at controllable points and use the response.
-- `teardown()` — release resources when evaluation is done.
 
-`EventHandler = Callable[[Event], Awaitable[EventResponse]]` — the `send_event` callback. Can be wired directly to the optimizer or through a controller queue. The target doesn't know or care.
+- `run(trajectory, send_event)` — execute one run. Emit entries to trajectory via `trajectory.emit()`. Call `await send_event(event)` at controllable points and use the response.
+- `cleanup()` — reset state after a run and its evaluation (clear databases, reset containers, etc.). Called by the controller after each evaluation, before the next run. Must be implemented even if a no-op.
+- `teardown()` — release resources when all evaluation is done.
+
+`EventHandler = Callable[[Event], Awaitable[EventResponse]]` — the `send_event` callback type. The controller wraps it to bridge to the EventChannel with security domain filtering. The target doesn't know or care what's on the other end.
+
+## Internal parallelism
+
+The target can have concurrent branches, each calling `send_event` independently:
+
+```python
+async def run(self, trajectory, send_event):
+    async def branch_a():
+        resp = await send_event(event_a)  # suspends only this branch
+        ...
+    async def branch_b():
+        resp = await send_event(event_b)  # suspends only this branch
+        ...
+    await asyncio.gather(branch_a(), branch_b())
+```
+
+Each `send_event` call creates its own future in the channel. Multiple events can be in-flight simultaneously. The optimizer processes them at its own pace.
+
+For thread-based targets (Docker, subprocesses), bridge back to the event loop:
+
+```python
+async def run(self, trajectory, send_event):
+    loop = asyncio.get_running_loop()
+    def blocking_work():
+        event = parse_event_from_subprocess(proc)
+        future = asyncio.run_coroutine_threadsafe(send_event(event), loop)
+        response = future.result()  # blocks thread until response
+        ...
+    await loop.run_in_executor(None, blocking_work)
+```
 
 ## Design decisions
 
-- **Three-way separation (manual/config/query)**: Manual is user-provided secrets (API keys). Config is task-set pre-run state. Query is post-run ground truth. Different actors, different lifecycles, different security concerns.
-- **Values are always text**: ManualSpec, ConfigSpec, and QuerySpec all use strings. The description documents the format. The target interprets the text.
+- **Manual values at construction**: Keeps the Target ABC clean. No `manual_specs`/`set_manual` in the interface. The target validates its own constructor arguments.
+- **Config/query separation**: Different actors (task vs evaluator), different lifecycles (pre-run vs post-run), different security concerns.
+- **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format. The target interprets the text.
 - **Parameterized queries**: `QuerySpec` has `params: list[QueryParam]`. Simple getters have no params. Actions (e.g. "search the DB for X") declare params with names and descriptions.
-- **`send_event` as callback**: Decouples the target from the optimizer. The same target works with direct optimizer calls or through a controller queue.
-- **`set_manual` takes all values at once**: Ensures the target gets a complete set of manual values. Validation happens at the target.
+- **`send_event` as callback**: Decouples the target from the optimizer. The same target works with different controller implementations.
+- **`cleanup` is required**: Even if a no-op, forces the implementor to think about inter-run state.

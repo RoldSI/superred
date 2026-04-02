@@ -6,12 +6,12 @@ its concrete API) or to the base ``Target`` (working with any target via
 runtime discovery of config specs).
 
 Tasks are stateless:
-- ``configure`` sets initial config on the target via ``target.set_config()``
-  and returns what was set (framework caches this).
-- ``evaluate`` receives the trajectory, the target's post-run state specs
-  (what can be queried), and the target itself for ground-truth queries.
+- ``configure_target`` sets initial config on the target via
+  ``target.set_config()``.
+- ``evaluate`` receives the trajectory and the target for ground-truth
+  queries via ``target.query()``.
 
-Config (pre-run) and state (post-run) are intentionally distinct.
+Config (pre-run) and query (post-run) are intentionally distinct.
 """
 
 from __future__ import annotations

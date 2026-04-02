@@ -10,11 +10,9 @@ Two distinct concepts:
   after a run via ``target.query()``. May be a simple getter or an action
   with parameters. The description documents how to use it.
 
-- :class:`ManualSpec` — setup values provided by the user (e.g. API keys,
-  credentials). Listed by the target, submitted before anything else.
-
 These are intentionally separate: what you configure before a run is not
-the same as what you interact with after.
+the same as what you interact with after. Manual values (API keys,
+credentials) are passed directly to the target's constructor.
 """
 
 from __future__ import annotations
@@ -22,22 +20,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from superred.core.types.security_domain import SecurityDomainTag
-
-
-@dataclass(frozen=True)
-class ManualSpec:
-    """A setup value that must be provided by the user.
-
-    Used for secrets, credentials, API keys, etc. that the target
-    needs but cannot generate itself.
-
-    Attributes:
-        name: Unique identifier within the target.
-        description: Documents what this value is and its expected format.
-    """
-
-    name: str
-    description: str
 
 
 @dataclass(frozen=True)
