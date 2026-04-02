@@ -40,8 +40,8 @@ The controller does not create an asyncio event loop — the caller provides it 
      - If `done=True`, break.
    - Close channel, await optimizer task.
    - Collect `TaskResult`.
-2. **Summary**: Print human-readable results to stdout.
-3. **Teardown**: `optimizer.teardown()`, `target.teardown()`.
+2. **Teardown** (in `finally` — always runs, even on exception): `optimizer.teardown()`, `target.teardown()`.
+3. **Summary**: Print human-readable results to stdout.
 4. **Return** `ControllerResult`.
 
 ### Internal structure
@@ -99,8 +99,10 @@ The full evaluation:
 
 - **Concrete class, not ABC**: There is one orchestration logic.
 - **Channel-based**: Controller creates an `EventChannel` per task. Target's `send_event` callback bridges to `channel.send()` with filtering. Optimizer pulls from channel in `run()`.
-- **Multi-run loop**: Runs until optimizer signals `RunEndResponse(done=True)` or `max_runs_per_task` safety limit.
+- **Multi-run loop**: Runs until optimizer signals `RunEndResponse(done=True)` or `max_runs_per_task` safety limit. `max_runs_per_task` is validated >= 1 at construction.
 - **Concurrent optimizer**: `optimizer.run(channel)` is launched as an `asyncio.Task`. The optimizer stays alive across all runs for a task — one channel, one optimizer task per task.
 - **Cleanup after each run**: `target.cleanup()` is called after each evaluation to reset state.
+- **Exception-safe teardown**: `optimizer.teardown()` and `target.teardown()` are called in a `finally` block, ensuring cleanup even if a task raises an unexpected exception.
+- **Exception-safe channel shutdown**: If `target.run()` or `task.evaluate()` raises, the `finally` block in `_run_task` closes the channel and awaits the optimizer task, preventing deadlock.
 - **Thread-safe event log**: Protected by `threading.Lock` for cross-thread safety.
 - **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ControllerResult` provides structured output for programmatic use.

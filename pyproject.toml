@@ -7,7 +7,7 @@ name = "superred"
 version = "0.1.0"
 description = "A modular framework for comprehensive red-teaming of AI systems"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = "MIT"
 authors = [
     { name = "Super Red-teaming Team" },
@@ -27,6 +27,10 @@ classifiers = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+    "pytest-xdist>=3.5",
+    "hypothesis>=6.100",
+    "mutmut>=2.5,<3",
     "mypy>=1.10",
     "ruff>=0.4",
 ]
@@ -38,18 +42,48 @@ packages = ["src/superred"]
 [project.entry-points."superred.optimizers"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP046", "UP047"]  # Generic[T] syntax requires Python 3.12+; we support 3.11
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "--cov=superred.core --cov-branch --cov-report=term-missing --strict-markers"
+markers = [
+    "integration: end-to-end tests across multiple components",
+    "regression: guards against previously fixed bugs",
+]
+
+[tool.coverage.run]
+source = ["superred/core"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 95
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+exclude_also = [
+    "def __repr__",
+    "@abstractmethod",
+]
+
+[tool.mutmut]
+paths_to_mutate = "src/superred/core/"
+tests_dir = "tests/"
+runner = "python -m pytest tests/ -x -q --no-cov -o addopts=--strict-markers -p no:hypothesis"
+# Requires Python 3.13 (v2 incompatible with 3.14, v3 segfaults on macOS ARM64)
+# Run: mutmut run --no-progress && mutmut results

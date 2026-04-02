@@ -11,7 +11,6 @@ Usage::
         target=my_target,
         security_claim=claim,
         security_domain_tag=external_tag,
-        manual_values={"api_key": "sk-..."},
     )
     result = await controller.run()
 """
@@ -19,7 +18,6 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -128,6 +126,8 @@ class Controller:
         security_domain_tag: SecurityDomainTag,
         max_runs_per_task: int = 100,
     ) -> None:
+        if max_runs_per_task < 1:
+            raise ValueError("max_runs_per_task must be at least 1")
         self._optimizer = optimizer
         self._target = target
         self._security_claim = security_claim
@@ -146,20 +146,27 @@ class Controller:
 
         Configures the target, iterates all tasks in the security claim,
         runs one optimizer pass per task, evaluates, and returns results.
+
+        Teardown is always called on both optimizer and target, even if
+        a task raises an unexpected exception.
         """
         task_results: list[TaskResult] = []
         skipped_tasks: list[Task[Target]] = []
 
-        for task in self._security_claim:
-            try:
-                result = await self._run_task(task)
-                task_results.append(result)
-            except NotApplicable:
-                skipped_tasks.append(task)
-                logger.info(
-                    "Task %r not applicable, skipping",
-                    task.goal.description,
-                )
+        try:
+            for task in self._security_claim:
+                try:
+                    result = await self._run_task(task)
+                    task_results.append(result)
+                except NotApplicable:
+                    skipped_tasks.append(task)
+                    logger.info(
+                        "Task %r not applicable, skipping",
+                        task.goal.description,
+                    )
+        finally:
+            await self._optimizer.teardown()
+            await self._target.teardown()
 
         controller_result = ControllerResult(
             task_results=task_results,
@@ -167,9 +174,6 @@ class Controller:
         )
 
         self._print_summary(controller_result)
-
-        await self._optimizer.teardown()
-        await self._target.teardown()
 
         return controller_result
 
@@ -191,9 +195,19 @@ class Controller:
         observables = self._target.get_observables()
         await self._optimizer.initialize(task.goal, controllables, observables)
 
-        # Create channel and launch optimizer as concurrent task
+        # Create channel and launch optimizer as concurrent task.
+        # The wrapper poisons the channel if the optimizer crashes,
+        # ensuring no channel.send() call deadlocks.
         channel = EventChannel()
-        optimizer_task = asyncio.create_task(self._optimizer.run(channel))
+
+        async def _optimizer_with_error_propagation() -> None:
+            try:
+                await self._optimizer.run(channel)
+            except Exception as exc:
+                channel.set_error(exc)
+                raise
+
+        optimizer_task = asyncio.create_task(_optimizer_with_error_propagation())
 
         # Build the middleware stack: security filtering + logging
         send_event = compose(
@@ -230,11 +244,22 @@ class Controller:
                     break
 
         finally:
-            # Shut down optimizer: close channel, wait for it to finish
+            # Shut down optimizer: close channel, wait for it to finish.
+            # This runs even if _run_single raises (e.g. target.run() or
+            # task.evaluate() failure), preventing optimizer deadlock.
+            # If the optimizer crashed, its error already propagated via
+            # channel.set_error() — suppress it here to avoid masking
+            # the primary exception.
             channel.close()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await optimizer_task
+            except Exception:
+                pass
 
+        # These hold because max_runs_per_task >= 1 (validated in __init__)
+        # and the loop always completes at least one iteration before done
+        # can be checked. If _run_single raised, the finally block ran but
+        # we never reach here — the exception propagates directly.
         assert best_score is not None
         assert best_evaluation is not None
 

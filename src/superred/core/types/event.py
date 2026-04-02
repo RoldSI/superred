@@ -1,8 +1,9 @@
 """Event types dispatched to the optimizer during target runs.
 
 Events represent discrete interaction points between the target system
-and the optimizer.  Each concrete event type has a corresponding response
-type that the optimizer must return.
+and the optimizer.  Each concrete event type declares valid response types
+via the ``response_types`` class variable, validated at runtime by
+:meth:`EventEnvelope.respond`.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import ClassVar
 
 from superred.core.types.controllable import Controllable
 from superred.core.types.trajectory import Trajectory
@@ -19,10 +21,16 @@ from superred.core.types.trajectory import Trajectory
 class Event:
     """Base class for all events dispatched to the optimizer.
 
+    Subclasses declare ``response_types`` as a :class:`ClassVar` tuple of
+    allowed response classes.  Empty tuple means any :class:`EventResponse`
+    is accepted (the default for base Event).
+
     Attributes:
         event_id: Unique identifier for this event instance.
         timestamp: When the event was created.
     """
+
+    response_types: ClassVar[tuple[type[EventResponse], ...]] = ()
 
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = field(default_factory=datetime.now)
@@ -46,7 +54,7 @@ class EventResponse:
 class ControllablePreCallEvent(Event):
     """A controllable injection point has been reached.
 
-    The optimizer must respond with a :class:`ControllableInjection`.
+    Valid responses: :class:`ControllableInjection`, :class:`NoModification`.
 
     Attributes:
         controllable: The injection point that was reached.
@@ -62,6 +70,7 @@ class ControllablePostCallEvent(Event):
     """A controllable's injected value has been used by the target.
 
     Sent after injection so the optimizer can observe the effect.
+    Valid responses: :class:`ControllableInjection`, :class:`NoModification`.
 
     Attributes:
         controllable: The injection point that was used.
@@ -94,6 +103,7 @@ class NoModification(EventResponse):
 
     Returned by the controller when an event's controllable falls outside
     the security domain tag being tested, so the optimizer is not consulted.
+    Also used as a fallback response when the optimizer encounters an error.
     """
 
 
@@ -105,6 +115,7 @@ class RunStartEvent(Event):
     """Signals the start of a new target run.
 
     Sent by the controller before ``target.run()`` begins.
+    Valid responses: any :class:`EventResponse`.
 
     Attributes:
         trajectory: The trajectory for the new run.
@@ -118,6 +129,7 @@ class RunEndEvent(Event):
     """Signals the end of a target run.
 
     Sent by the controller after ``target.run()`` completes.
+    Valid responses: :class:`RunEndResponse`.
 
     Attributes:
         trajectory: The trajectory for the completed run.
@@ -138,3 +150,15 @@ class RunEndResponse(EventResponse):
     """
 
     done: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Wire up response_types after all classes are defined.
+# ClassVar fields are not part of __init__ or __eq__, so setting them
+# after class creation is safe for frozen dataclasses.
+# ---------------------------------------------------------------------------
+
+ControllablePreCallEvent.response_types = (ControllableInjection, NoModification)
+ControllablePostCallEvent.response_types = (ControllableInjection, NoModification)
+RunStartEvent.response_types = (EventResponse,)
+RunEndEvent.response_types = (RunEndResponse,)

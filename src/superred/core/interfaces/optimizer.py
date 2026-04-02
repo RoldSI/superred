@@ -89,6 +89,12 @@ class Optimizer(ABC):
         :meth:`_dispatch`, which handles trajectory lifecycle and
         delegates to :meth:`on_event`.
 
+        If :meth:`on_event` raises, ``_dispatch`` rejects the envelope
+        (propagating the exception to the sender) and re-raises. The
+        exception exits ``run()`` and the controller detects the failure.
+        The controller then poisons the channel via ``set_error()``,
+        ensuring no other ``send()`` call deadlocks.
+
         Override for parallel consumption or continuous execution.
         Call :meth:`_dispatch` from custom implementations to retain
         automatic trajectory tracking.
@@ -140,6 +146,11 @@ class Optimizer(ABC):
         ``_past_trajectories``), delegates to :meth:`on_event`, and
         delivers the response via the envelope.
 
+        If :meth:`on_event` raises, the envelope is rejected with the
+        exception (so the sender gets the error instead of deadlocking)
+        and trajectory lifecycle is maintained. The exception is then
+        re-raised.
+
         Call this from custom :meth:`run` implementations to retain
         automatic trajectory tracking.
 
@@ -152,7 +163,17 @@ class Optimizer(ABC):
         if isinstance(event, RunStartEvent):
             self._current_trajectory = event.trajectory
 
-        response = await self.on_event(event)
+        try:
+            response = await self.on_event(event)
+        except Exception as exc:
+            # Post-dispatch lifecycle must still run
+            if isinstance(event, RunEndEvent):
+                if self._current_trajectory is not None:
+                    self._past_trajectories.append(self._current_trajectory)
+                self._current_trajectory = None
+            # Reject so the sender gets the exception (no deadlock)
+            envelope.reject(exc)
+            raise
 
         # Post-dispatch lifecycle
         if isinstance(event, RunEndEvent):

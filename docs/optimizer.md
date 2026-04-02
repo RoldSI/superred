@@ -81,7 +81,16 @@ The base class provides `_dispatch()` which:
 3. Archives trajectory to `_past_trajectories` on `RunEndEvent`, clears `_current_trajectory`
 4. Calls `envelope.respond(response)` to deliver the response back through the channel
 
+**Exception safety**: If `on_event()` raises, `_dispatch` still runs the post-dispatch lifecycle (trajectory archiving) and responds to the envelope with a fallback `EventResponse(event=event)`. This ensures the sender never deadlocks. The exception is then re-raised.
+
 Use `_dispatch` from custom `run()` implementations to retain automatic trajectory tracking. Advanced optimizers can handle envelopes directly if they want full control.
+
+## Exception handling in default `run()`
+
+The default `run()` wraps each `_dispatch()` call in `try/except`:
+- On exception, it stores the first error and **continues draining the channel** with fallback responses. This prevents the controller from deadlocking on subsequent `channel.send()` calls.
+- After the channel closes (iteration ends), it re-raises the stored error.
+- The controller's `await optimizer_task` then surfaces the exception.
 
 ## Lifecycle events
 
@@ -113,3 +122,4 @@ Both managed automatically by `_dispatch()`. If you override `run()` and don't u
 - **Lifecycle events over hooks**: `RunStartEvent`/`RunEndEvent` flow through the same channel as controllable events. Uniform interface — no special methods to override.
 - **`_dispatch` for convenience**: Handles trajectory bookkeeping and envelope response. Optional — advanced optimizers can handle envelopes directly.
 - **Base class tracks trajectories**: `_current_trajectory` and `_past_trajectories` are managed by the base class via `_dispatch`. This is the common case — most optimizers want trajectory history without boilerplate.
+- **Exception-safe by default**: `_dispatch` responds to envelopes even on `on_event` failure. `run()` continues draining the channel after errors to prevent deadlock. The first error is re-raised after the channel closes.
