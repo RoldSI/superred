@@ -1,6 +1,5 @@
 """Shared types used across all superred interfaces."""
 
-from superred.core.types.channel import EventChannel, EventEnvelope
 from superred.core.types.controllable import (
     Controllable,
     ControllableSpec,
@@ -39,8 +38,6 @@ __all__ = [
     "ControllablePreCallEvent",
     "ControllableSpec",
     "EvaluationResult",
-    "EventChannel",
-    "EventEnvelope",
     "Event",
     "EventResponse",
     "FEEDBACK",

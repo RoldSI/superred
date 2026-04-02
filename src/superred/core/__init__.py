@@ -1,5 +1,6 @@
 """Core interfaces and types for the superred framework."""
 
+from superred.core.channel import EventChannel, EventEnvelope
 from superred.core.controller import Controller, ControllerResult, RunResult, TaskResult
 from superred.core.interfaces import (
     EventHandler,
@@ -9,6 +10,7 @@ from superred.core.interfaces import (
     Target,
     Task,
 )
+from superred.core.middleware import Middleware, compose, security_domain_filter
 from superred.core.types import (
     FEEDBACK,
     MODEL_REQUEST,
@@ -21,8 +23,6 @@ from superred.core.types import (
     ControllableSpec,
     EvaluationResult,
     Event,
-    EventChannel,
-    EventEnvelope,
     EventResponse,
     FeedbackResult,
     Goal,
@@ -44,11 +44,18 @@ from superred.core.types import (
 )
 
 __all__ = [
+    # Channel
+    "EventChannel",
+    "EventEnvelope",
     # Controller
     "Controller",
     "ControllerResult",
     "RunResult",
     "TaskResult",
+    # Middleware
+    "Middleware",
+    "compose",
+    "security_domain_filter",
     # Interfaces
     "EventHandler",
     "NotApplicable",
@@ -65,8 +72,6 @@ __all__ = [
     "ControllableSpec",
     "EvaluationResult",
     "Event",
-    "EventChannel",
-    "EventEnvelope",
     "EventResponse",
     "FEEDBACK",
     "FeedbackResult",

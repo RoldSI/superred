@@ -106,36 +106,39 @@ The controller does not create its own event loop. This allows embedding in larg
 
 4. **Target internal parallelism**: Multiple concurrent branches each calling `send_event` independently. Each gets its own response via the channel's future-based mechanism. Supports asyncio tasks and thread bridging.
 
-5. **Manual values are constructor concerns**: API keys, credentials, etc. are passed to the target's constructor. Not part of the framework interface.
+5. **Composable middleware**: `Middleware = Callable[[EventHandler], EventHandler]`. Wraps the event callback with zero overhead (function composition, no extra tasks or channels). `compose(a, b)(handler)` applies `a` outermost, `b` inner. Built-in: `security_domain_filter`. Users can add logging, tracing, budget enforcement etc. as additional middleware.
 
-6. **Config and query are distinct target surfaces**: `ConfigSpec`/`set_config` for task-set pre-run state. `QuerySpec`/`query` for post-run evaluation queries. Different actors, different lifecycles.
+6. **Manual values are constructor concerns**: API keys, credentials, etc. are passed to the target's constructor. Not part of the framework interface.
 
-7. **Tasks are stateless**: `configure_target` sets config, returns nothing. `evaluate` receives the target for on-demand queries. No internal target reference. Safe to re-iterate from SecurityClaims.
+7. **Config and query are distinct target surfaces**: `ConfigSpec`/`set_config` for task-set pre-run state. `QuerySpec`/`query` for post-run evaluation queries. Different actors, different lifecycles.
 
-8. **Tasks are type-bound via generics**: `Task[MyRAGTarget]` gets type-safe access to the concrete target. `Task[Target]` discovers capabilities at runtime via `config_specs`/`query_specs`.
+8. **Tasks are stateless**: `configure_target` sets config, returns nothing. `evaluate` receives the target for on-demand queries. No internal target reference. Safe to re-iterate from SecurityClaims.
 
-9. **Thread-safe at every boundary**: Trajectory (`threading.Lock`), EventChannel (`asyncio.Queue` + `call_soon_threadsafe`), EventEnvelope.respond (`Lock` + `call_soon_threadsafe`), Controller event log (`threading.Lock`).
+9. **Tasks are type-bound via generics**: `Task[MyRAGTarget]` gets type-safe access to the concrete target. `Task[Target]` discovers capabilities at runtime via `config_specs`/`query_specs`.
 
-10. **Process-safe interface**: The EventChannel interface (send/receive/respond/close) is designed so a future process-safe implementation (multiprocessing, sockets) can be swapped in with the same contract.
+10. **Thread-safe at every boundary**: Trajectory (`threading.Lock`), EventChannel (`asyncio.Queue` + `call_soon_threadsafe`), EventEnvelope.respond (`Lock` + `call_soon_threadsafe`), Controller event log (`threading.Lock`).
 
-11. **SecurityClaim composes**: From tasks (`from_tasks`) or from other claims (`from_claims`). Lazy chaining for claims-of-claims. Re-iterable since tasks are stateless.
+11. **Process-safe interface**: The EventChannel interface (send/receive/respond/close) is designed so a future process-safe implementation (multiprocessing, sockets) can be swapped in with the same contract.
 
-12. **Runtime-defined types**: SecurityDomainTag and TrajectoryEntryType are frozen dataclasses, not enums. Target systems define their own instances at runtime.
+12. **SecurityClaim composes**: From tasks (`from_tasks`) or from other claims (`from_claims`). Lazy chaining for claims-of-claims. Re-iterable since tasks are stateless.
 
-13. **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format contract. The target interprets the text.
+13. **Runtime-defined types**: SecurityDomainTag and TrajectoryEntryType are frozen dataclasses, not enums. Target systems define their own instances at runtime.
+
+14. **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format contract. The target interprets the text.
 
 ## File Map
 
 ```
 src/superred/core/
+  channel.py           -- EventEnvelope, EventChannel (thread-safe)
   controller.py        -- Controller, RunResult, TaskResult, ControllerResult
+  middleware.py         -- Middleware type, compose(), security_domain_filter()
   interfaces/
     optimizer.py       -- Optimizer ABC (actor model: run, on_event, _dispatch)
     target.py          -- Target ABC, EventHandler type alias
     task.py            -- Task[T_Target] ABC, NotApplicable exception
     security_claim.py  -- SecurityClaim (composable task iterator)
   types/
-    channel.py         -- EventEnvelope, EventChannel (thread-safe)
     goal.py            -- Goal
     state.py           -- ConfigSpec, QuerySpec, QueryParam
     controllable.py    -- ControllableSpec, Controllable, RequestAnswerPair

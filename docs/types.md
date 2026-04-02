@@ -125,6 +125,28 @@ Thread-safe bidirectional event-response channel.
 
 **Design decision**: Uses `asyncio.Queue` internally — all queue access happens on the event loop thread. Thread safety for `respond()` and `close()` comes from `call_soon_threadsafe` bridging. The interface is designed so a future process-safe implementation (multiprocessing, sockets) can provide the same contract.
 
+**Location**: `core/channel.py` (not in `types/` — it's communication infrastructure, not a data type).
+
+## Middleware (`middleware.py`)
+
+Composable transformations on the `EventHandler` callback. Zero overhead — pure function composition, no extra tasks or channels.
+
+### Middleware type
+
+`Middleware = Callable[[EventHandler], EventHandler]` — takes a handler, returns a wrapped handler.
+
+### compose(*middlewares)
+
+Composes middleware left-to-right (first listed = outermost). `compose(a, b)(handler)` means `a(b(handler))`: events pass through `a` first, then `b`, then the inner handler.
+
+### security_domain_filter(scope, event_log, event_log_lock)
+
+Built-in middleware that filters controllable events by security domain. Events for controllables outside `scope` are answered with `NoModification` without reaching the inner handler. Optionally logs all event-response pairs to `event_log` (thread-safe via `event_log_lock`).
+
+**Design decision**: Middleware is function composition, not channel pipes. Each middleware wraps the callback — no background tasks, no extra channels, no sentinel cleanup. This gives the composability of pipeline architectures with zero overhead.
+
+**Location**: `core/middleware.py`.
+
 ## Trajectory (`trajectory.py`)
 
 ### TrajectoryEntryType (frozen)

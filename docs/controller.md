@@ -46,9 +46,17 @@ The controller does not create an asyncio event loop — the caller provides it 
 
 ### Internal structure
 
-- `_run_task(task)` — manages the full lifecycle for one task: configure, initialize optimizer, run loop, collect results.
-- `_run_single(task, channel, run_number)` — executes one iteration: RunStartEvent → target.run → RunEndEvent → evaluate → feedback → close trajectory. Returns `(trajectory, evaluation, done)`.
-- `_make_send_event(channel)` — creates the `EventHandler` callback that bridges target events to the channel with security domain filtering.
+- `_run_task(task)` — manages the full lifecycle for one task: configure, initialize optimizer, build middleware stack, run loop, collect results.
+- `_run_single(task, channel, send_event, run_number)` — executes one iteration: RunStartEvent → target.run → RunEndEvent → evaluate → feedback → close trajectory. Returns `(trajectory, evaluation, done)`.
+
+The `send_event` callback passed to `target.run` is built by composing middleware onto `channel.send`:
+```python
+send_event = compose(
+    security_domain_filter(tag, event_log=..., event_log_lock=...),
+)(channel.send)
+```
+
+Users can add custom middleware (logging, tracing, budget enforcement) by extending the composition.
 
 ## Security domain filtering
 
@@ -58,7 +66,7 @@ The controller filters events based on the `security_domain_tag` parameter:
 - **In scope**: Forward through channel to optimizer, return its response.
 - **Out of scope**: Return `NoModification(event=event)` without consulting the optimizer.
 
-Filtering happens in the `send_event` callback, before events reach the channel. This allows testing specific security boundaries — scoping to `external` tests only external-facing controllables, while scoping to `root` tests everything.
+Filtering is implemented as the `security_domain_filter` middleware, composed onto `channel.send` before events reach the channel. This allows testing specific security boundaries — scoping to `external` tests only external-facing controllables, while scoping to `root` tests everything.
 
 ## Event log
 

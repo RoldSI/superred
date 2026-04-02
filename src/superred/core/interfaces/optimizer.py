@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from superred.core.types.channel import EventChannel, EventEnvelope
+from superred.core.channel import EventChannel, EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse, RunEndEvent, RunStartEvent
 from superred.core.types.goal import Goal

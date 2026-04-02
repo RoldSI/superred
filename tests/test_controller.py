@@ -6,12 +6,13 @@ import asyncio
 
 import pytest
 
+from superred.core.channel import EventChannel
 from superred.core.controller import Controller, ControllerResult
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import EventHandler, Target
 from superred.core.interfaces.task import NotApplicable, Task
-from superred.core.types.channel import EventChannel
+from superred.core.middleware import Middleware, compose, security_domain_filter
 from superred.core.types.controllable import Controllable, ControllableSpec
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.event import (
@@ -645,3 +646,97 @@ class TestEventLog:
         ]
         assert len(controllable_log) == 1
         assert isinstance(controllable_log[0][1], ControllableInjection)
+
+
+# ---------------------------------------------------------------------------
+# Middleware tests
+# ---------------------------------------------------------------------------
+
+
+class TestMiddleware:
+    """Tests for middleware compose and security_domain_filter."""
+
+    async def test_compose_identity(self) -> None:
+        """compose() with no middlewares returns the handler unchanged."""
+        calls: list[Event] = []
+
+        async def handler(event: Event) -> EventResponse:
+            calls.append(event)
+            return EventResponse(event=event)
+
+        wrapped = compose()(handler)
+        event = RunStartEvent(trajectory=Trajectory())
+        await wrapped(event)
+        assert len(calls) == 1
+
+    async def test_compose_ordering(self) -> None:
+        """Middlewares apply left-to-right (first listed = outermost)."""
+        order: list[str] = []
+
+        def make_mw(name: str) -> Middleware:
+            def mw(handler: EventHandler) -> EventHandler:
+                async def wrapped(event: Event) -> EventResponse:
+                    order.append(f"{name}_before")
+                    resp = await handler(event)
+                    order.append(f"{name}_after")
+                    return resp
+                return wrapped
+            return mw
+
+        async def inner(event: Event) -> EventResponse:
+            order.append("inner")
+            return EventResponse(event=event)
+
+        wrapped = compose(make_mw("a"), make_mw("b"))(inner)
+        await wrapped(RunStartEvent(trajectory=Trajectory()))
+
+        assert order == ["a_before", "b_before", "inner", "b_after", "a_after"]
+
+    async def test_security_filter_blocks_out_of_scope(self) -> None:
+        """security_domain_filter blocks events outside scope."""
+        log: list[tuple[Event, EventResponse]] = []
+
+        async def handler(event: Event) -> EventResponse:
+            return ControllableInjection(event=event, value="x")
+
+        filtered = security_domain_filter(EXTERNAL_TAG, event_log=log)(handler)
+
+        # INTERNAL_TAG is NOT included by EXTERNAL_TAG
+        controllable = Controllable(
+            spec=ControllableSpec(name="c", security_domain=INTERNAL_TAG)
+        )
+        event = ControllablePreCallEvent(controllable=controllable, request="hi")
+        response = await filtered(event)
+
+        assert isinstance(response, NoModification)
+        assert len(log) == 1
+
+    async def test_security_filter_passes_in_scope(self) -> None:
+        """security_domain_filter forwards events in scope."""
+        log: list[tuple[Event, EventResponse]] = []
+
+        async def handler(event: Event) -> EventResponse:
+            return ControllableInjection(event=event, value="x")
+
+        filtered = security_domain_filter(EXTERNAL_TAG, event_log=log)(handler)
+
+        controllable = Controllable(
+            spec=ControllableSpec(name="c", security_domain=EXTERNAL_TAG)
+        )
+        event = ControllablePreCallEvent(controllable=controllable, request="hi")
+        response = await filtered(event)
+
+        assert isinstance(response, ControllableInjection)
+        assert len(log) == 1
+
+    async def test_security_filter_passes_non_controllable(self) -> None:
+        """Non-controllable events pass through regardless."""
+
+        async def handler(event: Event) -> EventResponse:
+            return EventResponse(event=event)
+
+        filtered = security_domain_filter(EXTERNAL_TAG)(handler)
+        event = RunStartEvent(trajectory=Trajectory())
+        response = await filtered(event)
+
+        assert isinstance(response, EventResponse)

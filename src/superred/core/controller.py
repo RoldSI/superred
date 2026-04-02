@@ -24,18 +24,16 @@ import logging
 import threading
 from dataclasses import dataclass, field
 
+from superred.core.channel import EventChannel
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
-from superred.core.interfaces.target import EventHandler, Target
+from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
-from superred.core.types.channel import EventChannel
+from superred.core.middleware import EventHandler, compose, security_domain_filter
 from superred.core.types.evaluation import EvaluationResult, FeedbackResult, Score
 from superred.core.types.event import (
-    ControllablePostCallEvent,
-    ControllablePreCallEvent,
     Event,
     EventResponse,
-    NoModification,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -197,6 +195,15 @@ class Controller:
         channel = EventChannel()
         optimizer_task = asyncio.create_task(self._optimizer.run(channel))
 
+        # Build the middleware stack: security filtering + logging
+        send_event = compose(
+            security_domain_filter(
+                self._security_domain_tag,
+                event_log=self._event_log,
+                event_log_lock=self._event_log_lock,
+            ),
+        )(channel.send)
+
         runs: list[RunResult] = []
         best_score: Score | None = None
         best_evaluation: EvaluationResult | None = None
@@ -205,7 +212,7 @@ class Controller:
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
                 trajectory, evaluation, done = await self._run_single(
-                    task, channel, run_number
+                    task, channel, send_event, run_number
                 )
                 runs.append(RunResult(trajectory=trajectory, evaluation=evaluation))
 
@@ -243,6 +250,7 @@ class Controller:
         self,
         task: Task[Target],
         channel: EventChannel,
+        send_event: EventHandler,
         run_number: int,
     ) -> tuple[Trajectory, EvaluationResult, bool]:
         """Execute a single optimizer iteration (one target run + evaluation).
@@ -253,13 +261,13 @@ class Controller:
         """
         trajectory = Trajectory()
 
-        # Signal run start
+        # Signal run start (bypasses middleware — goes direct to optimizer)
         await channel.send(RunStartEvent(trajectory=trajectory))
 
-        # Run target — send_event bridges to channel with filtering
-        await self._target.run(trajectory, self._make_send_event(channel))
+        # Run target — events go through middleware stack
+        await self._target.run(trajectory, send_event)
 
-        # Signal run end and check if optimizer wants to stop
+        # Signal run end (bypasses middleware — goes direct to optimizer)
         end_response = await channel.send(RunEndEvent(trajectory=trajectory))
 
         # Evaluate and append feedback
@@ -280,35 +288,6 @@ class Controller:
         )
 
         return trajectory, evaluation, done
-
-    # ------------------------------------------------------------------
-    # Event bridging with security domain filtering
-    # ------------------------------------------------------------------
-
-    def _make_send_event(self, channel: EventChannel) -> EventHandler:
-        """Create a send_event callback that bridges to the channel."""
-        security_domain_tag = self._security_domain_tag
-
-        async def send_event(event: Event) -> EventResponse:
-            # Security domain filtering for controllable events
-            if isinstance(event, (ControllablePreCallEvent, ControllablePostCallEvent)):
-                controllable_domain = event.controllable.spec.security_domain
-                if not security_domain_tag.includes(controllable_domain):
-                    response: EventResponse = NoModification(event=event)
-                    self._log_event(event, response)
-                    return response
-
-            # Forward through channel to optimizer
-            response = await channel.send(event)
-            self._log_event(event, response)
-            return response
-
-        return send_event
-
-    def _log_event(self, event: Event, response: EventResponse) -> None:
-        """Thread-safe event logging."""
-        with self._event_log_lock:
-            self._event_log.append((event, response))
 
     # ------------------------------------------------------------------
     # Accessors
