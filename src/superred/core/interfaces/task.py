@@ -85,7 +85,7 @@ class Task(ABC, Generic[T_Target]):
     async def evaluate(
         self,
         trajectory: Trajectory,
-        target: Target,
+        target: T_Target,
     ) -> EvaluationResult:
         """Evaluate a run trajectory against this task's goal.
 
