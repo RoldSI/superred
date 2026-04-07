@@ -1,6 +1,6 @@
-"""Unit tests for core value types: Goal, Score, EvaluationResult, FeedbackResult,
-ControllableSpec, Controllable, RequestAnswerPair, Observable, ObservableValue,
-ConfigSpec, QuerySpec, QueryParam, and Event hierarchy.
+"""Unit tests for core value types: Goal, Score, EvaluationResult, FeedbackEvent,
+Controllable, Observable, ObservableValue, ConfigSpec, QuerySpec, QueryParam,
+and Event hierarchy.
 
 Each test verifies a real behavioral contract of the type system.
 """
@@ -13,19 +13,16 @@ from datetime import datetime
 
 import pytest
 
-from superred.core.types.controllable import (
-    Controllable,
-    ControllableSpec,
-    RequestAnswerPair,
-)
-from superred.core.types.evaluation import EvaluationResult, FeedbackResult, Score
-from superred.core.types.event import (
+from superred.core.types.controllable import Controllable
+from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.event import Event, EventResponse
+from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
-    NoModification,
+    FeedbackEvent,
+    LogEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -87,9 +84,9 @@ class TestScore:
         s = Score(value=value, security_domain=tag)
         assert s.value == value
 
-    def test_security_domain_is_required(self) -> None:
-        with pytest.raises(TypeError):
-            Score(value=0.5)  # type: ignore[call-arg]
+    def test_security_domain_defaults_to_none(self) -> None:
+        s = Score(value=0.5)
+        assert s.security_domain is None
 
 
 # ---------------------------------------------------------------------------
@@ -130,21 +127,47 @@ class TestEvaluationResult:
 
 
 # ---------------------------------------------------------------------------
-# FeedbackResult
+# LogEvent
 # ---------------------------------------------------------------------------
 
 
-class TestFeedbackResult:
+class TestLogEvent:
+    def test_fields(self) -> None:
+        tag = SecurityDomainTag("ext")
+        e = LogEvent(content="hello", label="model_request", security_domain=tag)
+        assert e.content == "hello"
+        assert e.label == "model_request"
+        assert e.security_domain is tag
+        assert isinstance(e, Event)
+
+    def test_frozen(self) -> None:
+        tag = SecurityDomainTag("ext")
+        e = LogEvent(content="hello", security_domain=tag)
+        with pytest.raises(FrozenInstanceError):
+            e.content = "other"  # type: ignore[misc]
+
+    def test_label_defaults_empty(self) -> None:
+        tag = SecurityDomainTag("ext")
+        e = LogEvent(content="hello", security_domain=tag)
+        assert e.label == ""
+
+
+# ---------------------------------------------------------------------------
+# FeedbackEvent
+# ---------------------------------------------------------------------------
+
+
+class TestFeedbackEvent:
     def test_wraps_evaluation(self) -> None:
         tag = SecurityDomainTag("ext")
         ev = EvaluationResult(
             success=True, primary_score=Score(value=1.0, security_domain=tag),
         )
-        fb = FeedbackResult(evaluation=ev)
+        fb = FeedbackEvent(evaluation=ev)
         assert fb.evaluation is ev
 
-    def test_mutable(self) -> None:
-        """FeedbackResult is a mutable dataclass (not frozen)."""
+    def test_frozen(self) -> None:
+        """FeedbackEvent is a frozen dataclass (inherits from Event)."""
         tag = SecurityDomainTag("ext")
         ev1 = EvaluationResult(
             success=True, primary_score=Score(value=1.0, security_domain=tag),
@@ -152,47 +175,9 @@ class TestFeedbackResult:
         ev2 = EvaluationResult(
             success=False, primary_score=Score(value=0.0, security_domain=tag),
         )
-        fb = FeedbackResult(evaluation=ev1)
-        fb.evaluation = ev2
-        assert fb.evaluation is ev2
-
-
-# ---------------------------------------------------------------------------
-# ControllableSpec
-# ---------------------------------------------------------------------------
-
-
-class TestControllableSpec:
-    def test_construction(self) -> None:
-        tag = SecurityDomainTag("ext")
-        spec = ControllableSpec(name="input", security_domain=tag)
-        assert spec.name == "input"
-        assert spec.security_domain is tag
-        assert spec.description == ""
-        assert spec.value_type == "text"
-
-    def test_frozen(self) -> None:
-        tag = SecurityDomainTag("ext")
-        spec = ControllableSpec(name="input", security_domain=tag)
+        fb = FeedbackEvent(evaluation=ev1)
         with pytest.raises(FrozenInstanceError):
-            spec.name = "other"  # type: ignore[misc]
-
-
-# ---------------------------------------------------------------------------
-# RequestAnswerPair
-# ---------------------------------------------------------------------------
-
-
-class TestRequestAnswerPair:
-    def test_construction(self) -> None:
-        pair = RequestAnswerPair(request="hello", answer="world")
-        assert pair.request == "hello"
-        assert pair.answer == "world"
-
-    def test_frozen(self) -> None:
-        pair = RequestAnswerPair(request="a", answer="b")
-        with pytest.raises(FrozenInstanceError):
-            pair.request = "c"  # type: ignore[misc]
+            fb.evaluation = ev2  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -201,30 +186,19 @@ class TestRequestAnswerPair:
 
 
 class TestControllable:
-    def test_construction_with_empty_history(self) -> None:
+    def test_construction(self) -> None:
         tag = SecurityDomainTag("ext")
-        spec = ControllableSpec(name="input", security_domain=tag)
-        c = Controllable(spec=spec)
-        assert c.spec is spec
-        assert c.history == []
+        c = Controllable(name="input", security_domain=tag)
+        assert c.name == "input"
+        assert c.security_domain is tag
+        assert c.description == ""
+        assert c.value_type == "text"
 
-    def test_history_is_mutable(self) -> None:
+    def test_frozen(self) -> None:
         tag = SecurityDomainTag("ext")
-        spec = ControllableSpec(name="input", security_domain=tag)
-        c = Controllable(spec=spec)
-        pair = RequestAnswerPair(request="q", answer="a")
-        c.history.append(pair)
-        assert len(c.history) == 1
-        assert c.history[0] is pair
-
-    def test_history_default_not_shared(self) -> None:
-        """Each Controllable gets its own history list."""
-        tag = SecurityDomainTag("ext")
-        spec = ControllableSpec(name="input", security_domain=tag)
-        c1 = Controllable(spec=spec)
-        c2 = Controllable(spec=spec)
-        c1.history.append(RequestAnswerPair(request="q", answer="a"))
-        assert len(c2.history) == 0
+        c = Controllable(name="input", security_domain=tag)
+        with pytest.raises(FrozenInstanceError):
+            c.name = "other"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -332,11 +306,17 @@ class TestEventResponse:
         r = EventResponse(event=e)
         assert r.event is e
 
+    def test_frozen(self) -> None:
+        e = Event()
+        r = EventResponse(event=e)
+        with pytest.raises(FrozenInstanceError):
+            r.event = Event()  # type: ignore[misc]
+
 
 class TestControllableEvents:
     def test_pre_call_event_fields(self) -> None:
         tag = SecurityDomainTag("ext")
-        c = Controllable(spec=ControllableSpec(name="input", security_domain=tag))
+        c = Controllable(name="input", security_domain=tag)
         e = ControllablePreCallEvent(controllable=c, request="hello")
         assert e.controllable is c
         assert e.request == "hello"
@@ -344,23 +324,59 @@ class TestControllableEvents:
 
     def test_post_call_event_fields(self) -> None:
         tag = SecurityDomainTag("ext")
-        c = Controllable(spec=ControllableSpec(name="input", security_domain=tag))
+        c = Controllable(name="input", security_domain=tag)
         e = ControllablePostCallEvent(controllable=c, request="hello", answer="world")
         assert e.answer == "world"
         assert isinstance(e, Event)
 
     def test_injection_response(self) -> None:
-        e = Event()
-        inj = ControllableInjection(event=e, value="payload")
+        tag = SecurityDomainTag("ext")
+        c = Controllable(name="input", security_domain=tag)
+        e = ControllablePreCallEvent(controllable=c, request="hello")
+        inj = ControllableInjection(event=e, controllable=c, value="payload")
         assert inj.value == "payload"
+        assert inj.controllable is c
         assert inj.event is e
         assert isinstance(inj, EventResponse)
 
-    def test_no_modification_response(self) -> None:
-        e = Event()
-        nm = NoModification(event=e)
+    def test_no_injection_response(self) -> None:
+        tag = SecurityDomainTag("ext")
+        c = Controllable(name="input", security_domain=tag)
+        e = ControllablePreCallEvent(controllable=c, request="hello")
+        nm = ControllableNoInjection(event=e, controllable=c)
+        assert nm.controllable is c
         assert nm.event is e
         assert isinstance(nm, EventResponse)
+
+    def test_pre_call_frozen(self) -> None:
+        tag = SecurityDomainTag("ext")
+        c = Controllable(name="input", security_domain=tag)
+        e = ControllablePreCallEvent(controllable=c, request="hello")
+        with pytest.raises(FrozenInstanceError):
+            e.request = "other"  # type: ignore[misc]
+
+    def test_post_call_frozen(self) -> None:
+        tag = SecurityDomainTag("ext")
+        c = Controllable(name="input", security_domain=tag)
+        e = ControllablePostCallEvent(controllable=c, request="hello", answer="world")
+        with pytest.raises(FrozenInstanceError):
+            e.answer = "other"  # type: ignore[misc]
+
+    def test_injection_frozen(self) -> None:
+        tag = SecurityDomainTag("ext")
+        c = Controllable(name="input", security_domain=tag)
+        e = ControllablePreCallEvent(controllable=c, request="hello")
+        inj = ControllableInjection(event=e, controllable=c, value="x")
+        with pytest.raises(FrozenInstanceError):
+            inj.value = "other"  # type: ignore[misc]
+
+    def test_no_injection_frozen(self) -> None:
+        tag = SecurityDomainTag("ext")
+        c = Controllable(name="input", security_domain=tag)
+        e = ControllablePreCallEvent(controllable=c, request="hello")
+        nm = ControllableNoInjection(event=e, controllable=c)
+        with pytest.raises(FrozenInstanceError):
+            nm.controllable = c  # type: ignore[misc]
 
 
 class TestRunLifecycleEvents:
@@ -384,3 +400,21 @@ class TestRunLifecycleEvents:
         e = RunEndEvent(trajectory=Trajectory())
         r = RunEndResponse(event=e, done=True)
         assert r.done is True
+
+    def test_run_start_frozen(self) -> None:
+        t = Trajectory()
+        e = RunStartEvent(trajectory=t)
+        with pytest.raises(FrozenInstanceError):
+            e.trajectory = Trajectory()  # type: ignore[misc]
+
+    def test_run_end_frozen(self) -> None:
+        t = Trajectory()
+        e = RunEndEvent(trajectory=t)
+        with pytest.raises(FrozenInstanceError):
+            e.trajectory = Trajectory()  # type: ignore[misc]
+
+    def test_run_end_response_frozen(self) -> None:
+        e = RunEndEvent(trajectory=Trajectory())
+        r = RunEndResponse(event=e, done=False)
+        with pytest.raises(FrozenInstanceError):
+            r.done = True  # type: ignore[misc]

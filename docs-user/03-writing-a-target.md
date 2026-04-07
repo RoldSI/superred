@@ -11,9 +11,8 @@ from superred.core.types.event import ControllableInjection, ControllablePreCall
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
-from superred.core.types.trajectory import (
-    MODEL_REQUEST, MODEL_RESPONSE, Trajectory, TrajectoryEntry,
-)
+from superred.core.types.event import LogEvent
+from superred.core.types.trajectory import EmitFn
 
 # Step 1: Define your security domain tree
 ROOT = SecurityDomainTag("my_system")
@@ -85,7 +84,7 @@ class MyTarget(Target):
     # --- The main execution ---
 
     async def run(
-        self, trajectory: Trajectory, send_event: EventHandler,
+        self, emit: EmitFn, send_event: EventHandler,
     ) -> None:
         # 1. Fire controllable event to get optimizer's injection
         ctrl = Controllable(spec=ControllableSpec(
@@ -102,9 +101,9 @@ class MyTarget(Target):
             user_message = "Hello"  # fallback if not controlled
 
         # 3. Record what was sent to the model
-        trajectory.emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST,
+        emit(LogEvent(
             content=user_message,
+            label="model_request",
             security_domain=USER,
         ))
 
@@ -113,9 +112,9 @@ class MyTarget(Target):
         self._last_response = response
 
         # 5. Record the model's response
-        trajectory.emit(TrajectoryEntry(
-            entry_type=MODEL_RESPONSE,
+        emit(LogEvent(
             content=response,
+            label="model_response",
             security_domain=ROOT,
         ))
 
@@ -178,7 +177,7 @@ response = await send_event(
 if isinstance(response, ControllableInjection):
     user_input = response.value
 else:
-    # NoModification — controllable is outside the tested scope
+    # ControllableNoInjection — controllable is outside the tested scope
     user_input = "default value"
 ```
 
@@ -203,46 +202,42 @@ await send_event(
 
 ### Trajectory: Recording What Happened
 
-The trajectory records the run's history. Emit entries as things happen:
+The trajectory records the run's history. Emit `LogEvent` objects as things happen using the `emit` function:
 
 ```python
-# Built-in entry types
-from superred.core.types.trajectory import MODEL_REQUEST, MODEL_RESPONSE
+from superred.core.types.event import LogEvent
 
-trajectory.emit(TrajectoryEntry(
-    entry_type=MODEL_REQUEST,
+emit(LogEvent(
     content="the prompt sent to the LLM",
+    label="model_request",
     security_domain=USER_TAG,
 ))
 
-trajectory.emit(TrajectoryEntry(
-    entry_type=MODEL_RESPONSE,
+emit(LogEvent(
     content="the LLM's response",
+    label="model_response",
     security_domain=ROOT_TAG,
 ))
 ```
 
-Every entry needs a `security_domain`. This controls what the optimizer can see via its filtered trajectory view.
+Every event needs a `security_domain` (or `None` for events that should always be visible regardless of scope). This controls what the optimizer can see via its filtered trajectory view.
 
-### Custom Entry Types
+### Custom Log Labels
 
-You can register custom trajectory entry types:
+Use the `label` field on `LogEvent` to categorize different kinds of log entries:
 
 ```python
-from superred.core.types.trajectory import TrajectoryEntryType, Trajectory
-
-TOOL_CALL = TrajectoryEntryType(
-    name="tool_call",
-    description="A tool invocation by the AI system",
-    actor="AI system",
-    content_type=dict,
-)
-
-# Register at trajectory construction (done by the controller)
-# or just emit — emit accepts any entry type
-trajectory.emit(TrajectoryEntry(
-    entry_type=TOOL_CALL,
+# Log a tool invocation
+emit(LogEvent(
     content={"tool": "search", "query": "weather"},
+    label="tool_call",
+    security_domain=ROOT_TAG,
+))
+
+# Log a tool result
+emit(LogEvent(
+    content="search result text",
+    label="tool_result",
     security_domain=ROOT_TAG,
 ))
 ```
@@ -275,7 +270,7 @@ def get_controllables(self) -> list[Controllable]:
         )),
     ]
 
-async def run(self, trajectory, send_event):
+async def run(self, emit, send_event):
     # Get user query
     user_resp = await send_event(
         ControllablePreCallEvent(controllable=user_ctrl, request="user query"),
@@ -295,4 +290,4 @@ async def run(self, trajectory, send_event):
     response = await self._generate(user_query, db_result)
 ```
 
-When scoped to `USER_TAG`, the optimizer controls `user_query` but `db_result` gets `NoModification` automatically.
+When scoped to `USER_TAG`, the optimizer controls `user_query` but `db_result` gets `ControllableNoInjection` automatically.

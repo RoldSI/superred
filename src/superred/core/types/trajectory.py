@@ -1,15 +1,16 @@
-"""Trajectory: the ordered sequence of entries from a single run.
+"""Trajectory: the ordered sequence of events and responses from a single run.
 
-A run produces a trajectory T = <e1, ..., en> where each entry captures an
-atomic operation in the target system.
+A run produces a trajectory storing :class:`Event` and
+:class:`EventResponse` objects directly. The trajectory is the single
+source of truth for a run — one-way log events from the target,
+controllable events and their responses, and feedback events all live
+here. Lifecycle events (RunStart/RunEnd) are NOT persisted.
 
-Each entry's content is determined by its :class:`TrajectoryEntryType`.
-Each entry is tagged with a :class:`SecurityDomainTag` indicating which
-security scope it belongs to.
+Each item's security domain is derived via :func:`get_domain`:
+events carry ``security_domain`` directly, responses derive theirs
+from the event they respond to.
 
-All public methods are thread-safe: :meth:`emit`, :meth:`drain`,
-:meth:`snapshot`, and :meth:`close` may be called concurrently from
-multiple threads.
+All public methods are thread-safe.
 
 :class:`FilteredTrajectory` provides a read-only view filtered by a
 security domain scope.
@@ -18,150 +19,95 @@ security domain scope.
 from __future__ import annotations
 
 import threading
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
 
-from superred.core.types.evaluation import FeedbackResult
+from superred.core.types.event import Event, EventResponse
 from superred.core.types.security_domain import SecurityDomainTag
 
+# Items stored on the trajectory: events and their responses.
+TrajectoryItem = Event | EventResponse
 
-@dataclass(frozen=True)
-class TrajectoryEntryType:
-    """A runtime-registered type of trajectory entry.
 
-    Each entry type declares the Python type of content that entries of
-    this type carry.  Entry types are defined by target systems and
-    registered on a :class:`Trajectory` instance.  Only
-    :data:`MODEL_REQUEST` and :data:`MODEL_RESPONSE` are available by
-    default.
+def get_domain(item: TrajectoryItem) -> SecurityDomainTag | None:
+    """Extract the security domain from a trajectory item.
 
-    Attributes:
-        name: Unique human-readable identifier.
-        description: Human-readable description.
-        content_type: The Python type that :attr:`TrajectoryEntry.content`
-            must be for entries of this type.
+    For :class:`Event` subclasses, returns ``item.security_domain``.
+    For :class:`EventResponse` subclasses, derives the domain from the
+    event the response belongs to (recursively).
+
+    Returns:
+        The security domain tag, or ``None`` if the item has no domain.
     """
-
-    name: str
-    description: str
-    actor: str
-    content_type: type[Any]
-
-
-# Default entry types — always available on every trajectory.
-MODEL_REQUEST = TrajectoryEntryType(
-    name="model_request",
-    description="Prompt sent to the LLM model by the AI system",
-    actor="AI system",
-    content_type=str,
-)
-MODEL_RESPONSE = TrajectoryEntryType(
-    name="model_response",
-    description="Response received from the LLM model",
-    actor="LLM model",
-    content_type=str,
-)
-FEEDBACK = TrajectoryEntryType(
-    name="feedback",
-    description="Evaluation feedback for a run",
-    actor="task evaluator",
-    content_type=FeedbackResult,
-)
-
-DEFAULT_ENTRY_TYPES: frozenset[TrajectoryEntryType] = frozenset(
-    {MODEL_REQUEST, MODEL_RESPONSE, FEEDBACK}
-)
-
-
-@dataclass
-class TrajectoryEntry:
-    """A single entry in a trajectory.
-
-    The shape of :attr:`content` is determined by :attr:`entry_type` —
-    see :attr:`TrajectoryEntryType.content_type`.
-
-    Attributes:
-        entry_type: The type of this entry.
-        content: Payload whose type matches ``entry_type.content_type``.
-        security_domain: The security domain scope this entry belongs to.
-        timestamp: When the entry was created.
-    """
-
-    entry_type: TrajectoryEntryType
-    content: Any
-    security_domain: SecurityDomainTag
-    timestamp: datetime = field(default_factory=datetime.now)
+    if isinstance(item, Event):
+        return item.security_domain
+    if isinstance(item, EventResponse):
+        return get_domain(item.event)
+    return None
 
 
 class Trajectory:
-    """A thread-safe stream of trajectory entries for one run.
+    """A thread-safe stream of events and responses for one run.
 
-    The target system calls :meth:`emit` to push entries and :meth:`close`
-    to signal completion. Consumers read via :meth:`drain` (new entries
-    since last drain) or :meth:`snapshot` (full trajectory so far).
+    The target pushes one-way events via :meth:`emit`. The controller
+    also writes controllable events/responses and feedback events.
+    Consumers read via :meth:`drain` or :meth:`snapshot`.
 
     Pass *filtered_scope* to create a :class:`FilteredTrajectory` that
-    receives in-scope entries at emit time, accessible via :attr:`filtered`.
-    The filtered view holds no reference back to this trajectory.
-
-    Entry types are registered at construction. The defaults
-    (:data:`MODEL_REQUEST`, :data:`MODEL_RESPONSE`) are always available;
-    targets add their own via *entry_types*.
+    receives in-scope items at emit time, accessible via :attr:`filtered`.
 
     All public methods are safe to call concurrently from multiple threads.
     """
 
     def __init__(
         self,
-        entry_types: Sequence[TrajectoryEntryType] = (),
         filtered_scope: SecurityDomainTag | None = None,
     ) -> None:
         self._lock = threading.Lock()
-        self._entry_types: frozenset[TrajectoryEntryType] = DEFAULT_ENTRY_TYPES | frozenset(
-            entry_types
-        )
-        self._entries: list[TrajectoryEntry] = []
+        self._entries: list[TrajectoryItem] = []
         self._closed: bool = False
         self._drain_cursor: int = 0
-        # Optional filtered view — set once at construction, immutable.
         self._filter: tuple[SecurityDomainTag, FilteredTrajectory] | None = None
         if filtered_scope is not None:
             self._filter = (filtered_scope, FilteredTrajectory())
 
-    def emit(self, entry: TrajectoryEntry) -> None:
-        """Push an entry into the stream (producer side).
+    def emit(self, item: TrajectoryItem) -> None:
+        """Push an event or response onto the trajectory.
 
-        If a filtered view exists, matching entries are pushed to it.
+        The item's security domain (via :func:`get_domain`) must not be
+        ``None`` — lifecycle events that lack a domain should not be
+        persisted.
 
         Raises:
             RuntimeError: If the trajectory has already been closed.
+            ValueError: If the item has no security domain.
         """
         with self._lock:
             if self._closed:
                 raise RuntimeError("Cannot emit to a closed trajectory")
-            self._entries.append(entry)
+            domain = get_domain(item)
+            if domain is None:
+                raise ValueError(
+                    f"Cannot persist {type(item).__name__} without a security_domain"
+                )
+            self._entries.append(item)
             if self._filter is not None:
                 scope, view = self._filter
-                if scope.includes(entry.security_domain):
-                    view._push(entry)
+                if scope.includes(domain):
+                    view._push(item)
 
     def close(self) -> None:
-        """Signal that no more entries will be emitted."""
+        """Signal that no more items will be emitted."""
         with self._lock:
             self._closed = True
 
-    def snapshot(self) -> list[TrajectoryEntry]:
-        """Return all entries emitted so far without advancing the drain cursor."""
+    def snapshot(self) -> list[TrajectoryItem]:
+        """Return all items emitted so far without advancing the drain cursor."""
         with self._lock:
             return list(self._entries)
 
-    def drain(self) -> list[TrajectoryEntry]:
-        """Return all entries emitted since the last ``drain()`` call.
+    def drain(self) -> list[TrajectoryItem]:
+        """Return all items emitted since the last ``drain()`` call.
 
         Non-blocking: returns immediately with whatever is available.
-        If no new entries exist, returns an empty list.
         """
         with self._lock:
             new_entries = self._entries[self._drain_cursor :]
@@ -183,18 +129,14 @@ class Trajectory:
 
 
 class FilteredTrajectory:
-    """Read-only view of trajectory entries within a security domain scope.
+    """Read-only view of trajectory items within a security domain scope.
 
     Created by passing *filtered_scope* to the :class:`Trajectory`
-    constructor, then accessed via :attr:`Trajectory.filtered`.  Entries
+    constructor, then accessed via :attr:`Trajectory.filtered`. Items
     are pushed by the parent trajectory at emit time.
 
     **Encapsulation**: This object holds **no reference** to the
-    underlying :class:`Trajectory`.  Entries flow one direction only
-    (push at emit time), so the consumer cannot reach unfiltered data
-    through any attribute, closure, or other mechanism.
-    ``__slots__`` prevents ``__dict__``, blocking arbitrary attribute
-    injection.
+    underlying :class:`Trajectory`. ``__slots__`` prevents ``__dict__``.
 
     :meth:`snapshot` and :meth:`drain` are thread-safe.
     """
@@ -202,29 +144,22 @@ class FilteredTrajectory:
     __slots__ = ("_entries", "_lock", "_drain_cursor")
 
     def __init__(self) -> None:
-        self._entries: list[TrajectoryEntry] = []
+        self._entries: list[TrajectoryItem] = []
         self._lock = threading.Lock()
         self._drain_cursor: int = 0
 
-    def _push(self, entry: TrajectoryEntry) -> None:
-        """Receive a pre-filtered entry from the parent trajectory.
-
-        Called by :class:`Trajectory` during :meth:`~Trajectory.emit`.
-        Not part of the public API.
-        """
+    def _push(self, item: TrajectoryItem) -> None:
+        """Receive a pre-filtered item from the parent trajectory."""
         with self._lock:
-            self._entries.append(entry)
+            self._entries.append(item)
 
-    def snapshot(self) -> list[TrajectoryEntry]:
-        """Return all in-scope entries received so far."""
+    def snapshot(self) -> list[TrajectoryItem]:
+        """Return all in-scope items received so far."""
         with self._lock:
             return list(self._entries)
 
-    def drain(self) -> list[TrajectoryEntry]:
-        """Return in-scope entries received since the last ``drain()`` call.
-
-        Maintains its own cursor independent of the parent trajectory.
-        """
+    def drain(self) -> list[TrajectoryItem]:
+        """Return in-scope items received since the last ``drain()`` call."""
         with self._lock:
             new_entries = self._entries[self._drain_cursor :]
             self._drain_cursor = len(self._entries)

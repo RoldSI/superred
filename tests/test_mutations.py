@@ -21,20 +21,20 @@ from superred.core.channel import EventChannel, EventEnvelope
 from superred.core.controller import Controller
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.middleware import compose, security_domain_filter
-from superred.core.types.controllable import Controllable, ControllableSpec
+from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
-from superred.core.types.event import (
+from superred.core.types.event import Event, EventResponse
+from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
-    NoModification,
+    LogEvent,
     RunEndEvent,
     RunEndResponse,
 )
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
-from superred.core.types.trajectory import MODEL_REQUEST, Trajectory, TrajectoryEntry
+from superred.core.types.trajectory import Trajectory
 
 from .conftest import (
     EXTERNAL_TAG,
@@ -134,9 +134,7 @@ class TestTrajectoryMutations:
     def test_emit_checks_closed_not_open(self) -> None:
         """Kills: `if self._closed` mutated to `if not self._closed`."""
         t = Trajectory()
-        entry = TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content="x", security_domain=EXTERNAL_TAG,
-        )
+        entry = LogEvent(content="x", security_domain=EXTERNAL_TAG)
         t.emit(entry)  # should work when open
         t.close()
         with pytest.raises(RuntimeError):
@@ -146,9 +144,7 @@ class TestTrajectoryMutations:
         """Kills: `self._drain_cursor = len(self._entries)` mutated to
         `self._drain_cursor = 0` or removed entirely."""
         t = Trajectory()
-        t.emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content="a", security_domain=EXTERNAL_TAG,
-        ))
+        t.emit(LogEvent(content="a", security_domain=EXTERNAL_TAG))
         first = t.drain()
         assert len(first) == 1
         second = t.drain()
@@ -158,13 +154,9 @@ class TestTrajectoryMutations:
         """Kills: `self._entries[self._drain_cursor:]` mutated to
         `self._entries[0:]`."""
         t = Trajectory()
-        t.emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content="a", security_domain=EXTERNAL_TAG,
-        ))
+        t.emit(LogEvent(content="a", security_domain=EXTERNAL_TAG))
         t.drain()  # advance cursor
-        t.emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content="b", security_domain=EXTERNAL_TAG,
-        ))
+        t.emit(LogEvent(content="b", security_domain=EXTERNAL_TAG))
         result = t.drain()
         assert len(result) == 1
         assert result[0].content == "b"
@@ -172,9 +164,7 @@ class TestTrajectoryMutations:
     def test_snapshot_does_not_advance_cursor(self) -> None:
         """Kills: snapshot() accidentally using drain cursor logic."""
         t = Trajectory()
-        t.emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content="a", security_domain=EXTERNAL_TAG,
-        ))
+        t.emit(LogEvent(content="a", security_domain=EXTERNAL_TAG))
         t.snapshot()
         assert len(t.drain()) == 1  # drain should still see it
 
@@ -221,24 +211,28 @@ class TestMiddlewareMutations:
     async def test_filter_checks_includes_not_excludes(self) -> None:
         """Kills: `not scope.includes(...)` mutated to `scope.includes(...)`."""
         async def handler(event: Event) -> EventResponse:
-            return ControllableInjection(event=event, value="injected")
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="injected",
+            )
 
         filtered = security_domain_filter(EXTERNAL_TAG)(handler)
 
         # INTERNAL is NOT included by EXTERNAL — must be blocked
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=INTERNAL_TAG))
+        c = Controllable(name="c", security_domain=INTERNAL_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
         response = await filtered(event)
-        assert isinstance(response, NoModification)
+        assert isinstance(response, ControllableNoInjection)
 
     async def test_filter_forwards_in_scope_not_blocks(self) -> None:
-        """Kills: in-scope path returning NoModification instead of handler result."""
+        """Kills: in-scope path returning ControllableNoInjection instead of handler result."""
         async def handler(event: Event) -> EventResponse:
-            return ControllableInjection(event=event, value="injected")
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="injected",
+            )
 
         filtered = security_domain_filter(ROOT_TAG)(handler)
 
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=EXTERNAL_TAG))
+        c = Controllable(name="c", security_domain=EXTERNAL_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
         response = await filtered(event)
         assert isinstance(response, ControllableInjection)
@@ -251,10 +245,10 @@ class TestMiddlewareMutations:
 
         filtered = security_domain_filter(EXTERNAL_TAG)(handler)
 
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=INTERNAL_TAG))
+        c = Controllable(name="c", security_domain=INTERNAL_TAG)
         event = ControllablePostCallEvent(controllable=c, request="hi", answer="bye")
         response = await filtered(event)
-        assert isinstance(response, NoModification)
+        assert isinstance(response, ControllableNoInjection)
 
     async def test_compose_reverses_order(self) -> None:
         """Kills: `reversed(middlewares)` mutated to `middlewares`."""
@@ -438,9 +432,7 @@ class TestControllerRunMutations:
         traj = result.task_results[0].runs[0].trajectory
         # Trajectory must be closed — emitting should raise
         with pytest.raises(RuntimeError, match="closed"):
-            traj.emit(TrajectoryEntry(
-                entry_type=MODEL_REQUEST, content="x", security_domain=EXTERNAL_TAG,
-            ))
+            traj.emit(LogEvent(content="x", security_domain=EXTERNAL_TAG))
 
     async def test_initialize_called(self) -> None:
         """Kills: `optimizer.initialize()` call removed."""
@@ -603,7 +595,7 @@ class TestControllerDefaultValues:
 class TestRunEndResponseDefault:
     def test_done_defaults_to_false(self) -> None:
         """Kills mutant 160: `done: bool = True` instead of `done: bool = False`."""
-        from superred.core.types.event import RunEndResponse
+        from superred.core.types.events import RunEndResponse
 
         e = Event()
         r = RunEndResponse(event=e)

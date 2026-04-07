@@ -32,12 +32,14 @@ class ConfigSpec:
     Attributes:
         name: Unique identifier within the target.
         security_domain: Trust boundary this config belongs to.
+            Must not be ``None``.
         description: Documents the accepted format.
     """
 
     name: str
     security_domain: SecurityDomainTag
     description: str
+
 
 
 @dataclass(frozen=True)

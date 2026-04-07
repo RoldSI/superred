@@ -37,7 +37,7 @@ Config and query are **intentionally distinct**:
 
 ## Execution
 
-- `run(trajectory, send_event)` — execute one run. Emit entries to trajectory via `trajectory.emit()`. Call `await send_event(event)` at controllable points and use the response.
+- `run(emit, send_event)` — execute one run. Emit entries via `emit(entry)` (an `EmitFn`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object — only the emit function.
 - `cleanup()` — reset state after a run and its evaluation (clear databases, reset containers, etc.). Called by the controller after each evaluation, before the next run. Must be implemented even if a no-op.
 - `teardown()` — release resources when all evaluation is done.
 
@@ -48,7 +48,7 @@ Config and query are **intentionally distinct**:
 The target can have concurrent branches, each calling `send_event` independently:
 
 ```python
-async def run(self, trajectory, send_event):
+async def run(self, emit, send_event):
     async def branch_a():
         resp = await send_event(event_a)  # suspends only this branch
         ...
@@ -63,7 +63,7 @@ Each `send_event` call creates its own future in the channel. Multiple events ca
 For thread-based targets (Docker, subprocesses), bridge back to the event loop:
 
 ```python
-async def run(self, trajectory, send_event):
+async def run(self, emit, send_event):
     loop = asyncio.get_running_loop()
     def blocking_work():
         event = parse_event_from_subprocess(proc)

@@ -22,7 +22,8 @@ from abc import ABC, abstractmethod
 
 from superred.core.channel import EventChannel, EventEnvelope
 from superred.core.types.controllable import Controllable
-from superred.core.types.event import Event, EventResponse, RunEndEvent, RunStartEvent
+from superred.core.types.event import Event, EventResponse
+from superred.core.types.events import RunEndEvent, RunStartEvent
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import ReadableTrajectory
@@ -117,7 +118,9 @@ class Optimizer(ABC):
         type using ``isinstance``::
 
             if isinstance(event, ControllablePreCallEvent):
-                return ControllableInjection(event=event, value=...)
+                return ControllableInjection(
+                    event=event, controllable=event.controllable, value=...,
+                )
             elif isinstance(event, RunStartEvent):
                 return EventResponse(event=event)
             elif isinstance(event, RunEndEvent):

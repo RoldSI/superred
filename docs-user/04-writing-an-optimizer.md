@@ -41,7 +41,9 @@ class MyOptimizer(Optimizer):
 
         if isinstance(event, ControllablePreCallEvent):
             # This is where you decide what to inject
-            return ControllableInjection(event=event, value="your attack payload")
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="your attack payload",
+            )
 
         if isinstance(event, RunEndEvent):
             # Return done=True to stop, done=False to continue
@@ -99,7 +101,8 @@ async def on_event(self, event):
         # Read what happened in this run
         entries = event.trajectory.snapshot()
         for entry in entries:
-            print(f"  {entry.entry_type.name}: {entry.content}")
+            if isinstance(entry, LogEvent):
+                print(f"  [{entry.label}]: {entry.content}")
 
         # Past runs are available too
         for past in self.past_trajectories:
@@ -113,22 +116,19 @@ The trajectories you see are **filtered** — you only see entries within your s
 
 ## Reading Feedback
 
-After each run, the controller appends a FEEDBACK entry to the trajectory. On subsequent runs, you can read it:
+After each run, the controller emits a `FeedbackEvent` to the trajectory. On subsequent runs, you can read it:
 
 ```python
-from superred.core.types.trajectory import FEEDBACK
-from superred.core.types.evaluation import FeedbackResult
+from superred.core.types.event import FeedbackEvent
 
 async def on_event(self, event):
     if isinstance(event, RunStartEvent) and self.past_trajectories:
         last_traj = self.past_trajectories[-1]
         for entry in last_traj.snapshot():
-            if entry.entry_type is FEEDBACK:
-                fb = entry.content
-                if isinstance(fb, FeedbackResult):
-                    score = fb.evaluation.primary_score.value
-                    success = fb.evaluation.success
-                    print(f"Last run: score={score}, success={success}")
+            if isinstance(entry, FeedbackEvent):
+                score = entry.evaluation.primary_score.value
+                success = entry.evaluation.success
+                print(f"Last run: score={score}, success={success}")
         return EventResponse(event=event)
 ```
 
@@ -154,7 +154,8 @@ class FixedListOptimizer(Optimizer):
 
         if isinstance(event, ControllablePreCallEvent):
             return ControllableInjection(
-                event=event, value=self._prompts[self._index],
+                event=event, controllable=event.controllable,
+                value=self._prompts[self._index],
             )
 
         if isinstance(event, RunEndEvent):
@@ -193,13 +194,11 @@ class AdaptiveOptimizer(Optimizer):
             if self.past_trajectories:
                 last = self.past_trajectories[-1]
                 for entry in last.snapshot():
-                    if entry.entry_type is FEEDBACK:
-                        fb = entry.content
-                        if isinstance(fb, FeedbackResult):
-                            score = fb.evaluation.primary_score.value
-                            if score > self._best_score:
-                                self._best_score = score
-                                self._best_prompt = self._current_prompt
+                    if isinstance(entry, FeedbackEvent):
+                        score = entry.evaluation.primary_score.value
+                        if score > self._best_score:
+                            self._best_score = score
+                            self._best_prompt = self._current_prompt
 
             # Evolve the prompt based on score
             if self._best_score < 0.5:
@@ -210,7 +209,9 @@ class AdaptiveOptimizer(Optimizer):
             return EventResponse(event=event)
 
         if isinstance(event, ControllablePreCallEvent):
-            return ControllableInjection(event=event, value=self._current_prompt)
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value=self._current_prompt,
+            )
 
         if isinstance(event, RunEndEvent):
             done = self._run_count >= 10 or self._best_score >= 1.0
@@ -275,7 +276,9 @@ class LLMOptimizer(Optimizer):
         if isinstance(event, ControllablePreCallEvent):
             prompt = await self._generate_attack()
             self._current_prompt = prompt
-            return ControllableInjection(event=event, value=prompt)
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value=prompt,
+            )
 
         if isinstance(event, RunEndEvent):
             # Record result for next iteration
@@ -317,11 +320,17 @@ If the target has multiple controllable points, `on_event` is called once per co
 ```python
 if isinstance(event, ControllablePreCallEvent):
     if event.controllable.spec.name == "user_query":
-        return ControllableInjection(event=event, value="attack query")
+        return ControllableInjection(
+            event=event, controllable=event.controllable, value="attack query",
+        )
     elif event.controllable.spec.name == "file_upload":
-        return ControllableInjection(event=event, value="malicious content")
+        return ControllableInjection(
+            event=event, controllable=event.controllable, value="malicious content",
+        )
     else:
-        return ControllableInjection(event=event, value="default")
+        return ControllableInjection(
+            event=event, controllable=event.controllable, value="default",
+        )
 ```
 
 ## Advanced: Custom Run Loop

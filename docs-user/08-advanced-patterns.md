@@ -5,7 +5,7 @@
 A target that has a multi-turn conversation with the LLM:
 
 ```python
-async def run(self, trajectory, send_event):
+async def run(self, emit, send_event):
     messages = [{"role": "system", "content": self._system_prompt}]
 
     for turn in range(self._max_turns):
@@ -19,8 +19,8 @@ async def run(self, trajectory, send_event):
         user_msg = resp.value if isinstance(resp, ControllableInjection) else "Hello"
         messages.append({"role": "user", "content": user_msg})
 
-        trajectory.emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content=user_msg, security_domain=USER_TAG,
+        emit(LogEvent(
+            content=user_msg, label="model_request", security_domain=USER_TAG,
         ))
 
         # Call LLM
@@ -30,8 +30,8 @@ async def run(self, trajectory, send_event):
         messages.append({"role": "assistant", "content": assistant_msg})
         self._last_response = assistant_msg
 
-        trajectory.emit(TrajectoryEntry(
-            entry_type=MODEL_RESPONSE, content=assistant_msg, security_domain=SYSTEM_TAG,
+        emit(LogEvent(
+            content=assistant_msg, label="model_response", security_domain=SYSTEM_TAG,
         ))
 
         # Optionally let optimizer observe the response
@@ -51,7 +51,7 @@ A target with concurrent processing branches:
 ```python
 import asyncio
 
-async def run(self, trajectory, send_event):
+async def run(self, emit, send_event):
     spec = ControllableSpec(name="input", security_domain=USER_TAG)
 
     async def branch(name: str) -> str:
@@ -60,8 +60,8 @@ async def run(self, trajectory, send_event):
             ControllablePreCallEvent(controllable=ctrl, request=f"Input for {name}"),
         )
         value = resp.value if isinstance(resp, ControllableInjection) else "default"
-        trajectory.emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content=f"[{name}] {value}",
+        emit(LogEvent(
+            content=f"[{name}] {value}", label="model_request",
             security_domain=USER_TAG,
         ))
         return value
@@ -103,8 +103,8 @@ def budget_middleware(max_tokens: int) -> Middleware:
     def apply(handler):
         async def wrapped(event):
             if token_count[0] >= max_tokens:
-                from superred.core.types.event import NoModification
-                return NoModification(event=event)
+                from superred.core.types.event import ControllableNoInjection
+                return ControllableNoInjection(event=event, controllable=event.controllable)
             response = await handler(event)
             # Count tokens in injection
             if hasattr(response, "value"):
@@ -116,39 +116,25 @@ def budget_middleware(max_tokens: int) -> Middleware:
 
 Middleware is applied by the Controller internally via `compose()`. To add custom middleware, you'd extend the Controller or modify its `_run_task` method. The built-in `security_domain_filter` is an example of production middleware.
 
-## Custom Trajectory Entry Types
+## Custom Log Labels
 
-Define custom entry types for domain-specific recording:
+Use `LogEvent` with different `label` values for domain-specific recording:
 
 ```python
-from superred.core.types.trajectory import TrajectoryEntryType
-
-TOOL_CALL = TrajectoryEntryType(
-    name="tool_call",
-    description="An external tool invocation",
-    actor="AI system",
-    content_type=dict,
-)
-
-TOOL_RESULT = TrajectoryEntryType(
-    name="tool_result",
-    description="Result from an external tool",
-    actor="tool",
-    content_type=str,
-)
+from superred.core.types.event import LogEvent
 
 # Use in target.run():
-trajectory.emit(TrajectoryEntry(
-    entry_type=TOOL_CALL,
+emit(LogEvent(
     content={"tool": "web_search", "query": "latest news"},
+    label="tool_call",
     security_domain=SYSTEM_TAG,
 ))
 
 result = await call_tool("web_search", "latest news")
 
-trajectory.emit(TrajectoryEntry(
-    entry_type=TOOL_RESULT,
+emit(LogEvent(
     content=result,
+    label="tool_result",
     security_domain=SYSTEM_TAG,
 ))
 ```
@@ -267,7 +253,7 @@ If your target uses threads (e.g., Docker containers, subprocesses), bridge back
 import asyncio
 import threading
 
-async def run(self, trajectory, send_event):
+async def run(self, emit, send_event):
     loop = asyncio.get_running_loop()
 
     def thread_work():

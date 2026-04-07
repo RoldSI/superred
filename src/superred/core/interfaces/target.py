@@ -5,7 +5,8 @@ A target is the AI system under test. It exposes configuration slots
 (runtime injection points), and observables (static context).
 
 During a run the target calls ``send_event`` at each controllable point,
-pausing until it receives a response.
+pausing until it receives a response, and ``emit`` to record one-way
+trajectory entries.
 
 Target authors implement this ABC.
 """
@@ -13,17 +14,12 @@ Target authors implement this ABC.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 
 from superred.core.types.controllable import Controllable
-from superred.core.types.event import Event, EventResponse
+from superred.core.types.event import EventHandler, EventResponseHandler
 from superred.core.types.observable import ObservableValue
 from superred.core.types.security_domain import SecurityDomain
 from superred.core.types.state import ConfigSpec, QuerySpec
-from superred.core.types.trajectory import Trajectory
-
-# The callback the target uses to send events and receive responses.
-EventHandler = Callable[[Event], Awaitable[EventResponse]]
 
 
 class Target(ABC):
@@ -133,17 +129,20 @@ class Target(ABC):
     @abstractmethod
     async def run(
         self,
-        trajectory: Trajectory,
-        send_event: EventHandler,
+        emit: EventHandler,
+        send_event: EventResponseHandler,
     ) -> None:
         """Execute one run of the target system.
 
-        The target emits trajectory entries via ``trajectory.emit()`` and
+        The target records one-way entries via ``emit(entry)`` and
         pauses at controllable points by calling ``send_event(event)`` to
         get the optimizer's response.
 
+        The target does **not** have access to the full trajectory — only
+        the ``emit`` function for writing entries.
+
         Args:
-            trajectory: The trajectory to emit entries into.
+            emit: Callback to record a trajectory entry (fire-and-forget).
             send_event: Callback to send an event and await a response.
         """
         ...

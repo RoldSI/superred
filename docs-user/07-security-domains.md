@@ -10,7 +10,7 @@ When you run an evaluation with `security_domain_tag=USER_INPUT_TAG`, the Contro
 |------|-------------------|
 | **Controllables** | Only in-scope controllables passed to `optimizer.initialize()` |
 | **Observables** | Only in-scope observables passed to `optimizer.initialize()` |
-| **Events** | Out-of-scope `ControllablePreCallEvent`/`PostCallEvent` get `NoModification` automatically |
+| **Events** | Out-of-scope `ControllablePreCallEvent`/`PostCallEvent` get `ControllableNoInjection` automatically |
 | **Trajectory** | Optimizer sees a `FilteredTrajectory` with only in-scope entries |
 | **Feedback sub_scores** | Only in-scope sub_scores included in feedback |
 
@@ -57,7 +57,7 @@ user_input.includes(user_input) # True — includes itself
 
 ## Tagging Target Components
 
-Every controllable, observable, config spec, and trajectory entry gets a security domain tag:
+Every controllable, observable, config spec, and trajectory entry gets a security domain tag (or `None` for entries that should always be visible):
 
 ```python
 # Controllable at the user_input boundary
@@ -74,11 +74,18 @@ Observable(
     description="Model identifier",
 )
 
-# Trajectory entry at the user level
-trajectory.emit(TrajectoryEntry(
-    entry_type=MODEL_REQUEST,
+# Log event at the user level
+emit(LogEvent(
     content=message,
+    label="model_request",
     security_domain=user_input,
+))
+
+# Log event always visible regardless of scope
+emit(LogEvent(
+    content=response,
+    label="model_response",
+    security_domain=None,
 ))
 
 # Config spec at the system level (only tasks set this, not optimizer)
@@ -132,7 +139,7 @@ class RAGTarget(Target):
 
 When scoped to `user`:
 - Optimizer controls `user_query` (can inject prompts)
-- Optimizer does NOT control `db_content` (gets `NoModification`)
+- Optimizer does NOT control `db_content` (gets `ControllableNoInjection`)
 - Tests: "Can the attacker extract data just by crafting queries?"
 
 When scoped to `system`:
@@ -156,7 +163,7 @@ The target writes to the full `Trajectory`. The Controller creates the filtered 
 
 ## Score Filtering
 
-Each `Score` in an `EvaluationResult` has a `security_domain`. The Controller filters `sub_scores` before writing feedback:
+Each `Score` in an `EvaluationResult` has a `security_domain` (`SecurityDomainTag | None`). `None` means always visible. The Controller filters `sub_scores` before writing feedback:
 
 ```python
 # Task returns scores at different domains

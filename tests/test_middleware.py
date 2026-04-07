@@ -2,22 +2,19 @@
 
 from __future__ import annotations
 
-import threading
-
 from superred.core.middleware import (
-    EventHandler,
     Middleware,
     compose,
     security_domain_filter,
+    trajectory_recorder,
 )
-from superred.core.types.controllable import Controllable, ControllableSpec
-from superred.core.types.event import (
+from superred.core.types.controllable import Controllable
+from superred.core.types.event import Event, EventResponse, EventResponseHandler
+from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
-    NoModification,
     RunStartEvent,
 )
 from superred.core.types.security_domain import SecurityDomainTag
@@ -52,7 +49,7 @@ class TestCompose:
         order: list[str] = []
 
         def make_mw(name: str) -> Middleware:
-            def mw(handler: EventHandler) -> EventHandler:
+            def mw(handler: EventResponseHandler) -> EventResponseHandler:
                 async def wrapped(event: Event) -> EventResponse:
                     order.append(f"{name}_before")
                     resp = await handler(event)
@@ -74,7 +71,7 @@ class TestCompose:
         """compose(a)(handler) == a(handler)."""
         called = False
 
-        def mw(handler: EventHandler) -> EventHandler:
+        def mw(handler: EventResponseHandler) -> EventResponseHandler:
             async def wrapped(event: Event) -> EventResponse:
                 nonlocal called
                 called = True
@@ -98,16 +95,18 @@ class TestSecurityDomainFilter:
     async def test_blocks_out_of_scope_pre_call(self) -> None:
         """Pre-call event for a domain outside scope is blocked."""
         async def handler(event: Event) -> EventResponse:
-            return ControllableInjection(event=event, value="x")
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="x",
+            )
 
         filtered = security_domain_filter(CHILD_TAG)(handler)
 
         # SIBLING_TAG is NOT included by CHILD_TAG
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=SIBLING_TAG))
+        c = Controllable(name="c", security_domain=SIBLING_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
         response = await filtered(event)
 
-        assert isinstance(response, NoModification)
+        assert isinstance(response, ControllableNoInjection)
 
     async def test_blocks_out_of_scope_post_call(self) -> None:
         """Post-call event outside scope is also blocked."""
@@ -116,20 +115,22 @@ class TestSecurityDomainFilter:
 
         filtered = security_domain_filter(CHILD_TAG)(handler)
 
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=SIBLING_TAG))
+        c = Controllable(name="c", security_domain=SIBLING_TAG)
         event = ControllablePostCallEvent(controllable=c, request="hi", answer="bye")
         response = await filtered(event)
 
-        assert isinstance(response, NoModification)
+        assert isinstance(response, ControllableNoInjection)
 
     async def test_passes_in_scope(self) -> None:
         """Events within scope are forwarded to the handler."""
         async def handler(event: Event) -> EventResponse:
-            return ControllableInjection(event=event, value="x")
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="x",
+            )
 
         filtered = security_domain_filter(PARENT_TAG)(handler)
 
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=CHILD_TAG))
+        c = Controllable(name="c", security_domain=CHILD_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
         response = await filtered(event)
 
@@ -146,59 +147,89 @@ class TestSecurityDomainFilter:
 
         assert isinstance(response, EventResponse)
 
-    async def test_event_log_with_lock(self) -> None:
-        """Event log is populated when provided with a lock."""
-        log: list[tuple[Event, EventResponse]] = []
-        lock = threading.Lock()
-
-        async def handler(event: Event) -> EventResponse:
-            return ControllableInjection(event=event, value="x")
-
-        filtered = security_domain_filter(PARENT_TAG, event_log=log, event_log_lock=lock)(handler)
-
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=CHILD_TAG))
-        event = ControllablePreCallEvent(controllable=c, request="hi")
-        await filtered(event)
-
-        assert len(log) == 1
-        assert log[0][0] is event
-
-    async def test_event_log_without_lock(self) -> None:
-        """Event log works without a lock (single-threaded usage)."""
-        log: list[tuple[Event, EventResponse]] = []
-
-        async def handler(event: Event) -> EventResponse:
-            return ControllableInjection(event=event, value="x")
-
-        filtered = security_domain_filter(PARENT_TAG, event_log=log)(handler)
-
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=CHILD_TAG))
-        event = ControllablePreCallEvent(controllable=c, request="hi")
-        await filtered(event)
-
-        assert len(log) == 1
-
-    async def test_no_log_when_not_provided(self) -> None:
-        """No logging when event_log is None (default). Handler still runs."""
-        async def handler(event: Event) -> EventResponse:
-            return EventResponse(event=event)
-
-        filtered = security_domain_filter(PARENT_TAG)(handler)
-        response = await filtered(RunStartEvent(trajectory=Trajectory()))
-        assert isinstance(response, EventResponse)
-
-    async def test_blocked_event_logged(self) -> None:
-        """Blocked events are still logged with NoModification response."""
-        log: list[tuple[Event, EventResponse]] = []
-
+    async def test_blocked_event_not_forwarded(self) -> None:
+        """Blocked events do not reach the handler."""
         async def handler(event: Event) -> EventResponse:
             raise AssertionError("Should not be called")
 
-        filtered = security_domain_filter(CHILD_TAG, event_log=log)(handler)
+        filtered = security_domain_filter(CHILD_TAG)(handler)
 
-        c = Controllable(spec=ControllableSpec(name="c", security_domain=SIBLING_TAG))
+        c = Controllable(name="c", security_domain=SIBLING_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
-        await filtered(event)
+        response = await filtered(event)
 
-        assert len(log) == 1
-        assert isinstance(log[0][1], NoModification)
+        assert isinstance(response, ControllableNoInjection)
+
+
+# ---------------------------------------------------------------------------
+# trajectory_recorder()
+# ---------------------------------------------------------------------------
+
+
+class TestTrajectoryRecorder:
+    async def test_records_in_scope_event_and_response(self) -> None:
+        """In-scope event and its response are both recorded."""
+        trajectory = Trajectory(filtered_scope=PARENT_TAG)
+
+        async def handler(event: Event) -> EventResponse:
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="x",
+            )
+
+        wrapped = trajectory_recorder(trajectory)(handler)
+        c = Controllable(name="c", security_domain=CHILD_TAG)
+        await wrapped(ControllablePreCallEvent(controllable=c, request="hi"))
+
+        entries = trajectory.snapshot()
+        events = [e for e in entries if isinstance(e, ControllablePreCallEvent)]
+        responses = [e for e in entries if isinstance(e, ControllableInjection)]
+        assert len(events) == 1
+        assert len(responses) == 1
+        assert responses[0].value == "x"
+
+    async def test_records_out_of_scope_event_and_noinjection(self) -> None:
+        """Out-of-scope events blocked by the filter are still recorded
+        by the recorder (because recorder is outermost in the compose chain)."""
+        trajectory = Trajectory(filtered_scope=CHILD_TAG)
+
+        # Compose in the correct order: recorder outermost, filter inner
+        wrapped = compose(
+            trajectory_recorder(trajectory),
+            security_domain_filter(CHILD_TAG),
+        )(self._unreachable_handler)
+
+        # SIBLING is out of scope for CHILD
+        c = Controllable(name="c", security_domain=SIBLING_TAG)
+        await wrapped(ControllablePreCallEvent(controllable=c, request="hi"))
+
+        entries = trajectory.snapshot()
+        events = [e for e in entries if isinstance(e, ControllablePreCallEvent)]
+        responses = [e for e in entries if isinstance(e, ControllableNoInjection)]
+        # Both event and ControllableNoInjection response are recorded
+        assert len(events) == 1
+        assert len(responses) == 1
+
+    async def test_wrong_compose_order_loses_out_of_scope_events(self) -> None:
+        """If filter is outermost (wrong order), out-of-scope events are
+        never seen by the recorder — they vanish from the trajectory."""
+        trajectory = Trajectory(filtered_scope=CHILD_TAG)
+
+        # WRONG order: filter outermost, recorder inner
+        wrapped = compose(
+            security_domain_filter(CHILD_TAG),
+            trajectory_recorder(trajectory),
+        )(self._unreachable_handler)
+
+        c = Controllable(name="c", security_domain=SIBLING_TAG)
+        await wrapped(ControllablePreCallEvent(controllable=c, request="hi"))
+
+        # Nothing recorded — the filter returned ControllableNoInjection before
+        # the recorder ever ran
+        entries = trajectory.snapshot()
+        assert len([e for e in entries if isinstance(e, ControllablePreCallEvent)]) == 0
+        assert len([e for e in entries
+                     if isinstance(e, (ControllableInjection, ControllableNoInjection))]) == 0
+
+    @staticmethod
+    async def _unreachable_handler(event: Event) -> EventResponse:
+        raise AssertionError("Should not be called for out-of-scope events")

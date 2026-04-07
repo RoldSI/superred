@@ -1,4 +1,4 @@
-"""Feedback and evaluation types produced by task modules.
+"""Evaluation types produced by task modules.
 
 Feedback originates from the task module's evaluator and flows through the
 controller to the optimizer. It includes a primary score for optimization
@@ -25,10 +25,11 @@ class Score:
         value: Numeric score. Meaning is relative/comparative only. Higher values are better.
         name: Name of this score dimension (e.g. "asr", "utility_degradation").
         security_domain: The security domain this score pertains to.
+            ``None`` means always visible (unscoped).
     """
 
     value: float
-    security_domain: SecurityDomainTag
+    security_domain: SecurityDomainTag | None = None
     name: str = "primary"
 
 
@@ -49,17 +50,3 @@ class EvaluationResult:
     primary_score: Score
     sub_scores: dict[str, Score] = field(default_factory=dict)
     rationale: str = ""
-
-
-@dataclass
-class FeedbackResult:
-    """Content stored in FEEDBACK trajectory entries.
-
-    Bundles the evaluation result for a specific scope, giving the
-    optimizer context for its next step.
-
-    Attributes:
-        evaluation: The evaluation result from the task module.
-    """
-
-    evaluation: EvaluationResult

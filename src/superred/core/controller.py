@@ -4,6 +4,9 @@ The controller sits between the target and optimizer, bridging
 communication through an :class:`EventChannel`. It manages security
 domain filtering, evaluation, and score tracking.
 
+All events, responses, and target entries are recorded on the
+trajectory — the single source of truth for each run.
+
 Usage::
 
     controller = Controller(
@@ -19,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from dataclasses import dataclass, field
 
 from superred.core.channel import EventChannel
@@ -27,21 +29,11 @@ from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
-from superred.core.middleware import EventHandler, compose, security_domain_filter
-from superred.core.types.evaluation import EvaluationResult, FeedbackResult, Score
-from superred.core.types.event import (
-    Event,
-    EventResponse,
-    RunEndEvent,
-    RunEndResponse,
-    RunStartEvent,
-)
+from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
+from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.events import FeedbackEvent, RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.security_domain import SecurityDomainTag
-from superred.core.types.trajectory import (
-    FEEDBACK,
-    Trajectory,
-    TrajectoryEntry,
-)
+from superred.core.types.trajectory import Trajectory
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +103,8 @@ class Controller:
     3. For each task, launches the optimizer as a concurrent actor and
        runs the target, bridging events through an :class:`EventChannel`
        with security domain filtering.
-    4. Evaluates results and tracks scores.
+    4. Records all events and responses on the trajectory.
+    5. Evaluates results and tracks scores.
 
     Args:
         optimizer: The optimizer (attacker) to use.
@@ -137,9 +130,6 @@ class Controller:
         self._security_claim = security_claim
         self._security_domain_tag = security_domain_tag
         self._max_runs_per_task = max_runs_per_task
-
-        self._event_log: list[tuple[Event, EventResponse]] = []
-        self._event_log_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -198,7 +188,7 @@ class Controller:
         scope = self._security_domain_tag
         controllables = [
             c for c in self._target.get_controllables()
-            if scope.includes(c.spec.security_domain)
+            if scope.includes(c.security_domain)
         ]
         observables = [
             o for o in self._target.get_observables()
@@ -220,15 +210,6 @@ class Controller:
 
         optimizer_task = asyncio.create_task(_optimizer_with_error_propagation())
 
-        # Build the middleware stack: security filtering + logging
-        send_event = compose(
-            security_domain_filter(
-                self._security_domain_tag,
-                event_log=self._event_log,
-                event_log_lock=self._event_log_lock,
-            ),
-        )(channel.send)
-
         runs: list[RunResult] = []
         best_score: Score | None = None
         best_evaluation: EvaluationResult | None = None
@@ -237,7 +218,7 @@ class Controller:
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
                 trajectory, evaluation, done = await self._run_single(
-                    task, channel, send_event, run_number
+                    task, channel, run_number
                 )
                 runs.append(RunResult(trajectory=trajectory, evaluation=evaluation))
 
@@ -286,7 +267,6 @@ class Controller:
         self,
         task: Task[Target],
         channel: EventChannel,
-        send_event: EventHandler,
         run_number: int,
     ) -> tuple[Trajectory, EvaluationResult, bool]:
         """Execute a single optimizer iteration (one target run + evaluation).
@@ -301,13 +281,19 @@ class Controller:
         # Signal run start — optimizer gets filtered view
         await channel.send(RunStartEvent(trajectory=trajectory.filtered))
 
-        # Run target — events go through middleware stack
-        await self._target.run(trajectory, send_event)
+        # Build the event pipeline: record → filter → send to optimizer
+        send_event = compose(
+            trajectory_recorder(trajectory),
+            security_domain_filter(scope),
+        )(channel.send)
+
+        # Target runs — events go through the pipeline
+        await self._target.run(trajectory.emit, send_event)
 
         # Signal run end — optimizer gets filtered view
         end_response = await channel.send(RunEndEvent(trajectory=trajectory.filtered))
 
-        # Evaluate (task sees full trajectory)
+        # -- Evaluate --
         evaluation = await task.evaluate(trajectory, self._target)
 
         # Filter sub_scores to only include in-scope scores, then append
@@ -315,7 +301,7 @@ class Controller:
         # are always included (the optimizer needs the main signal).
         filtered_sub = {
             k: v for k, v in evaluation.sub_scores.items()
-            if scope.includes(v.security_domain)
+            if v.security_domain is None or scope.includes(v.security_domain)
         }
         filtered_eval = EvaluationResult(
             success=evaluation.success,
@@ -323,9 +309,8 @@ class Controller:
             sub_scores=filtered_sub,
             rationale=evaluation.rationale,
         )
-        trajectory.emit(TrajectoryEntry(
-            entry_type=FEEDBACK,
-            content=FeedbackResult(evaluation=filtered_eval),
+        trajectory.emit(FeedbackEvent(
+            evaluation=filtered_eval,
             security_domain=scope,
         ))
         trajectory.close()
@@ -342,16 +327,6 @@ class Controller:
         )
 
         return trajectory, evaluation, done
-
-    # ------------------------------------------------------------------
-    # Accessors
-    # ------------------------------------------------------------------
-
-    @property
-    def event_log(self) -> list[tuple[Event, EventResponse]]:
-        """All event-response pairs observed across all runs."""
-        with self._event_log_lock:
-            return list(self._event_log)
 
     # ------------------------------------------------------------------
     # CLI output

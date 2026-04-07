@@ -7,15 +7,14 @@ import asyncio
 import pytest
 
 from superred.core.interfaces.optimizer import Optimizer
-from superred.core.interfaces.target import EventHandler, Target
+from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
-from superred.core.types.controllable import Controllable, ControllableSpec
+from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
-from superred.core.types.event import (
+from superred.core.types.event import Event, EventHandler, EventResponse, EventResponseHandler
+from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -92,7 +91,9 @@ class StubOptimizer(Optimizer):
             return EventResponse(event=event)
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=self._done)
-        return ControllableInjection(event=event, value=self.inject_value)
+        return ControllableInjection(
+            event=event, controllable=event.controllable, value=self.inject_value,
+        )
 
     async def teardown(self) -> None:
         self.torn_down = True
@@ -127,18 +128,15 @@ class StubTarget(Target):
         return "target_response"
 
     def get_controllables(self) -> list[Controllable]:
-        spec = ControllableSpec(name="user_input", security_domain=self._tag)
-        return [Controllable(spec=spec)]
+        return [Controllable(name="user_input", security_domain=self._tag)]
 
     def get_observables(self) -> list[ObservableValue]:
         return []
 
-    async def run(self, trajectory: Trajectory, send_event: EventHandler) -> None:
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         self.run_count += 1
-        controllable = Controllable(
-            spec=ControllableSpec(name="user_input", security_domain=self._tag)
-        )
-        event = ControllablePreCallEvent(controllable=controllable, request="hello")
+        ctrl = Controllable(name="user_input", security_domain=self._tag)
+        event = ControllablePreCallEvent(controllable=ctrl, request="hello")
         await send_event(event)
 
     async def cleanup(self) -> None:
@@ -178,12 +176,11 @@ class ParallelTarget(Target):
     def get_observables(self) -> list[ObservableValue]:
         return []
 
-    async def run(self, trajectory: Trajectory, send_event: EventHandler) -> None:
-        spec = ControllableSpec(name="parallel_input", security_domain=self._tag)
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
+        ctrl = Controllable(name="parallel_input", security_domain=self._tag)
 
         async def branch(request: str) -> EventResponse:
-            controllable = Controllable(spec=spec)
-            event = ControllablePreCallEvent(controllable=controllable, request=request)
+            event = ControllablePreCallEvent(controllable=ctrl, request=request)
             return await send_event(event)
 
         r1, r2 = await asyncio.gather(branch("branch_a"), branch("branch_b"))
@@ -263,7 +260,9 @@ class CountingOptimizer(Optimizer):
         if isinstance(event, RunEndEvent):
             self._run_count += 1
             return RunEndResponse(event=event, done=self._run_count >= self._stop_after)
-        return ControllableInjection(event=event, value=self._inject_value)
+        return ControllableInjection(
+            event=event, controllable=event.controllable, value=self._inject_value,
+        )
 
     async def teardown(self) -> None:
         pass
@@ -280,7 +279,9 @@ class NeverDoneOptimizer(Optimizer):
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, ControllablePreCallEvent):
-            return ControllableInjection(event=event, value="x")
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="x",
+            )
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=False)
         return EventResponse(event=event)

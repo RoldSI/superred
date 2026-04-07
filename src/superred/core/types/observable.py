@@ -19,6 +19,9 @@ class Observable:
 
     Attributes:
         name: Unique identifier within the target module.
+        security_domain: Trust boundary this observable belongs to.
+            Must not be ``None`` — observables always belong to a
+            specific domain.
         description: Human-readable description.
         observable_type: Type of content ("text", "code", "config", "json").
     """
@@ -27,6 +30,7 @@ class Observable:
     security_domain: SecurityDomainTag
     description: str = ""
     observable_type: str = "text"
+
 
 
 @dataclass(frozen=True)

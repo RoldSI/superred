@@ -70,12 +70,13 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
      d. For each run (until optimizer signals done or max_runs):
         i.   Create Trajectory (full) and FilteredTrajectory (optimizer's view)
              channel.send(RunStartEvent(filtered_trajectory))
-        ii.  target.run(trajectory, send_event)
-             → target uses full trajectory; send_event bridges to channel with filtering
+        ii.  target.run(emit, send_event)
+             → target emits LogEvent instances via emit(event); send_event bridges to channel with filtering
+             → trajectory_recorder middleware records events/responses directly to trajectory
         iii. channel.send(RunEndEvent(filtered_trajectory))
              → optimizer responds with RunEndResponse(done=True/False)
-        iv.  task.evaluate(trajectory, target) → (EvaluationResult, list[FeedbackEntry])
-             → append domain-scoped feedback entries + overall to trajectory, close it
+        iv.  task.evaluate(trajectory, target) → EvaluationResult
+             → emit FeedbackEvent(evaluation=filtered_eval, security_domain=scope) to trajectory, close it
         v.   target.cleanup()
              → resets target state for next run
         vi.  If done=True, break
@@ -108,7 +109,7 @@ The controller does not create its own event loop. This allows embedding in larg
 
 4. **Target internal parallelism**: Multiple concurrent branches each calling `send_event` independently. Each gets its own response via the channel's future-based mechanism. Supports asyncio tasks and thread bridging.
 
-5. **Composable middleware**: `Middleware = Callable[[EventHandler], EventHandler]`. Wraps the event callback with zero overhead (function composition, no extra tasks or channels). `compose(a, b)(handler)` applies `a` outermost, `b` inner. Built-in: `security_domain_filter`. Users can add logging, tracing, budget enforcement etc. as additional middleware.
+5. **Composable middleware**: `Middleware = Callable[[EventHandler], EventHandler]`. Wraps the event callback with zero overhead (function composition, no extra tasks or channels). `compose(a, b)(handler)` applies `a` outermost, `b` inner. Built-in: `security_domain_filter`, `trajectory_recorder`. Users can add logging, tracing, budget enforcement etc. as additional middleware.
 
 6. **Manual values are constructor concerns**: API keys, credentials, etc. are passed to the target's constructor. Not part of the framework interface.
 
@@ -118,13 +119,13 @@ The controller does not create its own event loop. This allows embedding in larg
 
 9. **Tasks are type-bound via generics**: `Task[MyRAGTarget]` gets type-safe access to the concrete target. `Task[Target]` discovers capabilities at runtime via `config_specs`/`query_specs`.
 
-10. **Thread-safe at every boundary**: Trajectory (`threading.Lock`), EventChannel (`asyncio.Queue` + `call_soon_threadsafe`), EventEnvelope.respond (`Lock` + `call_soon_threadsafe`), Controller event log (`threading.Lock`).
+10. **Thread-safe at every boundary**: Trajectory (`threading.Lock`), EventChannel (`asyncio.Queue` + `call_soon_threadsafe`), EventEnvelope.respond (`Lock` + `call_soon_threadsafe`).
 
 11. **Process-safe interface**: The EventChannel interface (send/receive/respond/close) is designed so a future process-safe implementation (multiprocessing, sockets) can be swapped in with the same contract.
 
 12. **SecurityClaim composes**: From tasks (`from_tasks`) or from other claims (`from_claims`). Lazy chaining for claims-of-claims. Re-iterable since tasks are stateless.
 
-13. **Runtime-defined types**: SecurityDomainTag and TrajectoryEntryType are frozen dataclasses, not enums. Target systems define their own instances at runtime.
+13. **Runtime-defined types**: SecurityDomainTag is a frozen dataclass, not an enum. Target systems define their own instances at runtime.
 
 14. **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format contract. The target interprets the text.
 
@@ -134,7 +135,8 @@ The controller does not create its own event loop. This allows embedding in larg
 src/superred/core/
   channel.py           -- EventEnvelope, EventChannel (thread-safe)
   controller.py        -- Controller, RunResult, TaskResult, ControllerResult
-  middleware.py         -- Middleware type, compose(), security_domain_filter()
+  middleware.py         -- Middleware type, compose(), security_domain_filter(),
+                          trajectory_recorder()
   interfaces/
     optimizer.py       -- Optimizer ABC (actor model: run, on_event, _dispatch)
     target.py          -- Target ABC, EventHandler type alias
@@ -147,11 +149,11 @@ src/superred/core/
     observable.py      -- Observable, ObservableValue
     event.py           -- Event, EventResponse, ControllablePreCallEvent,
                           ControllablePostCallEvent, ControllableInjection,
-                          NoModification, RunStartEvent, RunEndEvent,
-                          RunEndResponse
-    trajectory.py      -- TrajectoryEntryType, TrajectoryEntry, Trajectory,
-                          FilteredTrajectory, ReadableTrajectory
-    evaluation.py      -- Score, EvaluationResult, FeedbackEntry, FeedbackResult
+                          ControllableNoInjection, FeedbackEvent, LogEvent,
+                          RunStartEvent, RunEndEvent, RunEndResponse
+    trajectory.py      -- Trajectory, FilteredTrajectory, ReadableTrajectory,
+                          EmitFn, get_domain
+    evaluation.py      -- Score, EvaluationResult
     security_domain.py -- SecurityDomainTag, SecurityDomain
 ```
 

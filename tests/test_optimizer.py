@@ -8,12 +8,11 @@ import pytest
 
 from superred.core.channel import EventChannel
 from superred.core.interfaces.optimizer import Optimizer
-from superred.core.types.controllable import Controllable, ControllableSpec
-from superred.core.types.event import (
+from superred.core.types.controllable import Controllable
+from superred.core.types.event import Event, EventResponse
+from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -46,7 +45,9 @@ class MinimalOptimizer(Optimizer):
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=False)
         if isinstance(event, ControllablePreCallEvent):
-            return ControllableInjection(event=event, value="test")
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value="test",
+            )
         return EventResponse(event=event)
 
 
@@ -125,12 +126,11 @@ class TestOptimizerDefaultRun:
         channel = EventChannel()
         task = asyncio.create_task(opt.run(channel))
         tag = SecurityDomainTag("ext")
-        spec = ControllableSpec(name="input", security_domain=tag)
-        controllable = Controllable(spec=spec)
+        ctrl = Controllable(name="input", security_domain=tag)
         t = Trajectory()
         await channel.send(RunStartEvent(trajectory=t))
         resp = await channel.send(
-            ControllablePreCallEvent(controllable=controllable, request="hi")
+            ControllablePreCallEvent(controllable=ctrl, request="hi")
         )
         assert isinstance(resp, ControllableInjection)
         assert resp.value == "test"
@@ -234,13 +234,13 @@ class TestOptimizerExceptionHandling:
 
         task = asyncio.create_task(run_with_poison())
         tag = SecurityDomainTag("ext")
-        spec = ControllableSpec(name="x", security_domain=tag)
+        ctrl = Controllable(name="x", security_domain=tag)
         t = Trajectory()
         await channel.send(RunStartEvent(trajectory=t))
         # This send gets the exception via reject()
         with pytest.raises(ValueError, match="ctrl failed"):
             await channel.send(ControllablePreCallEvent(
-                controllable=Controllable(spec=spec), request="hi",
+                controllable=ctrl, request="hi",
             ))
         # Subsequent sends raise immediately (channel poisoned)
         with pytest.raises(ValueError, match="ctrl failed"):

@@ -92,7 +92,8 @@ for run in tr.runs:
     # Inspect the trajectory
     entries = run.trajectory.snapshot()
     for entry in entries:
-        print(f"  {entry.entry_type.name}: {entry.content}")
+        if isinstance(entry, LogEvent):
+            print(f"  [{entry.label}]: {entry.content}")
 
     # Check the evaluation
     print(f"  Score: {run.evaluation.primary_score.value}")
@@ -100,19 +101,32 @@ for run in tr.runs:
     print(f"  Rationale: {run.evaluation.rationale}")
 ```
 
-### Event Log
+### Events in the Trajectory
 
-The Controller records all controllable event-response pairs:
+The Controller records all events and responses directly in the trajectory as `Event | EventResponse` objects. There is no separate event log. To inspect events for a run, use `isinstance` checks:
 
 ```python
-for event, response in controller.event_log:
-    print(f"Event: {type(event).__name__}")
-    print(f"Response: {type(response).__name__}")
-    if hasattr(response, "value"):
-        print(f"  Injected: {response.value}")
+from superred.core.types.event import (
+    ControllableInjection,
+    ControllablePreCallEvent,
+    FeedbackEvent,
+    LogEvent,
+)
+
+for run in tr.runs:
+    entries = run.trajectory.snapshot()
+    for entry in entries:
+        if isinstance(entry, ControllablePreCallEvent):
+            print(f"Event: {type(entry).__name__}")
+        elif isinstance(entry, ControllableInjection):
+            print(f"Injection: {entry.value}")
+        elif isinstance(entry, LogEvent):
+            print(f"Log [{entry.label}]: {entry.content}")
+        elif isinstance(entry, FeedbackEvent):
+            print(f"Feedback: {entry.evaluation.primary_score.value}")
 ```
 
-Note: lifecycle events (`RunStartEvent`, `RunEndEvent`) are NOT in the event log — only controllable events that went through the middleware.
+Controllable events and their responses are recorded in the trajectory. Lifecycle events (`RunStartEvent`, `RunEndEvent`) flow through the channel only and are NOT stored in the trajectory.
 
 ## Multiple Tasks
 

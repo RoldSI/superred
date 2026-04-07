@@ -33,9 +33,9 @@ The controller does not create an asyncio event loop — the caller provides it 
    - **Run loop** (until optimizer signals done or `max_runs_per_task`):
      - Create `Trajectory(filtered_scope=scope)`, access `trajectory.filtered` for optimizer's view.
      - Send `RunStartEvent(filtered_trajectory)` through channel — optimizer gets filtered view.
-     - `target.run(trajectory, send_event)` — target works with full trajectory; `send_event` bridges to channel with security domain filtering.
+     - `target.run(emit, send_event)` — target emits `LogEvent` instances via `emit(event)`; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records all events and responses directly to the trajectory.
      - Send `RunEndEvent(filtered_trajectory)` through channel — check `RunEndResponse.done`.
-     - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores), appends one FEEDBACK entry to the trajectory, then closes it.
+     - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores), emits a `FeedbackEvent(evaluation=filtered_eval, security_domain=scope)` to the trajectory, then closes it.
      - `target.cleanup()` — reset target state for next run.
      - Track best score, success across runs.
      - If `done=True`, break.
@@ -53,7 +53,8 @@ The controller does not create an asyncio event loop — the caller provides it 
 The `send_event` callback passed to `target.run` is built by composing middleware onto `channel.send`:
 ```python
 send_event = compose(
-    security_domain_filter(tag, event_log=..., event_log_lock=...),
+    security_domain_filter(tag),
+    trajectory_recorder(trajectory),
 )(channel.send)
 ```
 
@@ -65,15 +66,22 @@ The controller enforces the security domain scope across **all optimizer inputs*
 
 1. **Controllables**: Filtered with `scope.includes(c.spec.security_domain)` before `optimizer.initialize()`. Out-of-scope controllables are never exposed to the optimizer.
 2. **Observables**: Filtered with `scope.includes(o.observable.security_domain)` before `optimizer.initialize()`. Out-of-scope observables are never exposed to the optimizer.
-3. **Events**: `ControllablePreCallEvent` and `ControllablePostCallEvent` for out-of-scope controllables are answered with `NoModification` without reaching the optimizer. Implemented as the `security_domain_filter` middleware composed onto `channel.send`.
-4. **Trajectory**: The optimizer receives a `FilteredTrajectory` (via `RunStartEvent`/`RunEndEvent`) that only exposes entries within the security domain scope.
-5. **Feedback**: Each `Score` in the `EvaluationResult` carries a `security_domain`. The controller filters `sub_scores` to only include in-scope scores before writing the FEEDBACK entry to the trajectory. `primary_score`, `success`, and `rationale` are always included (the optimizer needs the main optimization signal).
+3. **Events**: `ControllablePreCallEvent` and `ControllablePostCallEvent` for out-of-scope controllables are answered with `ControllableNoInjection` without reaching the optimizer. Implemented as the `security_domain_filter` middleware composed onto `channel.send`.
+4. **Trajectory**: The optimizer receives a `FilteredTrajectory` (via `RunStartEvent`/`RunEndEvent`) that only exposes items within the security domain scope.
+5. **Feedback**: Each `Score` in the `EvaluationResult` carries a `security_domain`. The controller filters `sub_scores` to only include in-scope scores before emitting a `FeedbackEvent` to the trajectory. `primary_score`, `success`, and `rationale` are always included (the optimizer needs the main optimization signal).
 
 This allows testing specific security boundaries — scoping to `external` tests only external-facing surfaces, while scoping to `root` tests everything.
 
-## Event log
+## Unified trajectory as event log
 
-`controller.event_log` returns all `(Event, EventResponse)` pairs from controllable events across all runs. Thread-safe (protected by `threading.Lock`).
+There is no separate event log. The `trajectory_recorder` middleware records all events and responses directly into the trajectory as `Event | EventResponse` objects:
+
+- **Controllable events** — `ControllablePreCallEvent`, `ControllablePostCallEvent`.
+- **Controllable responses** — `ControllableInjection`, `ControllableNoInjection`.
+- **Log events** — `LogEvent` emitted by the target (model requests, model responses, etc.).
+- **Feedback** — `FeedbackEvent` emitted by the controller after evaluation.
+
+The trajectory IS the event log. Lifecycle events (`RunStartEvent`, `RunEndEvent`) are NOT persisted to the trajectory — they carry no additional information and always appear at fixed positions. To inspect events and responses for a run, query the trajectory items by type.
 
 ## Result types
 
@@ -107,5 +115,5 @@ The full evaluation:
 - **Cleanup after each run**: `target.cleanup()` is called after each evaluation to reset state.
 - **Exception-safe teardown**: `optimizer.teardown()` and `target.teardown()` are called in a `finally` block, ensuring cleanup even if a task raises an unexpected exception.
 - **Exception-safe channel shutdown**: If `target.run()` or `task.evaluate()` raises, the `finally` block in `_run_task` closes the channel and awaits the optimizer task, preventing deadlock.
-- **Thread-safe event log**: Protected by `threading.Lock` for cross-thread safety.
+- **Unified trajectory**: Events and responses are recorded directly to the trajectory via the `trajectory_recorder` middleware. No separate event log — the trajectory is the single source of truth.
 - **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ControllerResult` provides structured output for programmatic use.

@@ -84,12 +84,13 @@ pytest tests/test_mutations.py --no-cov
 ```
 tests/
   conftest.py                  -- Shared fixtures: domain tags, stub optimizer/target/task
-  test_types.py                -- Value types: Goal, Score, EvaluationResult, FeedbackResult,
-                                  ControllableSpec, Controllable, Observable, ConfigSpec, etc.
+  test_types.py                -- Value types: Goal, Score, EvaluationResult, FeedbackEvent,
+                                  Controllable, Observable, ConfigSpec, Event hierarchy, etc.
   test_security_domain.py      -- SecurityDomainTag.includes(), SecurityDomain construction,
                                   immutability, roots, distinct_combinations
   test_security_claim.py       -- SecurityClaim factories, iteration, composition
-  test_trajectory.py           -- Trajectory emit/drain/snapshot, close, entry types, threads
+  test_trajectory.py           -- Trajectory emit/drain/snapshot, close, get_domain, threads,
+                                  FilteredTrajectory push-based filtering
   test_channel.py              -- EventChannel/EventEnvelope edge cases, concurrency, threads
   test_optimizer.py            -- Optimizer _dispatch lifecycle, trajectory tracking, exceptions
   test_middleware.py            -- compose(), security_domain_filter()

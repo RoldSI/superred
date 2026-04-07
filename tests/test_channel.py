@@ -8,13 +8,8 @@ import threading
 import pytest
 
 from superred.core.channel import EventChannel, EventEnvelope
-from superred.core.types.event import (
-    Event,
-    EventResponse,
-    RunEndEvent,
-    RunEndResponse,
-    RunStartEvent,
-)
+from superred.core.types.event import Event, EventResponse
+from superred.core.types.events import RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.trajectory import Trajectory
 
 
@@ -199,8 +194,8 @@ class TestEventChannelEdgeCases:
         self, event_cls: str,
     ) -> None:
         """respond() rejects wrong response for controllable events."""
-        from superred.core.types.controllable import Controllable, ControllableSpec
-        from superred.core.types.event import (
+        from superred.core.types.controllable import Controllable
+        from superred.core.types.events import (
             ControllablePostCallEvent,
             ControllablePreCallEvent,
         )
@@ -208,7 +203,7 @@ class TestEventChannelEdgeCases:
 
         channel = EventChannel()
         tag = SecurityDomainTag("t")
-        ctrl = Controllable(spec=ControllableSpec(name="c", security_domain=tag))
+        ctrl = Controllable(name="c", security_domain=tag)
         if event_cls == "ControllablePreCallEvent":
             event = ControllablePreCallEvent(controllable=ctrl, request="hi")
         else:

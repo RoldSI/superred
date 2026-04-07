@@ -69,9 +69,10 @@ For each task in the security claim, the Controller runs this loop:
 3. LOOP (until optimizer says done or max_runs reached):
    a. Create trajectory
    b. Send RunStartEvent to optimizer
-   c. target.run(trajectory, send_event)
-      - Target calls send_event() at controllable points
+   c. target.run(emit, send_event)
+      - Target emits entries via emit() and calls send_event() at controllable points
       - Optimizer responds with injections
+      - Controller records events/responses as trajectory entries
    d. Send RunEndEvent to optimizer
       - Optimizer responds with done=True/False
    e. task.evaluate(trajectory, target)  # did the attack work?
@@ -87,20 +88,22 @@ The target and optimizer communicate through events:
 | Event | When | Valid Responses |
 |-------|------|-----------------|
 | `RunStartEvent` | Before `target.run()` | `EventResponse` |
-| `ControllablePreCallEvent` | Target reaches injection point | `ControllableInjection`, `NoModification` |
-| `ControllablePostCallEvent` | After injection is applied | `ControllableInjection`, `NoModification` |
+| `ControllablePreCallEvent` | Target reaches injection point | `ControllableInjection`, `ControllableNoInjection` |
+| `ControllablePostCallEvent` | After injection is applied | `ControllableInjection`, `ControllableNoInjection` |
 | `RunEndEvent` | After `target.run()` completes | `RunEndResponse(done=True/False)` |
 
 ## Trajectory
 
-Every run produces a **trajectory** - an ordered list of entries recording what happened. Entries include:
+Every run produces a **trajectory** - an ordered list of `Event | EventResponse` objects recording what happened. Common event types in the trajectory include:
 
-- `MODEL_REQUEST` - prompt sent to the LLM
-- `MODEL_RESPONSE` - response from the LLM
-- `FEEDBACK` - evaluation result
-- Custom types defined by the target
+- `LogEvent` - one-way logging from the target (e.g., model requests, model responses). Has `content` and `label` fields.
+- `FeedbackEvent` - evaluation result emitted by the controller. Has an `evaluation: EvaluationResult` field.
+- `ControllablePreCallEvent` / `ControllablePostCallEvent` - controllable events recorded by the controller.
+- `ControllableInjection` / `ControllableNoInjection` - responses to controllable events recorded by the controller.
 
-Each entry has a `security_domain` tag. The optimizer sees a **filtered** trajectory that only includes entries within its scope.
+Lifecycle events (`RunStartEvent`, `RunEndEvent`) are NOT stored in the trajectory.
+
+Each event has a `security_domain` tag (or `None` for events that are always visible regardless of scope). The optimizer sees a **filtered** trajectory that only includes entries within its scope (plus entries with `None` security domain).
 
 ## Security Domains
 
@@ -116,7 +119,7 @@ When the Controller is scoped to `user_input`:
 - The optimizer only sees controllables tagged `user_input`
 - The optimizer only sees trajectory entries tagged `user_input`
 - The optimizer only sees observables tagged `user_input`
-- Events for `internal_data` controllables get `NoModification` automatically
+- Events for `internal_data` controllables get `ControllableNoInjection` automatically
 
 This lets you test: "What can an attacker achieve if they only control the user input?"
 
@@ -124,7 +127,7 @@ This lets you test: "What can an attacker achieve if they only control the user 
 
 Each evaluation produces a `Score` with:
 - `value: float` - higher is better
-- `security_domain: SecurityDomainTag` - which domain this score pertains to
+- `security_domain: SecurityDomainTag | None` - which domain this score pertains to (`None` = always visible)
 - `name: str` - dimension name (default `"primary"`)
 
 The Controller tracks the best score across runs. Sub-scores outside the active security domain scope are filtered from the optimizer's feedback.

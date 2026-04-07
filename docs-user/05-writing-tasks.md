@@ -142,12 +142,12 @@ Each Score has a `security_domain`. The Controller filters `sub_scores` by the a
 The evaluator receives the full trajectory (not filtered). You can inspect what happened:
 
 ```python
-from superred.core.types.trajectory import MODEL_REQUEST, MODEL_RESPONSE
+from superred.core.types.event import LogEvent
 
 async def evaluate(self, trajectory, target):
     entries = trajectory.snapshot()
-    requests = [e.content for e in entries if e.entry_type is MODEL_REQUEST]
-    responses = [e.content for e in entries if e.entry_type is MODEL_RESPONSE]
+    requests = [e.content for e in entries if isinstance(e, LogEvent) and e.label == "model_request"]
+    responses = [e.content for e in entries if isinstance(e, LogEvent) and e.label == "model_response"]
     # Analyze the conversation...
 ```
 

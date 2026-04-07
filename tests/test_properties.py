@@ -8,13 +8,9 @@ from __future__ import annotations
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from superred.core.types.events import LogEvent
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
-from superred.core.types.trajectory import (
-    MODEL_REQUEST,
-    MODEL_RESPONSE,
-    Trajectory,
-    TrajectoryEntry,
-)
+from superred.core.types.trajectory import Trajectory
 
 _TAG = SecurityDomainTag("prop_test")
 
@@ -146,7 +142,7 @@ class TestTrajectoryProperties:
         """snapshot() returns all emitted entries in order."""
         t = Trajectory()
         for c in contents:
-            t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content=c, security_domain=_TAG))
+            t.emit(LogEvent(content=c, security_domain=_TAG))
         snap = t.snapshot()
         assert [e.content for e in snap] == contents
 
@@ -159,12 +155,12 @@ class TestTrajectoryProperties:
         # Emit first half and drain
         mid = len(contents) // 2
         for c in contents[:mid]:
-            t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content=c, security_domain=_TAG))
+            t.emit(LogEvent(content=c, security_domain=_TAG))
         first_drain = t.drain()
 
         # Emit second half and drain
         for c in contents[mid:]:
-            t.emit(TrajectoryEntry(entry_type=MODEL_RESPONSE, content=c, security_domain=_TAG))
+            t.emit(LogEvent(content=c, security_domain=_TAG))
         second_drain = t.drain()
 
         assert [e.content for e in first_drain] == contents[:mid]
@@ -176,7 +172,7 @@ class TestTrajectoryProperties:
         """Calling snapshot() twice with no emits in between returns the same data."""
         t = Trajectory()
         for c in contents:
-            t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content=c, security_domain=_TAG))
+            t.emit(LogEvent(content=c, security_domain=_TAG))
         s1 = [e.content for e in t.snapshot()]
         s2 = [e.content for e in t.snapshot()]
         assert s1 == s2
@@ -192,7 +188,7 @@ class TestTrajectoryProperties:
         """The union of all drain() calls equals the full snapshot."""
         t = Trajectory()
         for c in contents:
-            t.emit(TrajectoryEntry(entry_type=MODEL_REQUEST, content=c, security_domain=_TAG))
+            t.emit(LogEvent(content=c, security_domain=_TAG))
 
         all_drained: list[str] = []
         for _ in range(n_drains):

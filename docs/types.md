@@ -3,11 +3,11 @@
 ## Design Principles
 
 - **Frozen dataclasses** for immutable value types (specs, scores, tags, events, goals).
-- **Mutable dataclasses** for stateful types that accumulate data (Controllable, TrajectoryEntry, FeedbackResult).
-- **Runtime-defined over enums**: SecurityDomainTag and TrajectoryEntryType are frozen dataclasses, not enums. Target systems define their own instances at runtime.
+- **Mutable dataclasses** for stateful types that accumulate data (Controllable).
+- **Runtime-defined over enums**: SecurityDomainTag is a frozen dataclass, not an enum. Target systems define their own instances at runtime.
 - **Required fields over defaults**: Fields that are semantically required have no defaults. This prevents accidental construction of incomplete objects.
 - **`kw_only=True`** on all event dataclasses to avoid Python's dataclass inheritance ordering problem.
-- **No `Any` in public fields** where avoidable. `TrajectoryEntry.content` is `Any` because its type is determined by the entry type's `content_type` field.
+- **No `Any` in public fields** where avoidable. `LogEvent.content` is `Any` because it carries arbitrary target-side data.
 
 ---
 
@@ -65,7 +65,7 @@ All event types use `frozen=True, kw_only=True`.
 
 ### Event (base)
 
-Base class for all events. Fields: `event_id: str` (auto UUID), `timestamp: datetime` (auto now).
+Base class for all events. Fields: `event_id: str` (auto UUID), `timestamp: datetime` (auto now), `security_domain: SecurityDomainTag | None = None`.
 
 ### EventResponse (base)
 
@@ -73,21 +73,29 @@ Base class for all responses. Field: `event: Event` — every response reference
 
 ### ControllablePreCallEvent (extends Event)
 
-Fired when the target reaches a controllable and needs an injection value before proceeding. Fields: `controllable: Controllable`, `request: str`.
+Fired when the target reaches a controllable and needs an injection value before proceeding. Fields: `controllable: Controllable`, `request: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`.
 
 ### ControllablePostCallEvent (extends Event)
 
-Fired after a controllable's injected value has been used by the target. Informational — lets the optimizer observe the effect. Fields: `controllable: Controllable`, `request: str`, `answer: str`.
+Fired after a controllable's injected value has been used by the target. Informational — lets the optimizer observe the effect. Fields: `controllable: Controllable`, `request: str`, `answer: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`.
 
 ### ControllableInjection (extends EventResponse)
 
-The optimizer's injection for a controllable. Field: `value: str`. Returned as the response to `ControllablePreCallEvent` or `ControllablePostCallEvent`.
+The optimizer's injection for a controllable. Fields: `value: str`, `controllable: Controllable`. Returned as the response to `ControllablePreCallEvent` or `ControllablePostCallEvent`.
 
 **Design decision**: A single response type for both pre-call and post-call events. The inherited `event` field distinguishes which event type triggered it.
 
-### NoModification (extends EventResponse)
+### ControllableNoInjection (extends EventResponse)
 
-Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. No extra fields beyond the inherited `event`.
+Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Fields: `controllable: Controllable`, plus the inherited `event`.
+
+### FeedbackEvent (extends Event)
+
+Emitted by the controller after evaluation to deliver filtered feedback to the trajectory. Field: `evaluation: EvaluationResult`. The controller filters `sub_scores` by the active security domain scope before constructing this event.
+
+### LogEvent (extends Event)
+
+One-way logging event emitted by the target to record information in the trajectory. Fields: `content: Any`, `label: str = ""`. Used instead of the former `TrajectoryEntry` for target-side logging (e.g. model requests, model responses). The target sets the `security_domain` on the event directly.
 
 ### RunStartEvent (extends Event)
 
@@ -139,9 +147,13 @@ Composable transformations on the `EventHandler` callback. Zero overhead — pur
 
 Composes middleware left-to-right (first listed = outermost). `compose(a, b)(handler)` means `a(b(handler))`: events pass through `a` first, then `b`, then the inner handler.
 
-### security_domain_filter(scope, event_log, event_log_lock)
+### security_domain_filter(scope)
 
-Built-in middleware that filters controllable events by security domain. Events for controllables outside `scope` are answered with `NoModification` without reaching the inner handler. Optionally logs all event-response pairs to `event_log` (thread-safe via `event_log_lock`).
+Built-in middleware that filters controllable events by security domain. Events for controllables outside `scope` are answered with `ControllableNoInjection` without reaching the inner handler.
+
+### trajectory_recorder(trajectory)
+
+Built-in middleware that records events and responses directly to the trajectory. Takes only a `trajectory` parameter (no scope). Records `Event` and `EventResponse` objects as they pass through. Lifecycle events (`RunStartEvent`, `RunEndEvent`) are NOT persisted.
 
 **Design decision**: Middleware is function composition, not channel pipes. Each middleware wraps the callback — no background tasks, no extra channels, no sentinel cleanup. This gives the composability of pipeline architectures with zero overhead.
 
@@ -149,60 +161,52 @@ Built-in middleware that filters controllable events by security domain. Events 
 
 ## Trajectory (`trajectory.py`)
 
-### TrajectoryEntryType (frozen)
+The trajectory stores `Event | EventResponse` objects directly -- there is no `TrajectoryEntry` or `TrajectoryEntryType` wrapper. Events carry their own `security_domain`, and `EventResponse` objects derive theirs from the referenced event.
 
-Runtime-registered type declaring what a trajectory entry contains. All fields required:
-- `name: str` — unique identifier.
-- `description: str` — human-readable description.
-- `actor: str` — which component produces entries of this type (e.g. `"AI system"`, `"LLM model"`, `"task evaluator"`).
-- `content_type: type[Any]` — the Python type that `TrajectoryEntry.content` must be.
+### get_domain(item)
 
-Three defaults are always registered: `MODEL_REQUEST` (str), `MODEL_RESPONSE` (str), `FEEDBACK` (FeedbackResult). Targets register additional types at Trajectory construction.
-
-**Design decision**: Actor is on the type, not the entry. All entries of a given type come from the same actor.
-
-**Design decision**: `content_type` stores an actual Python type (e.g. `str`, `FeedbackResult`). Consumers can validate content at runtime via `isinstance`.
-
-### TrajectoryEntry (mutable)
-
-A single entry: `entry_type: TrajectoryEntryType`, `content: Any`, `security_domain: SecurityDomainTag`, `timestamp: datetime`. Content shape is determined by `entry_type.content_type`. The `security_domain` is required — the target sets it when emitting, and the controller sets it for FEEDBACK entries.
+Public function that extracts `security_domain` from a trajectory item. For `Event`, returns `item.security_domain` directly. For `EventResponse`, derives it from `item.event.security_domain`.
 
 ### Trajectory (class, thread-safe)
 
-Stream of TrajectoryEntry objects for one run. Thread-safe via `threading.Lock` on all public methods.
+Stream of `Event | EventResponse` objects for one run. Thread-safe via `threading.Lock` on all public methods.
 
 **Public API**:
-- `emit(entry)` — producer pushes an entry. Raises `RuntimeError` if closed.
-- `close()` — signals no more entries will be emitted.
-- `drain()` — returns all entries since last drain, non-blocking. Advances an internal cursor.
-- `snapshot()` — returns all entries so far without advancing cursor.
-- `__len__()` — number of entries emitted.
+- `emit(item)` — producer pushes an Event or EventResponse. Validates that `get_domain(item)` is not `None` (every trajectory item must have a security domain). Raises `RuntimeError` if closed.
+- `close()` — signals no more items will be emitted.
+- `drain()` — returns all items since last drain, non-blocking. Advances an internal cursor.
+- `snapshot()` — returns all items so far without advancing cursor.
+- `__len__()` — number of items emitted.
 
 **Design decision**: Non-blocking consumption only. `drain()` is cursor-based for incremental reading. `snapshot()` provides full history. Both are thread-safe.
 
 ### FilteredTrajectory (class, thread-safe)
 
-Read-only view of trajectory entries within a security domain scope. Created by passing ``filtered_scope`` to the :class:`Trajectory` constructor, accessed via ``trajectory.filtered``.
+Read-only view of trajectory items within a security domain scope. Created by passing ``filtered_scope`` to the :class:`Trajectory` constructor, accessed via ``trajectory.filtered``.
 
 **Public API**:
-- `snapshot()` — returns all in-scope entries received so far.
-- `drain()` — returns in-scope entries received since last drain. Maintains its own cursor.
+- `snapshot()` — returns all in-scope items received so far.
+- `drain()` — returns in-scope items received since last drain. Maintains its own cursor.
 
 No `emit()` or `close()` — read-only. Uses `__slots__` to prevent `__dict__`.
 
-**Push-based encapsulation**: Entries are pushed from Trajectory to FilteredTrajectory at emit time. FilteredTrajectory holds **no reference** to the underlying Trajectory — not as an attribute, not in a closure, nowhere. This is a deliberate security boundary: the optimizer receives a FilteredTrajectory and cannot reach the unfiltered data through any mechanism.
+**Push-based encapsulation**: Items are pushed from Trajectory to FilteredTrajectory at emit time. FilteredTrajectory holds **no reference** to the underlying Trajectory — not as an attribute, not in a closure, nowhere. This is a deliberate security boundary: the optimizer receives a FilteredTrajectory and cannot reach the unfiltered data through any mechanism.
 
-**Design decision**: Push-based rather than pull-based. Filtering happens once at emit time (efficient). The Trajectory holds a reference to its filtered view (parent → child), but the reverse direction is impossible. `__slots__` prevents arbitrary attribute injection. The scope is specified at Trajectory construction time — no post-hoc subscription machinery needed.
+**Design decision**: Push-based rather than pull-based. Filtering happens once at emit time (efficient). The Trajectory holds a reference to its filtered view (parent --> child), but the reverse direction is impossible. `__slots__` prevents arbitrary attribute injection. The scope is specified at Trajectory construction time -- no post-hoc subscription machinery needed.
 
 ### ReadableTrajectory (type alias)
 
 `ReadableTrajectory = Trajectory | FilteredTrajectory` — used in event types and optimizer annotations where either a full or filtered trajectory is accepted.
 
+### EmitFn (type alias)
+
+`EmitFn = Callable[..., None]` — the callback type for emitting events to the trajectory. Passed to `target.run()` instead of the full Trajectory object. The target emits `LogEvent` instances (e.g. `emit(LogEvent(content=..., label="model_request", security_domain=tag))`). This restricts the target to only emitting, without access to reading or closing the trajectory.
+
 ## Evaluation (`evaluation.py`)
 
 ### Score (frozen)
 
-A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag`, `name: str` (default `"primary"`). The security domain tags each score to a scope; the controller filters `sub_scores` by the active scope before writing feedback to the trajectory.
+A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags each score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope before emitting a `FeedbackEvent` to the trajectory.
 
 ### EvaluationResult (frozen)
 
@@ -212,11 +216,7 @@ The result of evaluating one run:
 - `sub_scores: dict[str, Score]` — named sub-scores for multi-objective analysis (default empty).
 - `rationale: str` — optional free-text explanation from the evaluator (default empty).
 
-**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each score carries a `security_domain` — the controller filters sub_scores by the active scope before writing feedback to the trajectory, so the optimizer only sees scores within its security domain. `primary_score` is always included (the main optimization signal).
-
-### FeedbackResult (mutable)
-
-Wraps an `EvaluationResult`. Field: `evaluation: EvaluationResult`. This is the content type for the `FEEDBACK` TrajectoryEntryType, so evaluation results flow through the trajectory stream like any other entry.
+**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each score carries a `security_domain` — the controller filters sub_scores by the active scope before emitting a `FeedbackEvent` to the trajectory, so the optimizer only sees scores within its security domain. `primary_score` is always included (the main optimization signal).
 
 ## Security Domains (`security_domain.py`)
 

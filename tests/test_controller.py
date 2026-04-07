@@ -6,33 +6,23 @@ import pytest
 
 from superred.core.controller import Controller, ControllerResult
 from superred.core.interfaces.security_claim import SecurityClaim
-from superred.core.interfaces.target import EventHandler, Target
-from superred.core.types.controllable import Controllable, ControllableSpec
-from superred.core.types.evaluation import (
-    EvaluationResult,
-    FeedbackResult,
-    Score,
-)
-from superred.core.types.event import (
+from superred.core.interfaces.target import Target
+from superred.core.types.controllable import Controllable
+from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.event import Event, EventHandler, EventResponse, EventResponseHandler
+from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
-    NoModification,
+    FeedbackEvent,
+    LogEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
-from superred.core.types.trajectory import (
-    FEEDBACK,
-    MODEL_REQUEST,
-    MODEL_RESPONSE,
-    FilteredTrajectory,
-    Trajectory,
-    TrajectoryEntry,
-)
+from superred.core.types.trajectory import FilteredTrajectory, Trajectory
 
 from .conftest import (
     EXTERNAL_TAG,
@@ -72,7 +62,7 @@ class VaryingScoreTask(StubTask):
 class FailingRunTarget(StubTarget):
     """Target whose run() raises RuntimeError."""
 
-    async def run(self, trajectory: object, send_event: object) -> None:
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         raise RuntimeError("target exploded")
 
 
@@ -111,13 +101,12 @@ class AlternatingSuccessTask(StubTask):
 
 class TestControllerInit:
     def test_construction_stores_params(self) -> None:
-        controller = Controller(
+        Controller(
             optimizer=StubOptimizer(),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
         )
-        assert controller.event_log == []
 
 
 # ---------------------------------------------------------------------------
@@ -268,13 +257,17 @@ class TestSecurityDomainFiltering:
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
         )
-        await controller.run()
+        result = await controller.run()
         ctrl_events = [e for e in optimizer.events_received
                        if isinstance(e, ControllablePreCallEvent)]
         assert len(ctrl_events) == 0
-        ctrl_log = [(ev, r) for ev, r in controller.event_log
-                    if isinstance(ev, ControllablePreCallEvent)]
-        assert isinstance(ctrl_log[0][1], NoModification)
+        # Verify ControllableNoInjection response is on the trajectory
+        traj = result.task_results[0].runs[0].trajectory
+        responses = [
+            e for e in traj.snapshot()
+            if isinstance(e, ControllableNoInjection)
+        ]
+        assert len(responses) == 1
 
     async def test_parent_scope_includes_child(self) -> None:
         optimizer = StubOptimizer(done=True)
@@ -323,52 +316,113 @@ class TestFeedbackInTrajectory:
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if e.entry_type is FEEDBACK]
+        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
         assert len(feedback) == 1
-        assert feedback[0].content.evaluation.primary_score.value == 0.5
+        assert feedback[0].evaluation.primary_score.value == 0.5
 
 
 # ---------------------------------------------------------------------------
-# Event log
+# Events on trajectory
 # ---------------------------------------------------------------------------
 
 
-class TestEventLog:
-    async def test_event_log_populated(self) -> None:
+class TestEventsOnTrajectory:
+    async def test_controllable_event_and_response_on_trajectory(self) -> None:
         controller = Controller(
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
         )
-        await controller.run()
-        ctrl_log = [(ev, r) for ev, r in controller.event_log
-                    if isinstance(ev, ControllablePreCallEvent)]
-        assert len(ctrl_log) == 1
-        assert isinstance(ctrl_log[0][1], ControllableInjection)
+        result = await controller.run()
+        traj = result.task_results[0].runs[0].trajectory
+        events = [e for e in traj.snapshot() if isinstance(e, ControllablePreCallEvent)]
+        responses = [e for e in traj.snapshot() if isinstance(e, ControllableInjection)]
+        assert len(events) == 1
+        assert len(responses) == 1
 
-    async def test_event_log_returns_defensive_copy(self) -> None:
+    async def test_in_scope_response_tagged_with_scope(self) -> None:
+        """In-scope controllable response is tagged with the optimizer's scope,
+        so the optimizer can see its own injection in the filtered trajectory."""
         controller = Controller(
-            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            optimizer=StubOptimizer(done=True),
+            target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
         )
-        await controller.run()
-        log_copy = controller.event_log
-        original_len = len(log_copy)
-        assert original_len > 0
-        log_copy.clear()
-        assert len(controller.event_log) == original_len
+        result = await controller.run()
+        traj = result.task_results[0].runs[0].trajectory
+        responses = [
+            e for e in traj.snapshot() if isinstance(e, ControllableInjection)
+        ]
+        assert len(responses) == 1
+        # Domain derived from event's controllable — in scope for EXTERNAL
+        from superred.core.types.trajectory import get_domain
+        assert get_domain(responses[0]) is EXTERNAL_TAG
 
-    async def test_event_log_excludes_lifecycle_events(self) -> None:
+    async def test_out_of_scope_response_tagged_with_event_domain(self) -> None:
+        """Out-of-scope ControllableNoInjection response is tagged with the event's domain,
+        making it invisible to the optimizer through the filtered trajectory."""
         controller = Controller(
-            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            optimizer=StubOptimizer(done=True),
+            target=StubTarget(tag=INTERNAL_TAG),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        result = await controller.run()
+        traj = result.task_results[0].runs[0].trajectory
+        responses = [
+            e for e in traj.snapshot() if isinstance(e, ControllableNoInjection)
+        ]
+        assert len(responses) == 1
+        # Domain derived from event's controllable — INTERNAL, invisible to EXTERNAL optimizer
+        from superred.core.types.trajectory import get_domain
+        assert get_domain(responses[0]) is INTERNAL_TAG
+
+    async def test_optimizer_sees_own_response_in_filtered_trajectory(self) -> None:
+        """The optimizer's filtered trajectory includes its own injection responses."""
+        seen_responses: list[object] = []
+
+        class _InspectingOptimizer(StubOptimizer):
+            async def on_event(self, event: Event) -> EventResponse:
+                if isinstance(event, RunEndEvent):
+                    for entry in event.trajectory.snapshot():
+                        if isinstance(entry, ControllableInjection):
+                            seen_responses.append(entry)
+                    return RunEndResponse(event=event, done=True)
+                return await super().on_event(event)
+
+        controller = Controller(
+            optimizer=_InspectingOptimizer(done=True),
+            target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
         )
         await controller.run()
-        lifecycle = [(ev, r) for ev, r in controller.event_log
-                     if isinstance(ev, (RunStartEvent, RunEndEvent))]
-        assert len(lifecycle) == 0
+        assert len(seen_responses) == 1
+        assert isinstance(seen_responses[0], ControllableInjection)
+
+    async def test_optimizer_does_not_see_out_of_scope_response(self) -> None:
+        """Out-of-scope ControllableNoInjection responses are invisible to the optimizer."""
+        seen_responses: list[object] = []
+
+        class _InspectingOptimizer(StubOptimizer):
+            async def on_event(self, event: Event) -> EventResponse:
+                if isinstance(event, RunEndEvent):
+                    for entry in event.trajectory.snapshot():
+                        if isinstance(entry, (ControllableInjection, ControllableNoInjection)):
+                            seen_responses.append(entry)
+                    return RunEndResponse(event=event, done=True)
+                return await super().on_event(event)
+
+        controller = Controller(
+            optimizer=_InspectingOptimizer(done=True),
+            target=StubTarget(tag=INTERNAL_TAG),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        await controller.run()
+        # ControllableNoInjection tagged with INTERNAL — invisible to EXTERNAL optimizer
+        assert len(seen_responses) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -497,8 +551,8 @@ class TestRunLoopEdgeCases:
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
         with pytest.raises(RuntimeError, match="closed"):
-            traj.emit(TrajectoryEntry(
-                entry_type=MODEL_REQUEST, content="x", security_domain=EXTERNAL_TAG,
+            traj.emit(LogEvent(
+                content="x", security_domain=EXTERNAL_TAG,
             ))
 
 
@@ -512,12 +566,12 @@ class _MultiControllableTarget(StubTarget):
 
     def get_controllables(self) -> list[Controllable]:
         return [
-            Controllable(spec=ControllableSpec(
+            Controllable(
                 name="external_input", security_domain=EXTERNAL_TAG,
-            )),
-            Controllable(spec=ControllableSpec(
+            ),
+            Controllable(
                 name="internal_input", security_domain=INTERNAL_TAG,
-            )),
+            ),
         ]
 
     def get_observables(self) -> list[ObservableValue]:
@@ -557,7 +611,9 @@ class _CapturingOptimizer(StubOptimizer):
             return EventResponse(event=event)
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=True)
-        return ControllableInjection(event=event, value="x")
+        return ControllableInjection(
+            event=event, controllable=event.controllable, value="x",
+        )
 
 
 class TestControllableObservableFiltering:
@@ -571,7 +627,7 @@ class TestControllableObservableFiltering:
             security_domain_tag=EXTERNAL_TAG,
         )
         await controller.run()
-        names = [c.spec.name for c in optimizer.received_controllables]
+        names = [c.name for c in optimizer.received_controllables]
         assert "external_input" in names
         assert "internal_input" not in names
 
@@ -626,23 +682,19 @@ class TestOptimizerReceivesFilteredTrajectory:
 
         class _TaggingTarget(StubTarget):
             async def run(
-                self, trajectory: Trajectory, send_event: EventHandler,
+                self, emit: EventHandler, send_event: EventResponseHandler,
             ) -> None:
                 self.run_count += 1
                 # Emit entries at different scopes
-                trajectory.emit(TrajectoryEntry(
-                    entry_type=MODEL_REQUEST, content="external",
-                    security_domain=EXTERNAL_TAG,
+                emit(LogEvent(
+                    content="external", security_domain=EXTERNAL_TAG,
                 ))
-                trajectory.emit(TrajectoryEntry(
-                    entry_type=MODEL_RESPONSE, content="internal",
-                    security_domain=INTERNAL_TAG,
+                emit(LogEvent(
+                    content="internal", security_domain=INTERNAL_TAG,
                 ))
                 # Still fire controllable event so optimizer responds
                 ctrl = Controllable(
-                    spec=ControllableSpec(
-                        name="user_input", security_domain=EXTERNAL_TAG,
-                    ),
+                    name="user_input", security_domain=EXTERNAL_TAG,
                 )
                 await send_event(
                     ControllablePreCallEvent(controllable=ctrl, request="q"),
@@ -656,7 +708,8 @@ class TestOptimizerReceivesFilteredTrajectory:
                     # Read from the filtered trajectory
                     traj = event.trajectory
                     for e in traj.snapshot():
-                        snapshot_contents.append(e.content)
+                        if isinstance(e, LogEvent):
+                            snapshot_contents.append(e.content)
                     return RunEndResponse(event=event, done=True)
                 return await super().on_event(event)
 
@@ -708,12 +761,11 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if e.entry_type is FEEDBACK]
+        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
 
         # One feedback entry at the scope level
         assert len(feedback) == 1
-        fb = feedback[0].content
-        assert isinstance(fb, FeedbackResult)
+        fb = feedback[0]
 
         # primary_score always included
         assert fb.evaluation.primary_score.value == 0.9
@@ -733,9 +785,8 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if e.entry_type is FEEDBACK]
-        fb = feedback[0].content
-        assert isinstance(fb, FeedbackResult)
+        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        fb = feedback[0]
         assert "external_asr" in fb.evaluation.sub_scores
         assert "internal_leak" in fb.evaluation.sub_scores
 
@@ -752,16 +803,16 @@ class TestScopedScoreFiltering:
                     if run_count == 2:
                         for past in self.past_trajectories:
                             for entry in past.snapshot():
-                                if entry.entry_type is FEEDBACK:
-                                    fb = entry.content
-                                    if isinstance(fb, FeedbackResult):
-                                        sub_score_names_seen.extend(
-                                            fb.evaluation.sub_scores.keys(),
-                                        )
+                                if isinstance(entry, FeedbackEvent):
+                                    sub_score_names_seen.extend(
+                                        entry.evaluation.sub_scores.keys(),
+                                    )
                     return EventResponse(event=event)
                 if isinstance(event, RunEndEvent):
                     return RunEndResponse(event=event, done=run_count >= 2)
-                return ControllableInjection(event=event, value="x")
+                return ControllableInjection(
+                    event=event, controllable=event.controllable, value="x",
+                )
 
         controller = Controller(
             optimizer=_FeedbackReadingOptimizer(),
@@ -786,9 +837,8 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if e.entry_type is FEEDBACK]
-        fb = feedback[0].content
-        assert isinstance(fb, FeedbackResult)
+        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        fb = feedback[0]
         # primary_score domain is ROOT, scope is EXTERNAL — still included
         assert fb.evaluation.primary_score.value == 0.9
         assert fb.evaluation.primary_score.security_domain is ROOT_TAG
@@ -816,9 +866,8 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if e.entry_type is FEEDBACK]
-        fb = feedback[0].content
-        assert isinstance(fb, FeedbackResult)
+        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        fb = feedback[0]
         assert fb.evaluation.sub_scores == {}
         # primary_score and success still present
         assert fb.evaluation.primary_score.value == 0.5
@@ -844,8 +893,39 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if e.entry_type is FEEDBACK]
-        fb = feedback[0].content
-        assert isinstance(fb, FeedbackResult)
+        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        fb = feedback[0]
         assert fb.evaluation.success is False
         assert fb.evaluation.rationale == "Attack partially succeeded"
+
+    async def test_none_domain_sub_score_always_included(self) -> None:
+        """Sub-scores with security_domain=None pass the filter at any scope."""
+
+        class _NoneDomainScoreTask(StubTask):
+            async def evaluate(
+                self, trajectory: Trajectory, target: Target,
+            ) -> EvaluationResult:
+                return EvaluationResult(
+                    success=True,
+                    primary_score=Score(value=0.9),
+                    sub_scores={
+                        "always_visible": Score(value=0.7, name="always_visible"),
+                        "scoped": Score(
+                            value=0.3, security_domain=INTERNAL_TAG, name="scoped",
+                        ),
+                    },
+                )
+
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([_NoneDomainScoreTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+        )
+        result = await controller.run()
+        entries = result.task_results[0].runs[0].trajectory.snapshot()
+        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        fb = feedback[0]
+        # None-domain sub_score always included
+        assert "always_visible" in fb.evaluation.sub_scores
+        # INTERNAL-domain sub_score filtered out at EXTERNAL scope
+        assert "scoped" not in fb.evaluation.sub_scores
