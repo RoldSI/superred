@@ -29,10 +29,11 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    LogEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
 )
+from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
@@ -44,6 +45,13 @@ from .conftest import (
     StubTarget,
     StubTask,
 )
+
+_EXT_OBS = Observable(name="log", security_domain=EXTERNAL_TAG)
+
+
+def _obs(content: str) -> ObservableEvent:
+    return ObservableEvent(observable=_EXT_OBS, content=content)
+
 
 # ---------------------------------------------------------------------------
 # SecurityDomainTag.includes — kills mutations in the traversal loop
@@ -134,7 +142,7 @@ class TestTrajectoryMutations:
     def test_emit_checks_closed_not_open(self) -> None:
         """Kills: `if self._closed` mutated to `if not self._closed`."""
         t = Trajectory()
-        entry = LogEvent(content="x", security_domain=EXTERNAL_TAG)
+        entry = _obs("x")
         t.emit(entry)  # should work when open
         t.close()
         with pytest.raises(RuntimeError):
@@ -144,7 +152,7 @@ class TestTrajectoryMutations:
         """Kills: `self._drain_cursor = len(self._entries)` mutated to
         `self._drain_cursor = 0` or removed entirely."""
         t = Trajectory()
-        t.emit(LogEvent(content="a", security_domain=EXTERNAL_TAG))
+        t.emit(_obs("a"))
         first = t.drain()
         assert len(first) == 1
         second = t.drain()
@@ -154,9 +162,9 @@ class TestTrajectoryMutations:
         """Kills: `self._entries[self._drain_cursor:]` mutated to
         `self._entries[0:]`."""
         t = Trajectory()
-        t.emit(LogEvent(content="a", security_domain=EXTERNAL_TAG))
+        t.emit(_obs("a"))
         t.drain()  # advance cursor
-        t.emit(LogEvent(content="b", security_domain=EXTERNAL_TAG))
+        t.emit(_obs("b"))
         result = t.drain()
         assert len(result) == 1
         assert result[0].content == "b"
@@ -164,7 +172,7 @@ class TestTrajectoryMutations:
     def test_snapshot_does_not_advance_cursor(self) -> None:
         """Kills: snapshot() accidentally using drain cursor logic."""
         t = Trajectory()
-        t.emit(LogEvent(content="a", security_domain=EXTERNAL_TAG))
+        t.emit(_obs("a"))
         t.snapshot()
         assert len(t.drain()) == 1  # drain should still see it
 
@@ -432,7 +440,7 @@ class TestControllerRunMutations:
         traj = result.task_results[0].runs[0].trajectory
         # Trajectory must be closed — emitting should raise
         with pytest.raises(RuntimeError, match="closed"):
-            traj.emit(LogEvent(content="x", security_domain=EXTERNAL_TAG))
+            traj.emit(_obs("x"))
 
     async def test_initialize_called(self) -> None:
         """Kills: `optimizer.initialize()` call removed."""

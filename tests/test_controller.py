@@ -15,7 +15,7 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePreCallEvent,
     FeedbackEvent,
-    LogEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -551,8 +551,9 @@ class TestRunLoopEdgeCases:
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
         with pytest.raises(RuntimeError, match="closed"):
-            traj.emit(LogEvent(
-                content="x", security_domain=EXTERNAL_TAG,
+            traj.emit(ObservableEvent(
+                observable=Observable(name="x", security_domain=EXTERNAL_TAG),
+                content="x",
             ))
 
 
@@ -686,11 +687,13 @@ class TestOptimizerReceivesFilteredTrajectory:
             ) -> None:
                 self.run_count += 1
                 # Emit entries at different scopes
-                emit(LogEvent(
-                    content="external", security_domain=EXTERNAL_TAG,
+                emit(ObservableEvent(
+                    observable=Observable(name="ext", security_domain=EXTERNAL_TAG),
+                    content="external",
                 ))
-                emit(LogEvent(
-                    content="internal", security_domain=INTERNAL_TAG,
+                emit(ObservableEvent(
+                    observable=Observable(name="int", security_domain=INTERNAL_TAG),
+                    content="internal",
                 ))
                 # Still fire controllable event so optimizer responds
                 ctrl = Controllable(
@@ -708,7 +711,7 @@ class TestOptimizerReceivesFilteredTrajectory:
                     # Read from the filtered trajectory
                     traj = event.trajectory
                     for e in traj.snapshot():
-                        if isinstance(e, LogEvent):
+                        if isinstance(e, ObservableEvent):
                             snapshot_contents.append(e.content)
                     return RunEndResponse(event=event, done=True)
                 return await super().on_event(event)

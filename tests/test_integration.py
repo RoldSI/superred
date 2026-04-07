@@ -23,7 +23,7 @@ from superred.core.types.events import (
     ControllablePostCallEvent,
     ControllablePreCallEvent,
     FeedbackEvent,
-    LogEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -111,8 +111,9 @@ class RAGTarget(Target):
             ControllablePreCallEvent(controllable=user_ctrl, request="What is the user query?")
         )
         user_query = user_resp.value if isinstance(user_resp, ControllableInjection) else "default"
-        emit(LogEvent(
-            content=user_query, label="model_request", security_domain=USER,
+        emit(ObservableEvent(
+            observable=Observable(name="model_request", security_domain=USER),
+            content=user_query,
         ))
 
         # Step 2: get DB lookup
@@ -129,8 +130,9 @@ class RAGTarget(Target):
 
         # Step 3: generate response
         self._last_response = f"Based on '{db_result}', answer to '{user_query}': done"
-        emit(LogEvent(
-            content=self._last_response, label="model_response", security_domain=EXTERNAL,
+        emit(ObservableEvent(
+            observable=Observable(name="model_response", security_domain=EXTERNAL),
+            content=self._last_response,
         ))
 
     async def cleanup(self) -> None:
@@ -459,12 +461,12 @@ class TestTrajectoryDataIntegrity:
         entries = trajectory.snapshot()
 
         # Trajectory has controllable events/responses,
-        # target entries (LogEvent), and FeedbackEvent
-        log_events = [e for e in entries if isinstance(e, LogEvent)]
+        # target entries (ObservableEvent), and FeedbackEvent
+        observable_events = [e for e in entries if isinstance(e, ObservableEvent)]
         feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
         ctrl_events = [e for e in entries if isinstance(e, ControllablePreCallEvent)]
 
-        assert len(log_events) >= 2  # at least model_request + model_response
+        assert len(observable_events) >= 2  # at least model_request + model_response
         assert len(feedback) == 1
         # RAGTarget fires 2 controllable events (user_query + db_lookup)
         assert len(ctrl_events) == 2
@@ -634,7 +636,7 @@ class TestDomainFilteredOptimizerInputs:
                             feedback_scores.append(
                                 entry.evaluation.primary_score.value,
                             )
-                        elif isinstance(entry, LogEvent):
+                        elif isinstance(entry, ObservableEvent):
                             traj_entry_contents.append(str(entry.content))
                 return await super().on_event(event)
 

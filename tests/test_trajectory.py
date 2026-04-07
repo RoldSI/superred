@@ -11,8 +11,9 @@ from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    LogEvent,
+    ObservableEvent,
 )
+from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import (
     Trajectory,
@@ -26,9 +27,11 @@ _CHILD = SecurityDomainTag("child", parent=_PARENT)
 _SIBLING = SecurityDomainTag("sibling", parent=_PARENT)
 
 
-def _log(content: str, tag: SecurityDomainTag = _TAG) -> LogEvent:
-    """Helper to build a LogEvent with default tag."""
-    return LogEvent(content=content, label="test", security_domain=tag)
+def _obs(content: str, tag: SecurityDomainTag = _TAG) -> ObservableEvent:
+    """Helper to build an ObservableEvent with default tag."""
+    return ObservableEvent(
+        observable=Observable(name="test", security_domain=tag), content=content,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +41,9 @@ def _log(content: str, tag: SecurityDomainTag = _TAG) -> LogEvent:
 
 class TestGetDomain:
     def test_event_returns_security_domain(self) -> None:
-        event = LogEvent(content="x", security_domain=_TAG)
+        event = ObservableEvent(
+            observable=Observable(name="x", security_domain=_TAG), content="x",
+        )
         assert get_domain(event) is _TAG
 
     def test_event_response_derives_from_event(self) -> None:
@@ -75,7 +80,7 @@ class TestTrajectory:
 
     def test_emit_and_snapshot(self) -> None:
         t = Trajectory()
-        entry = _log("Hello")
+        entry = _obs("Hello")
         t.emit(entry)
         snap = t.snapshot()
         assert len(snap) == 1
@@ -85,7 +90,7 @@ class TestTrajectory:
         t = Trajectory()
         t.close()
         with pytest.raises(RuntimeError, match="closed"):
-            t.emit(_log("x"))
+            t.emit(_obs("x"))
 
     def test_emit_rejects_none_domain(self) -> None:
         """Items without a security_domain cannot be persisted."""
@@ -95,7 +100,7 @@ class TestTrajectory:
 
     def test_snapshot_does_not_advance_cursor(self) -> None:
         t = Trajectory()
-        t.emit(_log("a"))
+        t.emit(_obs("a"))
         t.snapshot()
         # drain should still see the entry
         drained = t.drain()
@@ -103,7 +108,7 @@ class TestTrajectory:
 
     def test_drain_returns_new_entries_only(self) -> None:
         t = Trajectory()
-        t.emit(_log("a"))
+        t.emit(_obs("a"))
         first = t.drain()
         assert len(first) == 1
 
@@ -111,27 +116,27 @@ class TestTrajectory:
         assert t.drain() == []
 
         # Add another
-        t.emit(_log("b"))
+        t.emit(_obs("b"))
         second = t.drain()
         assert len(second) == 1
         assert second[0].content == "b"
 
     def test_drain_returns_all_new_since_last_drain(self) -> None:
         t = Trajectory()
-        t.emit(_log("1"))
-        t.emit(_log("2"))
+        t.emit(_obs("1"))
+        t.emit(_obs("2"))
         t.drain()  # advance cursor past both
-        t.emit(_log("3"))
-        t.emit(_log("4"))
+        t.emit(_obs("3"))
+        t.emit(_obs("4"))
         drained = t.drain()
         assert [e.content for e in drained] == ["3", "4"]
 
     def test_snapshot_grows_with_emits(self) -> None:
         t = Trajectory()
         assert len(t.snapshot()) == 0
-        t.emit(_log("a"))
+        t.emit(_obs("a"))
         assert len(t.snapshot()) == 1
-        t.emit(_log("b"))
+        t.emit(_obs("b"))
         assert len(t.snapshot()) == 2
 
     def test_close_idempotent(self) -> None:
@@ -140,12 +145,12 @@ class TestTrajectory:
         t.close()  # should not raise
         # Still closed — emit should still fail
         with pytest.raises(RuntimeError, match="closed"):
-            t.emit(_log("x"))
+            t.emit(_obs("x"))
 
     def test_snapshot_returns_copy(self) -> None:
         """Mutating snapshot list does not affect trajectory."""
         t = Trajectory()
-        t.emit(_log("a"))
+        t.emit(_obs("a"))
         snap = t.snapshot()
         snap.clear()
         assert len(t.snapshot()) == 1
@@ -160,7 +165,7 @@ class TestTrajectory:
         def emitter() -> None:
             barrier.wait()
             for i in range(n_per_thread):
-                t.emit(_log(str(i)))
+                t.emit(_obs(str(i)))
 
         threads = [threading.Thread(target=emitter) for _ in range(n_threads)]
         for th in threads:
@@ -173,8 +178,8 @@ class TestTrajectory:
     def test_snapshot_after_close(self) -> None:
         """snapshot() still works correctly after close()."""
         t = Trajectory()
-        t.emit(_log("a"))
-        t.emit(_log("b"))
+        t.emit(_obs("a"))
+        t.emit(_obs("b"))
         t.close()
         snap = t.snapshot()
         assert len(snap) == 2
@@ -184,7 +189,7 @@ class TestTrajectory:
     def test_drain_after_close(self) -> None:
         """drain() still works correctly after close()."""
         t = Trajectory()
-        t.emit(_log("a"))
+        t.emit(_obs("a"))
         t.close()
         drained = t.drain()
         assert len(drained) == 1
@@ -195,7 +200,7 @@ class TestTrajectory:
     def test_drain_returns_copy(self) -> None:
         """Mutating the drained list does not affect the trajectory."""
         t = Trajectory()
-        t.emit(_log("a"))
+        t.emit(_obs("a"))
         drained = t.drain()
         drained.clear()
         # snapshot should still have the entry
@@ -210,27 +215,27 @@ class TestTrajectory:
 class TestFilteredTrajectory:
     def test_snapshot_filters_by_scope(self) -> None:
         t = Trajectory(filtered_scope=_CHILD)
-        t.emit(_log("child", _CHILD))
-        t.emit(_log("sibling", _SIBLING))
+        t.emit(_obs("child", _CHILD))
+        t.emit(_obs("sibling", _SIBLING))
         snap = t.filtered.snapshot()
         assert len(snap) == 1
         assert snap[0].content == "child"
 
     def test_snapshot_includes_descendants(self) -> None:
         t = Trajectory(filtered_scope=_PARENT)
-        t.emit(_log("child", _CHILD))
-        t.emit(_log("sibling", _SIBLING))
+        t.emit(_obs("child", _CHILD))
+        t.emit(_obs("sibling", _SIBLING))
         assert len(t.filtered.snapshot()) == 2
 
     def test_snapshot_empty_when_nothing_in_scope(self) -> None:
         t = Trajectory(filtered_scope=_CHILD)
-        t.emit(_log("x", _SIBLING))
+        t.emit(_obs("x", _SIBLING))
         assert t.filtered.snapshot() == []
 
     def test_drain_returns_new_in_scope_entries(self) -> None:
         t = Trajectory(filtered_scope=_CHILD)
-        t.emit(_log("a", _CHILD))
-        t.emit(_log("b", _SIBLING))
+        t.emit(_obs("a", _CHILD))
+        t.emit(_obs("b", _SIBLING))
 
         first = t.filtered.drain()
         assert len(first) == 1
@@ -240,8 +245,8 @@ class TestFilteredTrajectory:
         assert t.filtered.drain() == []
 
         # Add more entries — only in-scope ones returned
-        t.emit(_log("c", _CHILD))
-        t.emit(_log("d", _SIBLING))
+        t.emit(_obs("c", _CHILD))
+        t.emit(_obs("d", _SIBLING))
         second = t.filtered.drain()
         assert len(second) == 1
         assert second[0].content == "c"
@@ -249,7 +254,7 @@ class TestFilteredTrajectory:
     def test_drain_cursor_independent_of_underlying(self) -> None:
         """FilteredTrajectory's drain cursor is independent of Trajectory's."""
         t = Trajectory(filtered_scope=_CHILD)
-        t.emit(_log("a", _CHILD))
+        t.emit(_obs("a", _CHILD))
 
         # Drain the underlying trajectory
         t.drain()
@@ -278,7 +283,7 @@ class TestFilteredTrajectory:
         """Concurrent drain() calls on FilteredTrajectory are safe."""
         t = Trajectory(filtered_scope=_CHILD)
         for i in range(100):
-            t.emit(_log(str(i), _CHILD))
+            t.emit(_obs(str(i), _CHILD))
         results: list[list[object]] = []
         lock = threading.Lock()
 
@@ -305,9 +310,9 @@ class TestFilteredTrajectory:
     def test_scope_matches_everything(self) -> None:
         """Parent scope includes all descendants."""
         t = Trajectory(filtered_scope=_PARENT)
-        t.emit(_log("child", _CHILD))
-        t.emit(_log("sibling", _SIBLING))
-        t.emit(_log("parent", _PARENT))
+        t.emit(_obs("child", _CHILD))
+        t.emit(_obs("sibling", _SIBLING))
+        t.emit(_obs("parent", _PARENT))
         assert len(t.filtered.snapshot()) == 3
 
     def test_live_updates_visible(self) -> None:
@@ -315,7 +320,7 @@ class TestFilteredTrajectory:
         t = Trajectory(filtered_scope=_CHILD)
         assert t.filtered.snapshot() == []
 
-        t.emit(_log("new", _CHILD))
+        t.emit(_obs("new", _CHILD))
         assert len(t.filtered.snapshot()) == 1
         assert t.filtered.drain()[0].content == "new"
 
@@ -335,7 +340,7 @@ class TestFilteredTrajectory:
         def emitter() -> None:
             barrier.wait()
             for i in range(n_per_emitter):
-                t.emit(_log(str(i), _CHILD))
+                t.emit(_obs(str(i), _CHILD))
 
         def reader() -> None:
             barrier.wait()

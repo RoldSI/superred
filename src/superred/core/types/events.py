@@ -3,8 +3,8 @@
 All concrete :class:`~superred.core.types.event.Event` and
 :class:`~superred.core.types.event.EventResponse` subclasses live here.
 
-Controllable events auto-derive their ``security_domain`` from the
-controllable's domain via ``__post_init__``.
+Observable and controllable events auto-derive their ``security_domain``
+from the referenced observable/controllable via ``__post_init__``.
 """
 
 from __future__ import annotations
@@ -15,24 +15,32 @@ from typing import Any
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.event import Event, EventResponse
+from superred.core.types.observable import Observable
 from superred.core.types.trajectory import ReadableTrajectory
 
-# -- One-way events (target logging) -----------------------------------------
+# -- Observable events (one-way target logging) ------------------------------
 
 
 @dataclass(frozen=True, kw_only=True)
-class LogEvent(Event):
-    """One-way logging event emitted by the target.
+class ObservableEvent(Event):
+    """One-way observation emitted by the target during a run.
 
     Not routed through the channel — recorded directly on the trajectory.
+    References an :class:`Observable` that defines the name and security
+    domain. ``security_domain`` is auto-derived from the observable if
+    not set.
 
     Attributes:
+        observable: The observable this event reports on.
         content: The payload (string, dict, any serializable data).
-        label: Optional human-readable label (e.g. ``"model_request"``).
     """
 
+    observable: Observable
     content: Any
-    label: str = ""
+
+    def __post_init__(self) -> None:
+        if self.security_domain is None:
+            object.__setattr__(self, "security_domain", self.observable.security_domain)
 
 
 # -- Controllable events -----------------------------------------------------

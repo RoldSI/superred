@@ -22,7 +22,7 @@ from superred.core.types.events import (
     ControllablePostCallEvent,
     ControllablePreCallEvent,
     FeedbackEvent,
-    LogEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -127,29 +127,32 @@ class TestEvaluationResult:
 
 
 # ---------------------------------------------------------------------------
-# LogEvent
+# ObservableEvent
 # ---------------------------------------------------------------------------
 
 
-class TestLogEvent:
+class TestObservableEvent:
     def test_fields(self) -> None:
         tag = SecurityDomainTag("ext")
-        e = LogEvent(content="hello", label="model_request", security_domain=tag)
+        obs = Observable(name="model_request", security_domain=tag, description="User message")
+        e = ObservableEvent(observable=obs, content="hello")
+        assert e.observable is obs
         assert e.content == "hello"
-        assert e.label == "model_request"
         assert e.security_domain is tag
         assert isinstance(e, Event)
 
     def test_frozen(self) -> None:
         tag = SecurityDomainTag("ext")
-        e = LogEvent(content="hello", security_domain=tag)
+        obs = Observable(name="x", security_domain=tag)
+        e = ObservableEvent(observable=obs, content="hello")
         with pytest.raises(FrozenInstanceError):
             e.content = "other"  # type: ignore[misc]
 
-    def test_label_defaults_empty(self) -> None:
+    def test_security_domain_auto_derived(self) -> None:
         tag = SecurityDomainTag("ext")
-        e = LogEvent(content="hello", security_domain=tag)
-        assert e.label == ""
+        obs = Observable(name="x", security_domain=tag)
+        e = ObservableEvent(observable=obs, content="hello")
+        assert e.security_domain is tag
 
 
 # ---------------------------------------------------------------------------
