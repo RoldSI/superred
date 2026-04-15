@@ -41,6 +41,7 @@ from .conftest import (
     EXTERNAL_TAG,
     INTERNAL_TAG,
     ROOT_TAG,
+    STUB_LLM_CONFIG,
     StubOptimizer,
     StubTarget,
     StubTask,
@@ -329,6 +330,7 @@ class TestControllerRunMutations:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=10,
         )
         result = await controller.run()
@@ -342,6 +344,7 @@ class TestControllerRunMutations:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=3,
         )
         result = await controller.run()
@@ -356,6 +359,7 @@ class TestControllerRunMutations:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=2,
         )
         result = await controller.run()
@@ -390,6 +394,7 @@ class TestControllerRunMutations:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([ScoredTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         # Best should be 0.8 (first run), not 0.5 (last run)
@@ -423,6 +428,7 @@ class TestControllerRunMutations:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([TiedTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert result.task_results[0].best_evaluation.rationale == "first"
@@ -435,6 +441,7 @@ class TestControllerRunMutations:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -450,6 +457,7 @@ class TestControllerRunMutations:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         assert optimizer.initialized is True
@@ -462,6 +470,7 @@ class TestControllerRunMutations:
                 target=StubTarget(),
                 security_claim=SecurityClaim.from_tasks([StubTask()]),
                 security_domain_tag=EXTERNAL_TAG,
+                llm_config=STUB_LLM_CONFIG,
                 max_runs_per_task=0,
             )
 
@@ -474,7 +483,9 @@ class TestControllerRunMutations:
         class CapturingOptimizer(StubOptimizer):
             async def initialize(
                 self, goal: object, controllables: object, observables: object,
+                llm_client: object,
             ) -> None:
+                await super().initialize(goal, controllables, observables, llm_client)  # type: ignore[arg-type]
                 nonlocal received_controllables, received_observables
                 received_controllables = controllables
                 received_observables = observables
@@ -486,6 +497,7 @@ class TestControllerRunMutations:
             target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
 
@@ -516,6 +528,7 @@ class TestBestScoreMCDC:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.1)]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert result.task_results[0].best_score.value == 0.1
@@ -539,6 +552,7 @@ class TestBestScoreMCDC:
             optimizer=CountingOptimizer(stop_after=2), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([S()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert result.task_results[0].best_score.value == 0.7
@@ -562,6 +576,7 @@ class TestBestScoreMCDC:
             optimizer=CountingOptimizer(stop_after=2), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([S()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert result.task_results[0].best_score.value == 0.9
@@ -587,6 +602,7 @@ class TestControllerDefaultValues:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         assert controller._max_runs_per_task == 100
 

@@ -6,12 +6,19 @@ The Controller wires everything together and runs the evaluation. This guide cov
 
 ```python
 from superred.core.controller import Controller
+from superred.core.types.llm import LLMConfig
 
 controller = Controller(
     optimizer=optimizer,
     target=target,
     security_claim=claim,
     security_domain_tag=scope_tag,
+    llm_config=LLMConfig(             # required — LLM access for optimizer
+        model="gpt-4o-mini",
+        api_base="https://api.openai.com",
+        api_key="sk-...",
+        max_cost=5.00,                # USD budget limit (optional)
+    ),
     max_runs_per_task=100,  # safety limit, default 100
 )
 ```
@@ -23,6 +30,7 @@ controller = Controller(
 | `security_claim` | The collection of tasks to evaluate |
 | `security_domain_tag` | Which security scope to test from |
 | `max_runs_per_task` | Safety limit on runs per task (min 1) |
+| `llm_config` | LLM access for the optimizer (`LLMConfig`) — required |
 
 ## Running
 
@@ -80,6 +88,7 @@ tr.success         # True if ANY run achieved the goal
 tr.best_score      # Score with the highest value across all runs
 tr.best_evaluation # the EvaluationResult that produced the best score
 tr.runs            # list[RunResult], one per optimizer run
+tr.llm_usage       # LLMUsage — total optimizer LLM usage for this task
 ```
 
 ### RunResult
@@ -88,6 +97,7 @@ tr.runs            # list[RunResult], one per optimizer run
 for run in tr.runs:
     run.trajectory     # the Trajectory for this run
     run.evaluation     # the EvaluationResult for this run
+    run.llm_usage      # LLMUsage — cumulative optimizer LLM usage after this run
 
     # Inspect the trajectory
     entries = run.trajectory.snapshot()
@@ -195,6 +205,7 @@ import os
 from dotenv import load_dotenv
 
 from superred.core.controller import Controller
+from superred.core.types.llm import LLMConfig
 from simple_chat_target import SimpleChatTarget, USER_INPUT_TAG
 from trivial_prompt_optimizer import TrivialPromptOptimizer
 from secret_leak_claim import secret_leak_claim
@@ -203,10 +214,13 @@ from secret_leak_claim import secret_leak_claim
 async def main():
     load_dotenv()
 
+    api_base = os.environ["LITELLM_API_BASE"]
+    api_key = os.environ["LITELLM_API_KEY"]
+
     target = SimpleChatTarget(
         model="gpt-4o-mini",
-        api_base=os.environ["LITELLM_API_BASE"],
-        api_key=os.environ["LITELLM_API_KEY"],
+        api_base=api_base,
+        api_key=api_key,
     )
     optimizer = TrivialPromptOptimizer()
     claim = secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
@@ -216,6 +230,12 @@ async def main():
         target=target,
         security_claim=claim,
         security_domain_tag=USER_INPUT_TAG,
+        llm_config=LLMConfig(
+            model="gpt-4o-mini",
+            api_base=api_base,
+            api_key=api_key,
+            max_cost=0.50,
+        ),
     )
     result = await controller.run()
 
@@ -223,13 +243,15 @@ async def main():
     tr = result.task_results[0]
     if tr.success:
         print(f"Attack succeeded! Best score: {tr.best_score.value}")
-        # Find the successful run
         for i, run in enumerate(tr.runs):
             if run.evaluation.success:
                 print(f"  Succeeded on run {i+1}")
                 print(f"  Rationale: {run.evaluation.rationale}")
     else:
         print(f"Attack failed. Best score: {tr.best_score.value}")
+
+    u = tr.llm_usage
+    print(f"LLM usage: {u.calls} calls, ${u.cost:.6f}")
 
 asyncio.run(main())
 ```

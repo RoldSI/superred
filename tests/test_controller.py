@@ -7,6 +7,7 @@ import pytest
 from superred.core.controller import Controller, ControllerResult
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.event import Event, EventHandler, EventResponse, EventResponseHandler
@@ -28,6 +29,7 @@ from .conftest import (
     EXTERNAL_TAG,
     INTERNAL_TAG,
     ROOT_TAG,
+    STUB_LLM_CONFIG,
     CountingOptimizer,
     FailingOnEventOptimizer,
     NeverDoneOptimizer,
@@ -106,7 +108,56 @@ class TestControllerInit:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
+
+
+# ---------------------------------------------------------------------------
+# Result type immutability
+# ---------------------------------------------------------------------------
+
+
+class TestResultTypesFrozen:
+    async def test_run_result_frozen(self) -> None:
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        run_result = result.task_results[0].runs[0]
+        with pytest.raises(AttributeError):
+            run_result.evaluation = None  # type: ignore[misc]
+
+    async def test_task_result_frozen(self) -> None:
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        tr = result.task_results[0]
+        with pytest.raises(AttributeError):
+            tr.success = True  # type: ignore[misc]
+
+    async def test_controller_result_frozen(self) -> None:
+        controller = Controller(
+            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        with pytest.raises(AttributeError):
+            result.task_results = []  # type: ignore[misc]
+
+    def test_controller_result_skipped_tasks_defaults_to_empty_list(self) -> None:
+        """ControllerResult.skipped_tasks defaults to an empty list, not None."""
+        cr = ControllerResult(task_results=[])
+        assert cr.skipped_tasks == []
+        assert isinstance(cr.skipped_tasks, list)
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +173,7 @@ class TestControllerRun:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([task]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
 
@@ -139,6 +191,7 @@ class TestControllerRun:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert len(result.task_results[0].runs) == 3
@@ -149,6 +202,7 @@ class TestControllerRun:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=3,
         )
         result = await controller.run()
@@ -161,6 +215,7 @@ class TestControllerRun:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([na_task, StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert len(result.task_results) == 1
@@ -173,6 +228,7 @@ class TestControllerRun:
             optimizer=optimizer, target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         assert optimizer.torn_down
@@ -183,7 +239,7 @@ class TestControllerRun:
         controller = Controller(
             optimizer=StubOptimizer(done=False), target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG, max_runs_per_task=3,
+            security_domain_tag=EXTERNAL_TAG, llm_config=STUB_LLM_CONFIG, max_runs_per_task=3,
         )
         await controller.run()
         assert target.cleanup_count == 3
@@ -196,6 +252,7 @@ class TestControllerRun:
                 [VaryingScoreTask(scores=[0.2, 0.8, 0.5])]
             ),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert result.task_results[0].best_score.value == 0.8
@@ -213,6 +270,7 @@ class TestLifecycleEvents:
             optimizer=optimizer, target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         types = [type(e).__name__ for e in optimizer.events_received]
@@ -226,6 +284,7 @@ class TestLifecycleEvents:
             optimizer=optimizer, target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         assert len(optimizer.past_trajectories) == 1
@@ -244,6 +303,7 @@ class TestSecurityDomainFiltering:
             optimizer=optimizer, target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         ctrl_events = [e for e in optimizer.events_received
@@ -256,6 +316,7 @@ class TestSecurityDomainFiltering:
             optimizer=optimizer, target=StubTarget(tag=INTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         ctrl_events = [e for e in optimizer.events_received
@@ -275,6 +336,7 @@ class TestSecurityDomainFiltering:
             optimizer=optimizer, target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=ROOT_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         ctrl_events = [e for e in optimizer.events_received
@@ -294,6 +356,7 @@ class TestParallelTarget:
             optimizer=optimizer, target=ParallelTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         ctrl_events = [e for e in optimizer.events_received
@@ -313,6 +376,7 @@ class TestFeedbackInTrajectory:
             optimizer=StubOptimizer(), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.5)]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
@@ -332,6 +396,7 @@ class TestEventsOnTrajectory:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -348,6 +413,7 @@ class TestEventsOnTrajectory:
             target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -367,6 +433,7 @@ class TestEventsOnTrajectory:
             target=StubTarget(tag=INTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -396,6 +463,7 @@ class TestEventsOnTrajectory:
             target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         assert len(seen_responses) == 1
@@ -419,6 +487,7 @@ class TestEventsOnTrajectory:
             target=StubTarget(tag=INTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         # ControllableNoInjection tagged with INTERNAL — invisible to EXTERNAL optimizer
@@ -439,6 +508,7 @@ class TestExceptionSafety:
             optimizer=optimizer, target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         with pytest.raises(RuntimeError, match="target exploded"):
             await controller.run()
@@ -453,6 +523,7 @@ class TestExceptionSafety:
             optimizer=optimizer, target=target,
             security_claim=SecurityClaim.from_tasks([FailingEvalTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         with pytest.raises(RuntimeError, match="evaluation exploded"):
             await controller.run()
@@ -467,6 +538,7 @@ class TestExceptionSafety:
             optimizer=optimizer, target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         with pytest.raises(RuntimeError, match="optimizer exploded"):
             await controller.run()
@@ -480,6 +552,7 @@ class TestExceptionSafety:
                 [NotApplicableTask(), NotApplicableTask()]
             ),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         assert result.task_results == []
@@ -499,8 +572,17 @@ class TestControllerValidation:
             Controller(
                 optimizer=StubOptimizer(), target=StubTarget(),
                 security_claim=SecurityClaim.from_tasks([StubTask()]),
-                security_domain_tag=EXTERNAL_TAG, max_runs_per_task=value,
+                security_domain_tag=EXTERNAL_TAG, llm_config=STUB_LLM_CONFIG,
+                max_runs_per_task=value,
             )
+
+    def test_max_runs_per_task_one_is_valid(self) -> None:
+        """max_runs_per_task=1 is the minimum valid value."""
+        Controller(
+            optimizer=StubOptimizer(), target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_domain_tag=EXTERNAL_TAG, llm_config=STUB_LLM_CONFIG, max_runs_per_task=1,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +597,7 @@ class TestRunLoopEdgeCases:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([AlternatingSuccessTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         tr = result.task_results[0]
@@ -527,7 +610,7 @@ class TestRunLoopEdgeCases:
             optimizer=NeverDoneOptimizer(),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG, max_runs_per_task=3,
+            security_domain_tag=EXTERNAL_TAG, llm_config=STUB_LLM_CONFIG, max_runs_per_task=3,
         )
         result = await controller.run()
         assert len(result.task_results[0].runs) == 3
@@ -538,6 +621,7 @@ class TestRunLoopEdgeCases:
             optimizer=optimizer, target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         assert optimizer.initialized
@@ -547,6 +631,7 @@ class TestRunLoopEdgeCases:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -602,7 +687,9 @@ class _CapturingOptimizer(StubOptimizer):
         goal: Goal,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
         self.received_controllables = list(controllables)
         self.received_observables = list(observables)
 
@@ -626,6 +713,7 @@ class TestControllableObservableFiltering:
             target=_MultiControllableTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         names = [c.name for c in optimizer.received_controllables]
@@ -640,6 +728,7 @@ class TestControllableObservableFiltering:
             target=_MultiControllableTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         names = [o.observable.name for o in optimizer.received_observables]
@@ -654,6 +743,7 @@ class TestControllableObservableFiltering:
             target=_MultiControllableTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=ROOT_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         assert len(optimizer.received_controllables) == 2
@@ -673,6 +763,7 @@ class TestOptimizerReceivesFilteredTrajectory:
             optimizer=optimizer, target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
         assert len(optimizer.received_trajectories) == 1
@@ -721,6 +812,7 @@ class TestOptimizerReceivesFilteredTrajectory:
             target=_TaggingTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         await controller.run()
 
@@ -761,6 +853,7 @@ class TestScopedScoreFiltering:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
@@ -785,6 +878,7 @@ class TestScopedScoreFiltering:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             security_domain_tag=ROOT_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
@@ -822,6 +916,7 @@ class TestScopedScoreFiltering:
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=2,
         )
         await controller.run()
@@ -837,6 +932,7 @@ class TestScopedScoreFiltering:
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             # EXTERNAL scope, but primary_score has ROOT domain
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
@@ -866,6 +962,7 @@ class TestScopedScoreFiltering:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_AllOutOfScopeTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
@@ -893,6 +990,7 @@ class TestScopedScoreFiltering:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_RationaleTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()
@@ -923,6 +1021,7 @@ class TestScopedScoreFiltering:
             optimizer=StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_NoneDomainScoreTask()]),
             security_domain_tag=EXTERNAL_TAG,
+            llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
         entries = result.task_results[0].runs[0].trajectory.snapshot()

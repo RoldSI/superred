@@ -14,6 +14,7 @@ Usage::
         target=my_target,
         security_claim=claim,
         security_domain_tag=external_tag,
+        llm_config=my_llm_config,
     )
     result = await controller.run()
 """
@@ -29,9 +30,11 @@ from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
+from superred.core.llm import LLMClient
 from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import FeedbackEvent, RunEndEvent, RunEndResponse, RunStartEvent
+from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
@@ -50,10 +53,12 @@ class RunResult:
     Attributes:
         trajectory: The run trajectory.
         evaluation: The evaluation result for this run.
+        llm_usage: Cumulative optimizer LLM usage after this run.
     """
 
     trajectory: Trajectory
     evaluation: EvaluationResult
+    llm_usage: LLMUsage
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,7 @@ class TaskResult:
         best_score: Highest primary score achieved across all runs.
         best_evaluation: The EvaluationResult that produced the best score.
         success: Whether any run achieved the adversarial goal.
+        llm_usage: Total optimizer LLM usage across all runs.
     """
 
     task: Task[Target]
@@ -73,6 +79,7 @@ class TaskResult:
     best_score: Score
     best_evaluation: EvaluationResult
     success: bool
+    llm_usage: LLMUsage
 
 
 @dataclass(frozen=True)
@@ -112,6 +119,8 @@ class Controller:
         security_claim: The collection of tasks to evaluate.
         security_domain_tag: The security domain scope to test.
             Only controllables within this scope are forwarded to the optimizer.
+        llm_config: LLM access configuration for the optimizer. Part of the
+            threat model: defines the model and budget.
         max_runs_per_task: Safety limit on runs per task.
     """
 
@@ -121,6 +130,7 @@ class Controller:
         target: Target,
         security_claim: SecurityClaim[Target],
         security_domain_tag: SecurityDomainTag,
+        llm_config: LLMConfig,
         max_runs_per_task: int = 100,
     ) -> None:
         if max_runs_per_task < 1:
@@ -130,6 +140,7 @@ class Controller:
         self._security_claim = security_claim
         self._security_domain_tag = security_domain_tag
         self._max_runs_per_task = max_runs_per_task
+        self._llm_config = llm_config
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -178,11 +189,17 @@ class Controller:
     async def _run_task(self, task: Task[Target]) -> TaskResult:
         """Run the optimizer loop for a single task.
 
-        Runs iterations until the optimizer signals done or the safety
-        limit is reached.
+        Runs iterations until the optimizer signals done, the safety
+        limit is reached, or the LLM budget is exhausted.
+
+        A fresh :class:`LLMClient` is created per task so that budget
+        is scoped to each task independently.
         """
         # Configure target (NotApplicable propagates to caller)
         await task.configure_target(self._target)
+
+        # Create a fresh LLM client for this task (budget resets per task)
+        llm_client = LLMClient(self._llm_config)
 
         # Initialize optimizer with filtered surfaces (only in-scope items)
         scope = self._security_domain_tag
@@ -194,7 +211,9 @@ class Controller:
             o for o in self._target.get_observables()
             if scope.includes(o.observable.security_domain)
         ]
-        await self._optimizer.initialize(task.goal, controllables, observables)
+        await self._optimizer.initialize(
+            task.goal, controllables, observables, llm_client,
+        )
 
         # Create channel and launch optimizer as concurrent task.
         # The wrapper poisons the channel if the optimizer crashes,
@@ -217,10 +236,22 @@ class Controller:
 
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
-                trajectory, evaluation, done = await self._run_single(
-                    task, channel, run_number
-                )
-                runs.append(RunResult(trajectory=trajectory, evaluation=evaluation))
+                try:
+                    trajectory, evaluation, done = await self._run_single(
+                        task, channel, run_number
+                    )
+                except BudgetExhaustedError:
+                    logger.info(
+                        "Task %r: LLM budget exhausted during run %d, stopping task",
+                        task.goal.description,
+                        run_number,
+                    )
+                    break
+
+                run_usage = llm_client.usage
+                runs.append(RunResult(
+                    trajectory=trajectory, evaluation=evaluation, llm_usage=run_usage,
+                ))
 
                 # Track best score
                 if best_score is None or evaluation.primary_score.value > best_score.value:
@@ -248,19 +279,26 @@ class Controller:
             except Exception:
                 pass
 
-        # These hold because max_runs_per_task >= 1 (validated in __init__)
-        # and the loop always completes at least one iteration before done
-        # can be checked. If _run_single raised, the finally block ran but
-        # we never reach here — the exception propagates directly.
-        assert best_score is not None
+        # If budget exhausted before the first run completed, synthesize
+        # a zero-score result so the task still appears in results.
+        if best_score is None:
+            best_score = Score(value=0.0, name="primary")
+            best_evaluation = EvaluationResult(
+                success=False,
+                primary_score=best_score,
+                sub_scores={},
+                rationale="LLM budget exhausted before first run completed.",
+            )
         assert best_evaluation is not None
 
+        task_usage = llm_client.usage
         return TaskResult(
             task=task,
             runs=runs,
             best_score=best_score,
             best_evaluation=best_evaluation,
             success=success,
+            llm_usage=task_usage,
         )
 
     async def _run_single(
@@ -344,6 +382,7 @@ class Controller:
                 f"\n  [{status}] {tr.task.goal.description}"
                 f"\n    Best score: {tr.best_score.value:.4f}"
                 f"\n    Runs: {len(tr.runs)}"
+                f"\n    LLM usage: {tr.llm_usage.calls} calls, ${tr.llm_usage.cost:.6f}"
             )
 
         if result.skipped_tasks:

@@ -8,6 +8,7 @@ import pytest
 
 from superred.core.channel import EventChannel
 from superred.core.interfaces.optimizer import Optimizer
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
@@ -35,8 +36,9 @@ class MinimalOptimizer(Optimizer):
         goal: Goal,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
-        pass
+        await super().initialize(goal, controllables, observables, llm_client)
 
     async def on_event(self, event: Event) -> EventResponse:
         self.events_seen.append(event)
@@ -151,8 +153,9 @@ class TestOptimizerExceptionHandling:
 
         class FailingOptimizer(Optimizer):
             async def initialize(self, goal: Goal, controllables: list[Controllable],
-                                 observables: list[ObservableValue]) -> None:
-                pass
+                                 observables: list[ObservableValue],
+                                 llm_client: LLMClient) -> None:
+                await super().initialize(goal, controllables, observables, llm_client)
 
             async def on_event(self, event: Event) -> EventResponse:
                 raise ValueError("boom")

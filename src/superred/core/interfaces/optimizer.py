@@ -21,6 +21,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from superred.core.channel import EventChannel, EventEnvelope
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import RunEndEvent, RunStartEvent
@@ -49,7 +50,8 @@ class Optimizer(ABC):
 
     Lifecycle:
         1. Instantiate with configuration.
-        2. ``initialize(goal, controllables, observables)`` — setup.
+        2. ``initialize(goal, controllables, observables, llm_client)``
+           — setup. Base class stores the LLM client.
         3. ``run(channel)`` — launched as concurrent task. Receives
            ``RunStartEvent``, controllable events, ``RunEndEvent``.
         4. ``teardown()`` — cleanup.
@@ -58,6 +60,7 @@ class Optimizer(ABC):
     def __init__(self) -> None:
         self._past_trajectories: list[ReadableTrajectory] = []
         self._current_trajectory: ReadableTrajectory | None = None
+        self._llm_client: LLMClient = None  # type: ignore[assignment]  # set via initialize()
 
     # ------------------------------------------------------------------
     # Setup
@@ -69,15 +72,25 @@ class Optimizer(ABC):
         goal: Goal,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
         """Set up the optimizer before the first run.
+
+        The controller passes a constrained :class:`LLMClient` that locks
+        the model, API base, and API key. After this call, the client is
+        also accessible via ``self.llm``.
+
+        Subclasses **must** call ``await super().initialize(...)`` (or
+        accept that ``self.llm`` won't work and store the client
+        themselves).
 
         Args:
             goal: The adversarial goal.
             controllables: Available injection points.
             observables: Global observables describing the target system.
+            llm_client: The constrained LLM client for this task.
         """
-        ...
+        self._llm_client = llm_client
 
     # ------------------------------------------------------------------
     # Main loop
@@ -199,6 +212,19 @@ class Optimizer(ABC):
     def current_trajectory(self) -> ReadableTrajectory | None:
         """The trajectory for the currently active run, or None."""
         return self._current_trajectory
+
+    # ------------------------------------------------------------------
+    # LLM access
+    # ------------------------------------------------------------------
+
+    @property
+    def llm(self) -> LLMClient:
+        """The controller-provided LLM client.
+
+        Stored by the base-class :meth:`initialize`. Optimizers access
+        it via ``self.llm.complete(messages)``.
+        """
+        return self._llm_client
 
     # ------------------------------------------------------------------
     # Lifecycle

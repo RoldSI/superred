@@ -9,6 +9,7 @@ import pytest
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.event import Event, EventHandler, EventResponse, EventResponseHandler
@@ -20,6 +21,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import LLMConfig
 from superred.core.types.observable import ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
@@ -28,6 +30,8 @@ from superred.core.types.trajectory import Trajectory
 # ---------------------------------------------------------------------------
 # Security domain fixtures
 # ---------------------------------------------------------------------------
+
+STUB_LLM_CONFIG = LLMConfig(model="test-model", api_base="http://test", api_key="sk-test")
 
 ROOT_TAG = SecurityDomainTag("root")
 EXTERNAL_TAG = SecurityDomainTag("external", parent=ROOT_TAG)
@@ -82,7 +86,9 @@ class StubOptimizer(Optimizer):
         goal: Goal,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
         self.initialized = True
 
     async def on_event(self, event: Event) -> EventResponse:
@@ -250,9 +256,9 @@ class CountingOptimizer(Optimizer):
 
     async def initialize(
         self, goal: Goal, controllables: list[Controllable],
-        observables: list[ObservableValue],
+        observables: list[ObservableValue], llm_client: LLMClient,
     ) -> None:
-        pass
+        await super().initialize(goal, controllables, observables, llm_client)
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, RunStartEvent):
@@ -273,9 +279,9 @@ class NeverDoneOptimizer(Optimizer):
 
     async def initialize(
         self, goal: Goal, controllables: list[Controllable],
-        observables: list[ObservableValue],
+        observables: list[ObservableValue], llm_client: LLMClient,
     ) -> None:
-        pass
+        await super().initialize(goal, controllables, observables, llm_client)
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, ControllablePreCallEvent):
@@ -299,9 +305,9 @@ class FailingOnEventOptimizer(Optimizer):
 
     async def initialize(
         self, goal: Goal, controllables: list[Controllable],
-        observables: list[ObservableValue],
+        observables: list[ObservableValue], llm_client: LLMClient,
     ) -> None:
-        pass
+        await super().initialize(goal, controllables, observables, llm_client)
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, ControllablePreCallEvent):

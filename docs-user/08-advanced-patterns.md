@@ -96,19 +96,18 @@ def logging_middleware() -> Middleware:
         return wrapped
     return apply
 
-def budget_middleware(max_tokens: int) -> Middleware:
-    """Stop after N tokens used."""
-    token_count = [0]
+def injection_limit_middleware(max_injections: int) -> Middleware:
+    """Stop injecting after N controllable injections."""
+    count = [0]
 
     def apply(handler):
         async def wrapped(event):
-            if token_count[0] >= max_tokens:
+            if count[0] >= max_injections:
                 from superred.core.types.event import ControllableNoInjection
                 return ControllableNoInjection(event=event, controllable=event.controllable)
             response = await handler(event)
-            # Count tokens in injection
             if hasattr(response, "value"):
-                token_count[0] += len(response.value.split())
+                count[0] += 1
             return response
         return wrapped
     return apply

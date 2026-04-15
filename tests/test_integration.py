@@ -14,6 +14,7 @@ from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import Task
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.event import Event, EventHandler, EventResponse, EventResponseHandler
@@ -29,6 +30,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import LLMConfig
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
@@ -37,6 +39,8 @@ from superred.core.types.trajectory import Trajectory
 # ---------------------------------------------------------------------------
 # Domain setup shared across integration tests
 # ---------------------------------------------------------------------------
+
+_LLM_CONFIG = LLMConfig(model="test-model", api_base="http://test", api_key="sk-test")
 
 ROOT = SecurityDomainTag("root")
 EXTERNAL = SecurityDomainTag("external", parent=ROOT)
@@ -189,7 +193,9 @@ class AdaptiveOptimizer(Optimizer):
         goal: Goal,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
         self._controllables = controllables
 
@@ -294,6 +300,7 @@ class TestFullControllerWorkflow:
             target=target,
             security_claim=claim,
             security_domain_tag=ROOT,  # root scope: everything passes
+            llm_config=_LLM_CONFIG,
         )
         result = await controller.run()
 
@@ -323,7 +330,7 @@ class TestSecurityScopeFiltering:
             security_claim=SecurityClaim.from_tasks(
                 [SecretExtractionTask(secret="HIDDEN")]
             ),
-            security_domain_tag=USER, max_runs_per_task=1,
+            security_domain_tag=USER, llm_config=_LLM_CONFIG, max_runs_per_task=1,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -357,6 +364,7 @@ class TestSecurityScopeFiltering:
             target=RAGTarget(),
             security_claim=SecurityClaim.from_tasks([SecretExtractionTask()]),
             security_domain_tag=EXTERNAL,
+            llm_config=_LLM_CONFIG,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -393,6 +401,7 @@ class TestMultiTaskClaim:
             target=target,
             security_claim=combined,
             security_domain_tag=ROOT,
+            llm_config=_LLM_CONFIG,
         )
         result = await controller.run()
 
@@ -420,6 +429,7 @@ class TestFeedbackFlowsToOptimizer:
             target=target,
             security_claim=claim,
             security_domain_tag=ROOT,
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=3,
         )
         result = await controller.run()
@@ -453,6 +463,7 @@ class TestTrajectoryDataIntegrity:
             target=target,
             security_claim=claim,
             security_domain_tag=ROOT,
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
         result = await controller.run()
@@ -492,7 +503,7 @@ class TestParallelControllablesIntegration:
         controller = Controller(
             optimizer=AdaptiveOptimizer(), target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=ROOT, max_runs_per_task=1,
+            security_domain_tag=ROOT, llm_config=_LLM_CONFIG, max_runs_per_task=1,
         )
         result = await controller.run()
         traj = result.task_results[0].runs[0].trajectory
@@ -514,7 +525,7 @@ class TestMultiTaskMixedResults:
         controller = Controller(
             optimizer=AdaptiveOptimizer(), target=RAGTarget(),
             security_claim=SecurityClaim.from_tasks([success_task, fail_task]),
-            security_domain_tag=ROOT, max_runs_per_task=1,
+            security_domain_tag=ROOT, llm_config=_LLM_CONFIG, max_runs_per_task=1,
         )
         result = await controller.run()
         by_goal = {tr.task.goal.description: tr for tr in result.task_results}
@@ -540,6 +551,7 @@ class TestOptimizerUsesPastTrajectories:
                 [SecretExtractionTask(secret="test")]
             ),
             security_domain_tag=ROOT,
+            llm_config=_LLM_CONFIG,
         )
         result = await controller.run()
         assert len(result.task_results[0].runs) == 3
@@ -567,6 +579,7 @@ class TestPostCallEventIntegration:
             optimizer=PostCallOptimizer(done=True), target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             security_domain_tag=ROOT,
+            llm_config=_LLM_CONFIG,
         )
         await controller.run()
         assert len(post_call_seen) == 1
@@ -597,6 +610,7 @@ class TestTargetConfigPerTask:
             target=target,
             security_claim=claim,
             security_domain_tag=ROOT,
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
         await controller.run()
@@ -624,10 +638,11 @@ class TestDomainFilteredOptimizerInputs:
                 goal: Goal,
                 controllables: list[Controllable],
                 observables: list[ObservableValue],
+                llm_client: LLMClient,
             ) -> None:
                 received_ctrl_names.extend(c.name for c in controllables)
                 received_obs_names.extend(o.observable.name for o in observables)
-                await super().initialize(goal, controllables, observables)
+                await super().initialize(goal, controllables, observables, llm_client)
 
             async def on_event(self, event: Event) -> EventResponse:
                 if isinstance(event, RunEndEvent):
@@ -647,6 +662,7 @@ class TestDomainFilteredOptimizerInputs:
                 [SecretExtractionTask(secret="TEST")],
             ),
             security_domain_tag=USER,
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
         await controller.run()

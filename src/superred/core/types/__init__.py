@@ -20,6 +20,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QueryParam, QuerySpec
@@ -31,6 +32,7 @@ from superred.core.types.trajectory import (
 )
 
 __all__ = [
+    "BudgetExhaustedError",
     "ConfigSpec",
     "Controllable",
     "ControllableInjection",
@@ -45,6 +47,8 @@ __all__ = [
     "FeedbackEvent",
     "FilteredTrajectory",
     "Goal",
+    "LLMConfig",
+    "LLMUsage",
     "ObservableEvent",
     "Observable",
     "ObservableValue",

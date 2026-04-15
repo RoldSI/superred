@@ -12,6 +12,9 @@ license = "MIT"
 authors = [
     { name = "Super Red-teaming Team" },
 ]
+dependencies = [
+    "litellm>=1.0",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

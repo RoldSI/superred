@@ -235,6 +235,40 @@ internal
 physical (separate root)
 ```
 
+## LLM Types (`llm.py`)
+
+### LLMConfig (frozen)
+
+Configuration for controller-mediated LLM access. Part of the threat model. Fields: `model: str`, `api_base: str`, `api_key: str`, `max_cost: float | None` (default `None` — unlimited).
+
+The `__repr__` masks the API key (shows first 4 chars + `...`, or `***` for short keys).
+
+**Design decision**: Frozen because the LLM configuration is an experiment parameter that must not change during execution. `max_cost` is optional — `None` means unlimited. Cost is computed per call via `litellm.completion_cost()`.
+
+### LLMUsage (frozen)
+
+Cumulative LLM usage counters. Fields: `calls: int` (default 0), `cost: float` (default 0.0, USD computed via `litellm.completion_cost()`).
+
+Used in `RunResult.llm_usage` (cumulative snapshot after each run) and `TaskResult.llm_usage` (total for the task).
+
+### BudgetExhaustedError (Exception)
+
+Raised by `LLMClient` when the cost budget is exhausted. Fields: `usage: LLMUsage` — the usage at the time of exhaustion. Inherits from `Exception`.
+
+## LLM Client (`core/llm.py`)
+
+### LLMClient
+
+Constrained async LLM client. Created by the controller from an `LLMConfig` and passed to the optimizer. The model, API base, and API key are locked — the optimizer cannot change them. Thread-safe: usage counters are protected by `threading.Lock`.
+
+**Public API**:
+- `complete(messages, **kwargs) -> ModelResponse` — send a chat completion via litellm. `model`, `api_base`, `api_key` are stripped from kwargs. Raises `BudgetExhaustedError` before the call if the cost budget is exhausted. Raises `RuntimeError` if the response is missing usage data (usage reporting is required for cost tracking).
+- `usage -> LLMUsage` — current cumulative usage (thread-safe snapshot).
+
+**Design decision**: Uses litellm internally so the optimizer gets an OpenAI-compatible interface (standard chat completions format). The client strips locked keys from kwargs rather than raising — this prevents accidental override while allowing kwargs passthrough for parameters like `temperature`, `max_tokens`, `stop`.
+
+---
+
 ### SecurityDomain (immutable class)
 
 A validated, immutable forest of SecurityDomainTag nodes. Construction validates:

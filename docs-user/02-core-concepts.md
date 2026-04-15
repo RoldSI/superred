@@ -29,9 +29,10 @@ The AI system you want to test. A target exposes:
 
 The attacker. It receives events through a channel and decides what to inject. The optimizer:
 
-- Gets initialized with the **goal** (what to achieve), **controllables** (what it can control), and **observables** (what it can see).
+- Gets initialized with the **goal** (what to achieve), **controllables** (what it can control), **observables** (what it can see), and optionally an **LLM client** (constrained proxy for generating attacks).
 - Handles events one at a time via `on_event()`.
 - Sees `RunStartEvent` at the start of each run, controllable events during the run, and `RunEndEvent` at the end.
+- Can use `self.llm` to make LLM calls (if the controller provides LLM access via `llm_config`). The model and cost budget are controlled by the experiment, not the optimizer.
 - Can signal `done=True` on `RunEndEvent` to stop early (e.g., goal achieved, budget exhausted).
 
 ### Task

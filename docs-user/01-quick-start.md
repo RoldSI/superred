@@ -10,7 +10,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Install the framework
-pip install -e ./super-red-teaming
+pip install -e ./superred
 
 # Install modules you need
 pip install -e ./superred-modules/targets/simple_chat

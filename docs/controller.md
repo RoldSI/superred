@@ -5,6 +5,8 @@ The controller is the main orchestrator for red-teaming evaluations. It wires to
 ## Construction
 
 ```python
+from superred.core.types.llm import LLMConfig
+
 target = MyTarget(api_key="sk-...")  # manual values at construction
 optimizer = MyOptimizer()
 claim = SecurityClaim.from_tasks([task_a, task_b])
@@ -14,6 +16,12 @@ controller = Controller(
     target=target,
     security_claim=claim,
     security_domain_tag=external_tag,
+    llm_config=LLMConfig(             # required — LLM access for optimizer
+        model="gpt-4o-mini",
+        api_base="https://api.openai.com",
+        api_key="sk-...",
+        max_cost=5.00,                # USD budget limit (optional, None = unlimited)
+    ),
     max_runs_per_task=100,  # safety limit, default 100
 )
 
@@ -28,7 +36,8 @@ The controller does not create an asyncio event loop — the caller provides it 
 
 1. **Per task** (from security claim):
    - `task.configure_target(target)` — if `NotApplicable`, skip task.
-   - `optimizer.initialize(goal, filtered_controllables, filtered_observables)` — only controllables and observables within the security domain scope are passed.
+   - Create `LLMClient` from `llm_config` (fresh per task — budget is per-task).
+   - `optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)` — only controllables and observables within the security domain scope are passed.
    - Create `EventChannel`, launch `optimizer.run(channel)` as concurrent `asyncio.Task`.
    - **Run loop** (until optimizer signals done or `max_runs_per_task`):
      - Create `Trajectory(filtered_scope=scope)`, access `trajectory.filtered` for optimizer's view.
@@ -90,6 +99,7 @@ The trajectory IS the event log. Lifecycle events (`RunStartEvent`, `RunEndEvent
 One target execution + evaluation:
 - `trajectory: Trajectory` — the run trajectory.
 - `evaluation: EvaluationResult` — the evaluation result for this run.
+- `llm_usage: LLMUsage` — cumulative optimizer LLM usage after this run. This is a cumulative snapshot — each successive run includes all prior usage, enabling budget-vs-performance tracking.
 
 ### TaskResult (frozen)
 
@@ -99,12 +109,24 @@ All runs for one task:
 - `best_score: Score` — highest primary score across all runs.
 - `best_evaluation: EvaluationResult` — the evaluation that produced the best score.
 - `success: bool` — whether any run achieved the adversarial goal.
+- `llm_usage: LLMUsage` — total optimizer LLM usage across all runs.
 
 ### ControllerResult (frozen)
 
 The full evaluation:
 - `task_results: list[TaskResult]` — results for each evaluated task.
 - `skipped_tasks: list[Task[Target]]` — tasks that raised `NotApplicable`.
+
+## LLM access and budget tracking
+
+The controller mediates LLM access for the optimizer. This is part of the threat model — it defines what computational resources the attacker has.
+
+- **Configuration**: Pass `llm_config=LLMConfig(...)` to the controller constructor (required). The config specifies the model, API credentials, and an optional cost budget (`max_cost` in USD).
+- **Per-task budget**: A fresh `LLMClient` is created for each task. Budget resets per task.
+- **Constrained client**: The `LLMClient` locks the model, API base, and API key. The optimizer cannot override them.
+- **Cost-based budget enforcement**: Pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches `max_cost`. Cost is computed per call via `litellm.completion_cost()`, which uses the model's pricing to convert token usage to USD.
+- **Usage tracking**: Each `RunResult` includes a cumulative `llm_usage` snapshot (calls, cost). Each `TaskResult` includes the total `llm_usage`. This enables budget-vs-performance analysis across runs.
+- **Summary output**: The evaluation summary includes call counts and cost.
 
 ## Design decisions
 
@@ -117,3 +139,6 @@ The full evaluation:
 - **Exception-safe channel shutdown**: If `target.run()` or `task.evaluate()` raises, the `finally` block in `_run_task` closes the channel and awaits the optimizer task, preventing deadlock.
 - **Unified trajectory**: Events and responses are recorded directly to the trajectory via the `trajectory_recorder` middleware. No separate event log — the trajectory is the single source of truth.
 - **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ControllerResult` provides structured output for programmatic use.
+- **LLM access as threat model parameter**: The model and budget are experiment-level settings, not optimizer choices. The controller creates a constrained `LLMClient` per task and the optimizer cannot escape the configured model/credentials. Budget limits are a fairness measure for comparing optimizer strategies.
+- **Per-task LLM budget**: Each task gets a fresh `LLMClient` with reset counters. This ensures budget fairness when evaluating across multiple tasks and enables per-task budget analysis.
+- **Cumulative usage snapshots**: `RunResult.llm_usage` is cumulative (includes all prior runs) rather than per-run delta. This is more useful for budget-vs-performance curves — each point shows (total_budget_spent, score_at_that_point).

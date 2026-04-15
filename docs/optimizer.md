@@ -6,7 +6,7 @@ The optimizer is the attacker agent in superred. It runs as a concurrent actor, 
 
 ```
 1. Instantiate with configuration
-2. initialize(goal, controllables, observables)
+2. initialize(goal, controllables, observables, llm_client) — base class stores the LLM client
 3. run(channel) — launched as asyncio.Task by the controller
    For each run (until optimizer signals done):
      - Receives RunStartEvent(trajectory) → sets current_trajectory
@@ -24,12 +24,32 @@ The optimizer stays alive across all runs for a task. One channel, one `run()` t
 Subclass `Optimizer` and override:
 
 **Required:**
-- `initialize(goal, controllables, observables)` — setup before first run.
+- `initialize(goal, controllables, observables, llm_client)` — setup before first run. Call `super().initialize(...)` to store the LLM client (accessible via `self.llm` after that).
 - `on_event(event) -> EventResponse` — respond to a single event. Use `isinstance` dispatch.
 
 **Optional:**
 - `run(channel)` — override for custom consumption model. Default: sequential via `_dispatch`.
 - `teardown()` — release resources. Default: no-op.
+
+## LLM access
+
+The controller passes a constrained `LLMClient` to `initialize()`. The base class stores it; after calling `super().initialize(...)`, the optimizer accesses it via:
+
+- **`self.llm`** property — returns the `LLMClient`. Available after `super().initialize()` is called.
+
+The `LLMClient` locks the model, API base, and API key — the optimizer cannot change them. Cost budget (`max_cost` in USD) is enforced by the client via pre-call checks that raise `BudgetExhaustedError`. Cost is computed per call via `litellm.completion_cost()`.
+
+```python
+async def on_event(self, event):
+    if isinstance(event, ControllablePreCallEvent):
+        response = await self.llm.complete([
+            {"role": "system", "content": "You are a red-teaming assistant."},
+            {"role": "user", "content": f"Generate an attack for: {event.request}"},
+        ])
+        attack = response.choices[0].message.content
+        return ControllableInjection(event=event, controllable=event.controllable, value=attack)
+    ...
+```
 
 ## Consumption models
 

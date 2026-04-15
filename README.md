@@ -1,1 +1,1 @@
-# super-red-teaming
+# superred

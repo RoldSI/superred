@@ -52,7 +52,7 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
    → target = MyTarget(api_key="sk-...")
 
 1. Controller constructed with optimizer, target, security_claim,
-   security_domain_tag, max_runs_per_task
+   security_domain_tag, max_runs_per_task, llm_config
 
 2. await controller.run():
 
@@ -61,8 +61,9 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
         → sets pre-run config via target.set_config()
         → raises NotApplicable if incompatible (task skipped)
 
-     b. Filter controllables and observables by scope
-        optimizer.initialize(goal, filtered_controllables, filtered_observables)
+     b. Create LLMClient from llm_config — fresh per task (budget is per-task)
+        Filter controllables and observables by scope
+        optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)
 
      c. channel = EventChannel()
         optimizer_task = asyncio.create_task(optimizer.run(channel))
@@ -119,7 +120,7 @@ The controller does not create its own event loop. This allows embedding in larg
 
 9. **Tasks are type-bound via generics**: `Task[MyRAGTarget]` gets type-safe access to the concrete target. `Task[Target]` discovers capabilities at runtime via `config_specs`/`query_specs`.
 
-10. **Thread-safe at every boundary**: Trajectory (`threading.Lock`), EventChannel (`asyncio.Queue` + `call_soon_threadsafe`), EventEnvelope.respond (`Lock` + `call_soon_threadsafe`).
+10. **Thread-safe at every boundary**: Trajectory (`threading.Lock`), EventChannel (`asyncio.Queue` + `call_soon_threadsafe`), EventEnvelope.respond (`Lock` + `call_soon_threadsafe`), LLMClient (`threading.Lock` on usage counters).
 
 11. **Process-safe interface**: The EventChannel interface (send/receive/respond/close) is designed so a future process-safe implementation (multiprocessing, sockets) can be swapped in with the same contract.
 
@@ -129,12 +130,15 @@ The controller does not create its own event loop. This allows embedding in larg
 
 14. **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format contract. The target interprets the text.
 
+15. **LLM access is part of the threat model**: The controller controls which model the optimizer can use and tracks budget (calls, USD cost). The `LLMConfig` (model, API base, API key, `max_cost`) is set at the experiment level. Budget enforcement is cost-based: `litellm.completion_cost()` computes USD per call from model pricing; pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches `max_cost`. The optimizer receives a constrained `LLMClient` that locks the model and credentials — it cannot choose a different model. Budget is per-task (fresh `LLMClient` per task). Uses litellm internally for OpenAI-compatible chat completions.
+
 ## File Map
 
 ```
 src/superred/core/
   channel.py           -- EventEnvelope, EventChannel (thread-safe)
   controller.py        -- Controller, RunResult, TaskResult, ControllerResult
+  llm.py               -- LLMClient (constrained LLM proxy for optimizers)
   middleware.py         -- Middleware type, compose(), security_domain_filter(),
                           trajectory_recorder()
   interfaces/
@@ -144,6 +148,7 @@ src/superred/core/
     security_claim.py  -- SecurityClaim (composable task iterator)
   types/
     goal.py            -- Goal
+    llm.py             -- LLMConfig, LLMUsage, BudgetExhaustedError
     state.py           -- ConfigSpec, QuerySpec, QueryParam
     controllable.py    -- ControllableSpec, Controllable, RequestAnswerPair
     observable.py      -- Observable, ObservableValue
