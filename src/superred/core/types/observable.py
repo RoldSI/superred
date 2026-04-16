@@ -32,7 +32,6 @@ class Observable:
     observable_type: str = "text"
 
 
-
 @dataclass(frozen=True)
 class ObservableValue:
     """An observable with its content.

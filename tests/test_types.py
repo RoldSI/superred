@@ -98,7 +98,8 @@ class TestEvaluationResult:
     def test_required_fields(self) -> None:
         tag = SecurityDomainTag("ext")
         er = EvaluationResult(
-            success=True, primary_score=Score(value=1.0, security_domain=tag),
+            success=True,
+            primary_score=Score(value=1.0, security_domain=tag),
         )
         assert er.success is True
         assert er.primary_score.value == 1.0
@@ -120,7 +121,8 @@ class TestEvaluationResult:
     def test_frozen(self) -> None:
         tag = SecurityDomainTag("ext")
         er = EvaluationResult(
-            success=True, primary_score=Score(value=1.0, security_domain=tag),
+            success=True,
+            primary_score=Score(value=1.0, security_domain=tag),
         )
         with pytest.raises(FrozenInstanceError):
             er.success = False  # type: ignore[misc]
@@ -164,19 +166,41 @@ class TestFeedbackEvent:
     def test_wraps_evaluation(self) -> None:
         tag = SecurityDomainTag("ext")
         ev = EvaluationResult(
-            success=True, primary_score=Score(value=1.0, security_domain=tag),
+            success=True,
+            primary_score=Score(value=1.0, security_domain=tag),
         )
         fb = FeedbackEvent(evaluation=ev)
         assert fb.evaluation is ev
+
+    def test_no_default_security_domain(self) -> None:
+        """FeedbackEvent does not auto-derive security_domain."""
+        ev = EvaluationResult(
+            success=True,
+            primary_score=Score(value=1.0),
+        )
+        fb = FeedbackEvent(evaluation=ev)
+        assert fb.security_domain is None
+
+    def test_explicit_security_domain_preserved(self) -> None:
+        """Explicit security_domain is preserved on FeedbackEvent."""
+        tag = SecurityDomainTag("custom")
+        ev = EvaluationResult(
+            success=True,
+            primary_score=Score(value=1.0),
+        )
+        fb = FeedbackEvent(evaluation=ev, security_domain=tag)
+        assert fb.security_domain is tag
 
     def test_frozen(self) -> None:
         """FeedbackEvent is a frozen dataclass (inherits from Event)."""
         tag = SecurityDomainTag("ext")
         ev1 = EvaluationResult(
-            success=True, primary_score=Score(value=1.0, security_domain=tag),
+            success=True,
+            primary_score=Score(value=1.0, security_domain=tag),
         )
         ev2 = EvaluationResult(
-            success=False, primary_score=Score(value=0.0, security_domain=tag),
+            success=False,
+            primary_score=Score(value=0.0, security_domain=tag),
         )
         fb = FeedbackEvent(evaluation=ev1)
         with pytest.raises(FrozenInstanceError):
@@ -390,17 +414,23 @@ class TestRunLifecycleEvents:
         assert isinstance(e, Event)
 
     def test_run_end_event(self) -> None:
-        t = Trajectory()
-        e = RunEndEvent(trajectory=t)
-        assert e.trajectory is t
+        e = RunEndEvent()
+        assert e.evaluation is None
+
+    def test_run_end_event_with_evaluation(self) -> None:
+        from superred.core.types.evaluation import EvaluationResult, Score
+
+        ev = EvaluationResult(success=False, primary_score=Score(0.5))
+        e = RunEndEvent(evaluation=ev)
+        assert e.evaluation is ev
 
     def test_run_end_response_default_not_done(self) -> None:
-        e = RunEndEvent(trajectory=Trajectory())
+        e = RunEndEvent()
         r = RunEndResponse(event=e, done=False)
         assert r.done is False
 
     def test_run_end_response_done(self) -> None:
-        e = RunEndEvent(trajectory=Trajectory())
+        e = RunEndEvent()
         r = RunEndResponse(event=e, done=True)
         assert r.done is True
 
@@ -411,13 +441,12 @@ class TestRunLifecycleEvents:
             e.trajectory = Trajectory()  # type: ignore[misc]
 
     def test_run_end_frozen(self) -> None:
-        t = Trajectory()
-        e = RunEndEvent(trajectory=t)
+        e = RunEndEvent()
         with pytest.raises(FrozenInstanceError):
-            e.trajectory = Trajectory()  # type: ignore[misc]
+            e.evaluation = None  # type: ignore[misc]
 
     def test_run_end_response_frozen(self) -> None:
-        e = RunEndEvent(trajectory=Trajectory())
+        e = RunEndEvent()
         r = RunEndResponse(event=e, done=False)
         with pytest.raises(FrozenInstanceError):
             r.done = True  # type: ignore[misc]

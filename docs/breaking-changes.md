@@ -110,3 +110,45 @@ Key changes:
 - `OptimizerFactory = Callable[[], Optimizer]` — type alias for optimizer factories.
 
 All are exported from `superred.core` and `superred.core.types`.
+
+### Feedback scoping: RunEndEvent change, evaluation order, include_feedback
+
+Three interrelated changes to how feedback flows to the optimizer:
+
+**1. RunEndEvent carries evaluation, not trajectory**
+
+`RunEndEvent.trajectory` has been replaced with `RunEndEvent.evaluation: EvaluationResult | None` (default `None`). The optimizer no longer receives the trajectory through RunEndEvent — use `self.current_trajectory` instead (available via `_dispatch`).
+
+```python
+# Before
+if isinstance(event, RunEndEvent):
+    for entry in event.trajectory.snapshot():
+        ...
+
+# After
+if isinstance(event, RunEndEvent):
+    # Read evaluation directly from the event:
+    if event.evaluation is not None:
+        score = event.evaluation.primary_score.value
+    # Or from the trajectory:
+    if self.current_trajectory is not None:
+        for entry in self.current_trajectory.snapshot():
+            ...
+```
+
+**2. Evaluation and FeedbackEvent emitted BEFORE RunEndEvent**
+
+The controller now evaluates the run and emits `FeedbackEvent` to the trajectory *before* sending `RunEndEvent` to the optimizer. Previously, `RunEndEvent` was sent first, then evaluation happened. This means the optimizer can read feedback from the trajectory at `RunEndEvent` time.
+
+New order: `target.run()` → `evaluate()` → `FeedbackEvent` → `RunEndEvent` → `trajectory.close()`.
+
+**3. Controller `include_feedback` flag**
+
+`Controller.__init__` accepts `include_feedback: bool = True`. When `True`, the controller emits a `FeedbackEvent` to the trajectory after evaluation, with `security_domain` set to a tag from the active scope. Set to `False` to skip `FeedbackEvent` emission entirely.
+
+**Impact**: Optimizers that accessed `RunEndEvent.trajectory` must switch to `self.current_trajectory` or `event.evaluation`. Optimizers that handled `FeedbackEvent` in `on_event()` should remove that handler — feedback no longer flows through the channel. Read it from `event.evaluation` on `RunEndEvent` or from the trajectory instead.
+
+**Migration**:
+1. Replace `event.trajectory` on `RunEndEvent` with `self.current_trajectory` or `event.evaluation`.
+2. Remove `FeedbackEvent` handlers from `on_event()` — they are dead code.
+3. To read feedback, use `event.evaluation` on `RunEndEvent` or query the trajectory.

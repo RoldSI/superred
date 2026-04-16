@@ -127,6 +127,10 @@ class ControllableNoInjection(EventResponse):
 class FeedbackEvent(Event):
     """Evaluation feedback appended by the controller after each run.
 
+    The controller emits this event to the trajectory when
+    ``include_feedback=True`` (the default).  The caller must supply
+    a ``security_domain`` so the event passes trajectory validation.
+
     Attributes:
         evaluation: The (possibly filtered) evaluation result.
     """
@@ -157,16 +161,19 @@ class RunStartEvent(Event):
 class RunEndEvent(Event):
     """Signals the end of a target run.
 
-    Sent by the controller after ``target.run()`` completes.
+    Sent by the controller after evaluation and feedback emission.
     NOT persisted to the trajectory.
     Valid responses: :class:`RunEndResponse`.
 
+    The optimizer can read the evaluation result directly from this
+    event, or from the :class:`FeedbackEvent` on the trajectory.
+
     Attributes:
-        trajectory: The trajectory for the completed run (may be a
-            :class:`FilteredTrajectory` when sent to the optimizer).
+        evaluation: The (scope-filtered) evaluation result for this run,
+            or ``None`` if evaluation was not performed.
     """
 
-    trajectory: ReadableTrajectory
+    evaluation: EvaluationResult | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

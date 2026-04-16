@@ -105,7 +105,9 @@ class TestLLMClient:
     @patch("superred.core.llm.completion_cost", return_value=0.001)
     @patch("superred.core.llm.acompletion")
     async def test_complete_calls_litellm(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         mock_acompletion.return_value = _make_mock_response()
         client = LLMClient(self._make_config())
@@ -124,14 +126,19 @@ class TestLLMClient:
     @patch("superred.core.llm.completion_cost", return_value=0.001)
     @patch("superred.core.llm.acompletion")
     async def test_complete_strips_locked_kwargs(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         mock_acompletion.return_value = _make_mock_response()
         client = LLMClient(self._make_config())
         messages = [{"role": "user", "content": "hello"}]
 
         await client.complete(
-            messages, model="other-model", api_base="other-base", api_key="other-key",
+            messages,
+            model="other-model",
+            api_base="other-base",
+            api_key="other-key",
         )
 
         # Locked values should be used, not the overrides
@@ -143,7 +150,9 @@ class TestLLMClient:
     @patch("superred.core.llm.completion_cost", return_value=0.005)
     @patch("superred.core.llm.acompletion")
     async def test_usage_tracking(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         mock_acompletion.return_value = _make_mock_response()
         client = LLMClient(self._make_config())
@@ -163,7 +172,9 @@ class TestLLMClient:
     @patch("superred.core.llm.completion_cost", return_value=0.60)
     @patch("superred.core.llm.acompletion")
     async def test_budget_max_cost(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         mock_acompletion.return_value = _make_mock_response()
         client = LLMClient(self._make_config(max_cost=1.00))
@@ -180,7 +191,9 @@ class TestLLMClient:
     @patch("superred.core.llm.completion_cost", return_value=1.00)
     @patch("superred.core.llm.acompletion")
     async def test_budget_exact_boundary(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         """Cost exactly equal to max_cost triggers BudgetExhaustedError."""
         mock_acompletion.return_value = _make_mock_response()
@@ -197,7 +210,9 @@ class TestLLMClient:
     @patch("superred.core.llm.completion_cost", return_value=0.001)
     @patch("superred.core.llm.acompletion")
     async def test_no_budget_limits(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         """When no limits are set, calls never raise BudgetExhaustedError."""
         mock_acompletion.return_value = _make_mock_response()
@@ -211,7 +226,9 @@ class TestLLMClient:
     @patch("superred.core.llm.completion_cost", return_value=0.001)
     @patch("superred.core.llm.acompletion")
     async def test_missing_usage_raises(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         """Responses without usage data must raise RuntimeError."""
         resp = MagicMock()
@@ -290,7 +307,9 @@ class TestControllerLLMIntegration:
     @patch("superred.core.llm.completion_cost", return_value=0.005)
     @patch("superred.core.llm.acompletion")
     async def test_result_tracks_llm_usage(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         """RunResult and TaskResult track LLM usage."""
         from superred.core.controller import Controller
@@ -316,7 +335,9 @@ class TestControllerLLMIntegration:
                 if isinstance(event, ControllablePreCallEvent):
                     await self.llm.complete([{"role": "user", "content": "attack"}])
                     return ControllableInjection(
-                        event=event, controllable=event.controllable, value="attack",
+                        event=event,
+                        controllable=event.controllable,
+                        value="attack",
                     )
                 if isinstance(event, RunEndEvent):
                     return RunEndResponse(event=event, done=True)
@@ -357,7 +378,9 @@ class TestBudgetExhaustionGraceful:
     @patch("superred.core.llm.completion_cost", return_value=0.60)
     @patch("superred.core.llm.acompletion")
     async def test_budget_exhaustion_stops_task_not_evaluation(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         """When budget runs out mid-task, that task stops but results are returned."""
         from superred.core.controller import Controller
@@ -386,7 +409,9 @@ class TestBudgetExhaustionGraceful:
                 if isinstance(event, ControllablePreCallEvent):
                     await self.llm.complete([{"role": "user", "content": "attack"}])
                     return ControllableInjection(
-                        event=event, controllable=event.controllable, value="attack",
+                        event=event,
+                        controllable=event.controllable,
+                        value="attack",
                     )
                 if isinstance(event, RunEndEvent):
                     return RunEndResponse(event=event, done=False)
@@ -424,7 +449,9 @@ class TestBudgetExhaustionGraceful:
     @patch("superred.core.llm.completion_cost", return_value=1.00)
     @patch("superred.core.llm.acompletion")
     async def test_budget_exhaustion_on_first_run(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         """Budget exhaustion on the very first run still produces a TaskResult."""
         from superred.core.controller import Controller
@@ -453,7 +480,9 @@ class TestBudgetExhaustionGraceful:
                     # Second call will raise BudgetExhaustedError
                     await self.llm.complete([{"role": "user", "content": "b"}])
                     return ControllableInjection(
-                        event=event, controllable=event.controllable, value="x",
+                        event=event,
+                        controllable=event.controllable,
+                        value="x",
                     )
                 if isinstance(event, RunEndEvent):
                     return RunEndResponse(event=event, done=True)
@@ -487,7 +516,9 @@ class TestBudgetExhaustionGraceful:
     @patch("superred.core.llm.completion_cost", return_value=0.60)
     @patch("superred.core.llm.acompletion")
     async def test_budget_exhaustion_continues_to_next_task(
-        self, mock_acompletion: AsyncMock, _mock_cost: MagicMock,
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
     ) -> None:
         """After budget exhaustion on one task, the next task still runs."""
         from superred.core.controller import Controller
@@ -514,7 +545,9 @@ class TestBudgetExhaustionGraceful:
                 if isinstance(event, ControllablePreCallEvent):
                     await self.llm.complete([{"role": "user", "content": "attack"}])
                     return ControllableInjection(
-                        event=event, controllable=event.controllable, value="attack",
+                        event=event,
+                        controllable=event.controllable,
+                        value="attack",
                     )
                 if isinstance(event, RunEndEvent):
                     return RunEndResponse(event=event, done=False)
@@ -608,6 +641,7 @@ class TestLLMClientNoop:
 class TestOptimizerLLMProperty:
     def test_llm_available_after_controller_sets_it(self) -> None:
         from .conftest import StubOptimizer
+
         config = LLMConfig(model="m", api_base="b", api_key="k")
         client = LLMClient(config)
 

@@ -98,7 +98,9 @@ class StubOptimizer(Optimizer):
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=self._done)
         return ControllableInjection(
-            event=event, controllable=event.controllable, value=self.inject_value,
+            event=event,
+            controllable=event.controllable,
+            value=self.inject_value,
         )
 
     async def teardown(self) -> None:
@@ -221,7 +223,9 @@ class StubTask(Task[Target]):
         pass
 
     async def evaluate(
-        self, trajectory: Trajectory, target: Target,
+        self,
+        trajectory: Trajectory,
+        target: Target,
     ) -> EvaluationResult:
         return EvaluationResult(
             success=self._success,
@@ -240,7 +244,9 @@ class NotApplicableTask(Task[Target]):
         raise NotApplicable("Not applicable to this target")
 
     async def evaluate(
-        self, trajectory: Trajectory, target: Target,
+        self,
+        trajectory: Trajectory,
+        target: Target,
     ) -> EvaluationResult:
         raise AssertionError("Should not be called")
 
@@ -255,8 +261,11 @@ class CountingOptimizer(Optimizer):
         self._run_count = 0
 
     async def initialize(
-        self, goal: Goal, controllables: list[Controllable],
-        observables: list[ObservableValue], llm_client: LLMClient,
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
 
@@ -267,7 +276,9 @@ class CountingOptimizer(Optimizer):
             self._run_count += 1
             return RunEndResponse(event=event, done=self._run_count >= self._stop_after)
         return ControllableInjection(
-            event=event, controllable=event.controllable, value=self._inject_value,
+            event=event,
+            controllable=event.controllable,
+            value=self._inject_value,
         )
 
     async def teardown(self) -> None:
@@ -278,15 +289,20 @@ class NeverDoneOptimizer(Optimizer):
     """Optimizer that always returns done=False (never signals completion)."""
 
     async def initialize(
-        self, goal: Goal, controllables: list[Controllable],
-        observables: list[ObservableValue], llm_client: LLMClient,
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, ControllablePreCallEvent):
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="x",
+                event=event,
+                controllable=event.controllable,
+                value="x",
             )
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=False)
@@ -304,8 +320,11 @@ class FailingOnEventOptimizer(Optimizer):
         self.torn_down = False
 
     async def initialize(
-        self, goal: Goal, controllables: list[Controllable],
-        observables: list[ObservableValue], llm_client: LLMClient,
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
 

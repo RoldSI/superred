@@ -65,7 +65,9 @@ class VaryingScoreTask(StubTask):
         self._scores = iter(scores)
 
     async def evaluate(
-        self, trajectory: Trajectory, target: object,
+        self,
+        trajectory: Trajectory,
+        target: object,
     ) -> EvaluationResult:
         return EvaluationResult(
             success=False,
@@ -84,7 +86,9 @@ class FailingEvalTask(StubTask):
     """Task whose evaluate() raises RuntimeError."""
 
     async def evaluate(
-        self, trajectory: object, target: object,
+        self,
+        trajectory: object,
+        target: object,
     ) -> EvaluationResult:
         raise RuntimeError("evaluation exploded")
 
@@ -97,13 +101,16 @@ class AlternatingSuccessTask(StubTask):
         self._call_count = 0
 
     async def evaluate(
-        self, trajectory: Trajectory, target: object,
+        self,
+        trajectory: Trajectory,
+        target: object,
     ) -> EvaluationResult:
         self._call_count += 1
         return EvaluationResult(
             success=(self._call_count == 1),
             primary_score=Score(
-                value=float(self._call_count), security_domain=EXTERNAL_TAG,
+                value=float(self._call_count),
+                security_domain=EXTERNAL_TAG,
             ),
         )
 
@@ -131,7 +138,8 @@ class TestControllerInit:
 class TestResultTypesFrozen:
     async def test_run_result_frozen(self) -> None:
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -142,7 +150,8 @@ class TestResultTypesFrozen:
 
     async def test_task_result_frozen(self) -> None:
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -153,7 +162,8 @@ class TestResultTypesFrozen:
 
     async def test_controller_result_frozen(self) -> None:
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -164,7 +174,9 @@ class TestResultTypesFrozen:
     def test_threat_model_result_skipped_tasks_defaults_to_empty_list(self) -> None:
         """ThreatModelResult.skipped_tasks defaults to an empty list, not None."""
         tmr = ThreatModelResult(
-            scope=EXTERNAL_SCOPE, llm_config=None, task_results=[],
+            scope=EXTERNAL_SCOPE,
+            llm_config=None,
+            task_results=[],
         )
         assert tmr.skipped_tasks == []
         assert isinstance(tmr.skipped_tasks, list)
@@ -233,7 +245,8 @@ class TestControllerRun:
         optimizer = StubOptimizer(done=True)
         target = StubTarget()
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=target,
+            optimizer_factory=lambda: optimizer,
+            target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -244,9 +257,11 @@ class TestControllerRun:
     async def test_cleanup_called_after_each_run(self) -> None:
         target = StubTarget()
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=False), target=target,
+            optimizer_factory=lambda: StubOptimizer(done=False),
+            target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG], max_runs_per_task=3,
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=3,
         )
         await controller.run(scopes=[EXTERNAL_SCOPE])
         assert target.cleanup_count == 3
@@ -255,9 +270,7 @@ class TestControllerRun:
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=3),
             target=StubTarget(),
-            security_claim=SecurityClaim.from_tasks(
-                [VaryingScoreTask(scores=[0.2, 0.8, 0.5])]
-            ),
+            security_claim=SecurityClaim.from_tasks([VaryingScoreTask(scores=[0.2, 0.8, 0.5])]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
@@ -273,7 +286,8 @@ class TestLifecycleEvents:
     async def test_optimizer_receives_lifecycle_events(self) -> None:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=StubTarget(),
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -286,7 +300,8 @@ class TestLifecycleEvents:
     async def test_optimizer_trajectory_tracking(self) -> None:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=StubTarget(),
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -304,44 +319,47 @@ class TestSecurityDomainFiltering:
     async def test_in_scope_event_forwarded(self) -> None:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=StubTarget(tag=EXTERNAL_TAG),
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         await controller.run(scopes=[EXTERNAL_SCOPE])
-        ctrl_events = [e for e in optimizer.events_received
-                       if isinstance(e, ControllablePreCallEvent)]
+        ctrl_events = [
+            e for e in optimizer.events_received if isinstance(e, ControllablePreCallEvent)
+        ]
         assert len(ctrl_events) == 1
 
     async def test_out_of_scope_event_filtered(self) -> None:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=StubTarget(tag=INTERNAL_TAG),
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(tag=INTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        ctrl_events = [e for e in optimizer.events_received
-                       if isinstance(e, ControllablePreCallEvent)]
+        ctrl_events = [
+            e for e in optimizer.events_received if isinstance(e, ControllablePreCallEvent)
+        ]
         assert len(ctrl_events) == 0
         # Verify ControllableNoInjection response is on the trajectory
         traj = _first_tmr(result).task_results[0].runs[0].trajectory
-        responses = [
-            e for e in traj.snapshot()
-            if isinstance(e, ControllableNoInjection)
-        ]
+        responses = [e for e in traj.snapshot() if isinstance(e, ControllableNoInjection)]
         assert len(responses) == 1
 
     async def test_parent_scope_includes_child(self) -> None:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=StubTarget(tag=EXTERNAL_TAG),
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(tag=EXTERNAL_TAG),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         await controller.run(scopes=[ROOT_SCOPE])
-        ctrl_events = [e for e in optimizer.events_received
-                       if isinstance(e, ControllablePreCallEvent)]
+        ctrl_events = [
+            e for e in optimizer.events_received if isinstance(e, ControllablePreCallEvent)
+        ]
         assert len(ctrl_events) == 1
 
 
@@ -354,13 +372,15 @@ class TestParallelTarget:
     async def test_parallel_events_both_handled(self) -> None:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=ParallelTarget(),
+            optimizer_factory=lambda: optimizer,
+            target=ParallelTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         await controller.run(scopes=[EXTERNAL_SCOPE])
-        ctrl_events = [e for e in optimizer.events_received
-                       if isinstance(e, ControllablePreCallEvent)]
+        ctrl_events = [
+            e for e in optimizer.events_received if isinstance(e, ControllablePreCallEvent)
+        ]
         assert len(ctrl_events) == 2
         assert {e.request for e in ctrl_events} == {"branch_a", "branch_b"}
 
@@ -373,7 +393,8 @@ class TestParallelTarget:
 class TestFeedbackInTrajectory:
     async def test_feedback_entry_appended(self) -> None:
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.5)]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -392,7 +413,8 @@ class TestFeedbackInTrajectory:
 class TestEventsOnTrajectory:
     async def test_controllable_event_and_response_on_trajectory(self) -> None:
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -414,12 +436,11 @@ class TestEventsOnTrajectory:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         traj = _first_tmr(result).task_results[0].runs[0].trajectory
-        responses = [
-            e for e in traj.snapshot() if isinstance(e, ControllableInjection)
-        ]
+        responses = [e for e in traj.snapshot() if isinstance(e, ControllableInjection)]
         assert len(responses) == 1
         # Domain derived from event's controllable — in scope for EXTERNAL
         from superred.core.types.trajectory import get_domain
+
         assert get_domain(responses[0]) is EXTERNAL_TAG
 
     async def test_out_of_scope_response_tagged_with_event_domain(self) -> None:
@@ -433,12 +454,11 @@ class TestEventsOnTrajectory:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         traj = _first_tmr(result).task_results[0].runs[0].trajectory
-        responses = [
-            e for e in traj.snapshot() if isinstance(e, ControllableNoInjection)
-        ]
+        responses = [e for e in traj.snapshot() if isinstance(e, ControllableNoInjection)]
         assert len(responses) == 1
         # Domain derived from event's controllable — INTERNAL, invisible to EXTERNAL optimizer
         from superred.core.types.trajectory import get_domain
+
         assert get_domain(responses[0]) is INTERNAL_TAG
 
     async def test_optimizer_sees_own_response_in_filtered_trajectory(self) -> None:
@@ -448,9 +468,10 @@ class TestEventsOnTrajectory:
         class _InspectingOptimizer(StubOptimizer):
             async def on_event(self, event: Event) -> EventResponse:
                 if isinstance(event, RunEndEvent):
-                    for entry in event.trajectory.snapshot():
-                        if isinstance(entry, ControllableInjection):
-                            seen_responses.append(entry)
+                    if self.current_trajectory is not None:
+                        for entry in self.current_trajectory.snapshot():
+                            if isinstance(entry, ControllableInjection):
+                                seen_responses.append(entry)
                     return RunEndResponse(event=event, done=True)
                 return await super().on_event(event)
 
@@ -471,9 +492,10 @@ class TestEventsOnTrajectory:
         class _InspectingOptimizer(StubOptimizer):
             async def on_event(self, event: Event) -> EventResponse:
                 if isinstance(event, RunEndEvent):
-                    for entry in event.trajectory.snapshot():
-                        if isinstance(entry, (ControllableInjection, ControllableNoInjection)):
-                            seen_responses.append(entry)
+                    if self.current_trajectory is not None:
+                        for entry in self.current_trajectory.snapshot():
+                            if isinstance(entry, (ControllableInjection, ControllableNoInjection)):
+                                seen_responses.append(entry)
                     return RunEndResponse(event=event, done=True)
                 return await super().on_event(event)
 
@@ -499,7 +521,8 @@ class TestExceptionSafety:
         optimizer = StubOptimizer(done=True)
         target = FailingRunTarget()
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=target,
+            optimizer_factory=lambda: optimizer,
+            target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -513,7 +536,8 @@ class TestExceptionSafety:
         optimizer = StubOptimizer(done=True)
         target = StubTarget()
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=target,
+            optimizer_factory=lambda: optimizer,
+            target=target,
             security_claim=SecurityClaim.from_tasks([FailingEvalTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -527,7 +551,8 @@ class TestExceptionSafety:
         optimizer = FailingOnEventOptimizer()
         target = StubTarget()
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=target,
+            optimizer_factory=lambda: optimizer,
+            target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -538,10 +563,9 @@ class TestExceptionSafety:
 
     async def test_all_tasks_not_applicable(self) -> None:
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
-            security_claim=SecurityClaim.from_tasks(
-                [NotApplicableTask(), NotApplicableTask()]
-            ),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([NotApplicableTask(), NotApplicableTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
@@ -561,7 +585,8 @@ class TestControllerValidation:
     def test_max_runs_per_task_invalid_raises(self, value: int) -> None:
         with pytest.raises(ValueError, match="at least 1"):
             Controller(
-                optimizer_factory=lambda: StubOptimizer(), target=StubTarget(),
+                optimizer_factory=lambda: StubOptimizer(),
+                target=StubTarget(),
                 security_claim=SecurityClaim.from_tasks([StubTask()]),
                 llm_configs=[STUB_LLM_CONFIG],
                 max_runs_per_task=value,
@@ -570,9 +595,11 @@ class TestControllerValidation:
     def test_max_runs_per_task_one_is_valid(self) -> None:
         """max_runs_per_task=1 is the minimum valid value."""
         Controller(
-            optimizer_factory=lambda: StubOptimizer(), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG], max_runs_per_task=1,
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=1,
         )
 
 
@@ -600,7 +627,8 @@ class TestRunLoopEdgeCases:
             optimizer_factory=lambda: NeverDoneOptimizer(),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG], max_runs_per_task=3,
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=3,
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         assert len(_first_tmr(result).task_results[0].runs) == 3
@@ -608,7 +636,8 @@ class TestRunLoopEdgeCases:
     async def test_initialize_called_before_runs(self) -> None:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=StubTarget(),
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -617,17 +646,20 @@ class TestRunLoopEdgeCases:
 
     async def test_trajectory_closed_after_run(self) -> None:
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         traj = _first_tmr(result).task_results[0].runs[0].trajectory
         with pytest.raises(RuntimeError, match="closed"):
-            traj.emit(ObservableEvent(
-                observable=Observable(name="x", security_domain=EXTERNAL_TAG),
-                content="x",
-            ))
+            traj.emit(
+                ObservableEvent(
+                    observable=Observable(name="x", security_domain=EXTERNAL_TAG),
+                    content="x",
+                )
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -641,19 +673,25 @@ class _MultiControllableTarget(StubTarget):
     def get_controllables(self) -> list[Controllable]:
         return [
             Controllable(
-                name="external_input", security_domain=EXTERNAL_TAG,
+                name="external_input",
+                security_domain=EXTERNAL_TAG,
             ),
             Controllable(
-                name="internal_input", security_domain=INTERNAL_TAG,
+                name="internal_input",
+                security_domain=INTERNAL_TAG,
             ),
         ]
 
     def get_observables(self) -> list[ObservableValue]:
         ext_obs = Observable(
-            name="ext_obs", security_domain=EXTERNAL_TAG, description="visible",
+            name="ext_obs",
+            security_domain=EXTERNAL_TAG,
+            description="visible",
         )
         int_obs = Observable(
-            name="int_obs", security_domain=INTERNAL_TAG, description="hidden",
+            name="int_obs",
+            security_domain=INTERNAL_TAG,
+            description="hidden",
         )
         return [
             ObservableValue(observable=ext_obs, content="ext_data"),
@@ -688,7 +726,9 @@ class _CapturingOptimizer(StubOptimizer):
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=True)
         return ControllableInjection(
-            event=event, controllable=event.controllable, value="x",
+            event=event,
+            controllable=event.controllable,
+            value="x",
         )
 
 
@@ -763,7 +803,8 @@ class TestOptimizerReceivesFilteredTrajectory:
         """RunStartEvent sent to optimizer carries a FilteredTrajectory."""
         optimizer = _CapturingOptimizer()
         controller = Controller(
-            optimizer_factory=lambda: optimizer, target=StubTarget(),
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -776,21 +817,28 @@ class TestOptimizerReceivesFilteredTrajectory:
 
         class _TaggingTarget(StubTarget):
             async def run(
-                self, emit: EventHandler, send_event: EventResponseHandler,
+                self,
+                emit: EventHandler,
+                send_event: EventResponseHandler,
             ) -> None:
                 self.run_count += 1
                 # Emit entries at different scopes
-                emit(ObservableEvent(
-                    observable=Observable(name="ext", security_domain=EXTERNAL_TAG),
-                    content="external",
-                ))
-                emit(ObservableEvent(
-                    observable=Observable(name="int", security_domain=INTERNAL_TAG),
-                    content="internal",
-                ))
+                emit(
+                    ObservableEvent(
+                        observable=Observable(name="ext", security_domain=EXTERNAL_TAG),
+                        content="external",
+                    )
+                )
+                emit(
+                    ObservableEvent(
+                        observable=Observable(name="int", security_domain=INTERNAL_TAG),
+                        content="internal",
+                    )
+                )
                 # Still fire controllable event so optimizer responds
                 ctrl = Controllable(
-                    name="user_input", security_domain=EXTERNAL_TAG,
+                    name="user_input",
+                    security_domain=EXTERNAL_TAG,
                 )
                 await send_event(
                     ControllablePreCallEvent(controllable=ctrl, request="q"),
@@ -801,11 +849,11 @@ class TestOptimizerReceivesFilteredTrajectory:
         class _SnapshotOptimizer(StubOptimizer):
             async def on_event(self, event: Event) -> EventResponse:
                 if isinstance(event, RunEndEvent):
-                    # Read from the filtered trajectory
-                    traj = event.trajectory
-                    for e in traj.snapshot():
-                        if isinstance(e, ObservableEvent):
-                            snapshot_contents.append(e.content)
+                    # Read from the filtered trajectory via current_trajectory
+                    if self.current_trajectory is not None:
+                        for e in self.current_trajectory.snapshot():
+                            if isinstance(e, ObservableEvent):
+                                snapshot_contents.append(e.content)
                     return RunEndResponse(event=event, done=True)
                 return await super().on_event(event)
 
@@ -831,17 +879,23 @@ class _ScopedScoresTask(StubTask):
     """Task that returns sub_scores scoped to different security domains."""
 
     async def evaluate(
-        self, trajectory: Trajectory, target: Target,
+        self,
+        trajectory: Trajectory,
+        target: Target,
     ) -> EvaluationResult:
         return EvaluationResult(
             success=True,
             primary_score=Score(value=0.9, security_domain=ROOT_TAG),
             sub_scores={
                 "external_asr": Score(
-                    value=0.8, name="external_asr", security_domain=EXTERNAL_TAG,
+                    value=0.8,
+                    name="external_asr",
+                    security_domain=EXTERNAL_TAG,
                 ),
                 "internal_leak": Score(
-                    value=0.3, name="internal_leak", security_domain=INTERNAL_TAG,
+                    value=0.3,
+                    name="internal_leak",
+                    security_domain=INTERNAL_TAG,
                 ),
             },
         )
@@ -851,7 +905,8 @@ class TestScopedScoreFiltering:
     async def test_sub_scores_filtered_by_scope(self) -> None:
         """Controller filters out-of-scope sub_scores from feedback."""
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -875,7 +930,8 @@ class TestScopedScoreFiltering:
     async def test_root_scope_keeps_all_sub_scores(self) -> None:
         """Root scope includes everything — all sub_scores preserved."""
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -907,7 +963,9 @@ class TestScopedScoreFiltering:
                 if isinstance(event, RunEndEvent):
                     return RunEndResponse(event=event, done=run_count >= 2)
                 return ControllableInjection(
-                    event=event, controllable=event.controllable, value="x",
+                    event=event,
+                    controllable=event.controllable,
+                    value="x",
                 )
 
         controller = Controller(
@@ -926,7 +984,8 @@ class TestScopedScoreFiltering:
         """primary_score is always in the feedback, even if its domain
         is outside the tested scope (optimizer needs the main signal)."""
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             # EXTERNAL scope, but primary_score has ROOT domain
             llm_configs=[STUB_LLM_CONFIG],
@@ -944,7 +1003,9 @@ class TestScopedScoreFiltering:
 
         class _AllOutOfScopeTask(StubTask):
             async def evaluate(
-                self, trajectory: Trajectory, target: Target,
+                self,
+                trajectory: Trajectory,
+                target: Target,
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=True,
@@ -956,7 +1017,8 @@ class TestScopedScoreFiltering:
                 )
 
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_AllOutOfScopeTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -974,7 +1036,9 @@ class TestScopedScoreFiltering:
 
         class _RationaleTask(StubTask):
             async def evaluate(
-                self, trajectory: Trajectory, target: Target,
+                self,
+                trajectory: Trajectory,
+                target: Target,
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
@@ -983,7 +1047,8 @@ class TestScopedScoreFiltering:
                 )
 
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_RationaleTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -999,7 +1064,9 @@ class TestScopedScoreFiltering:
 
         class _NoneDomainScoreTask(StubTask):
             async def evaluate(
-                self, trajectory: Trajectory, target: Target,
+                self,
+                trajectory: Trajectory,
+                target: Target,
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=True,
@@ -1007,13 +1074,16 @@ class TestScopedScoreFiltering:
                     sub_scores={
                         "always_visible": Score(value=0.7, name="always_visible"),
                         "scoped": Score(
-                            value=0.3, security_domain=INTERNAL_TAG, name="scoped",
+                            value=0.3,
+                            security_domain=INTERNAL_TAG,
+                            name="scoped",
                         ),
                     },
                 )
 
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([_NoneDomainScoreTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1181,8 +1251,9 @@ class TestThreatModelIteration:
         )
         await controller.run(scopes=[multi_scope])
         # Optimizer should see both controllables
-        ctrl_events = [e for e in optimizer.events_received
-                       if isinstance(e, ControllablePreCallEvent)]
+        ctrl_events = [
+            e for e in optimizer.events_received if isinstance(e, ControllablePreCallEvent)
+        ]
         # _MultiControllableTarget fires one controllable event per run
         # But controller filters controllables for initialize, not events
         # The event filtering happens in middleware

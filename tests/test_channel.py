@@ -48,6 +48,7 @@ class TestEventChannelEdgeCases:
         """receive() captures the event loop on first call."""
         channel = EventChannel()
         assert channel._loop is None
+
         # Close after receive captures the loop
         async def close_after_delay() -> None:
             await asyncio.sleep(0.01)
@@ -90,9 +91,11 @@ class TestEventChannelEdgeCases:
         async def receiver() -> None:
             envelope = await channel.receive()
             assert envelope is not None
+
             # Respond from a background thread
             def thread_respond() -> None:
                 envelope.respond(EventResponse(event=event))
+
             t = threading.Thread(target=thread_respond)
             t.start()
             t.join()
@@ -120,6 +123,7 @@ class TestEventChannelEdgeCases:
         # Now close from a thread
         def thread_close() -> None:
             channel.close()
+
         t = threading.Thread(target=thread_close)
         t.start()
         t.join()
@@ -156,7 +160,7 @@ class TestEventChannelEdgeCases:
     async def test_respond_validates_response_type(self) -> None:
         """respond() rejects responses not in event.response_types."""
         channel = EventChannel()
-        event = RunEndEvent(trajectory=Trajectory())
+        event = RunEndEvent()
 
         async def receiver() -> None:
             envelope = await channel.receive()
@@ -174,7 +178,7 @@ class TestEventChannelEdgeCases:
         """respond() accepts responses declared in event.response_types."""
 
         channel = EventChannel()
-        event = RunEndEvent(trajectory=Trajectory())
+        event = RunEndEvent()
 
         async def receiver() -> None:
             envelope = await channel.receive()
@@ -186,12 +190,16 @@ class TestEventChannelEdgeCases:
         await recv_task
         assert isinstance(response, RunEndResponse)
 
-    @pytest.mark.parametrize("event_cls", [
-        "ControllablePreCallEvent",
-        "ControllablePostCallEvent",
-    ])
+    @pytest.mark.parametrize(
+        "event_cls",
+        [
+            "ControllablePreCallEvent",
+            "ControllablePostCallEvent",
+        ],
+    )
     async def test_respond_rejects_wrong_type_for_controllable(
-        self, event_cls: str,
+        self,
+        event_cls: str,
     ) -> None:
         """respond() rejects wrong response for controllable events."""
         from superred.core.types.controllable import Controllable
@@ -208,7 +216,9 @@ class TestEventChannelEdgeCases:
             event = ControllablePreCallEvent(controllable=ctrl, request="hi")
         else:
             event = ControllablePostCallEvent(
-                controllable=ctrl, request="hi", answer="bye",
+                controllable=ctrl,
+                request="hi",
+                answer="bye",
             )
 
         async def receiver() -> None:

@@ -76,10 +76,12 @@ class TestSecurityClaimFromClaims:
             StubTask(goal_text="b"),
             StubTask(goal_text="c"),
         )
-        inner = SecurityClaim.from_claims([
-            SecurityClaim.from_tasks([t1]),
-            SecurityClaim.from_tasks([t2]),
-        ])
+        inner = SecurityClaim.from_claims(
+            [
+                SecurityClaim.from_tasks([t1]),
+                SecurityClaim.from_tasks([t2]),
+            ]
+        )
         outer = SecurityClaim.from_claims([inner, SecurityClaim.from_tasks([t3])])
         tasks = list(outer)
         assert tasks == [t1, t2, t3]

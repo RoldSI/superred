@@ -91,7 +91,7 @@ Returned by the controller when a controllable event falls outside the active se
 
 ### FeedbackEvent (extends Event)
 
-Emitted by the controller after evaluation to deliver filtered feedback to the trajectory. Field: `evaluation: EvaluationResult`. The controller filters `sub_scores` by the active security domain scope before constructing this event.
+Emitted by the controller after evaluation to deliver filtered feedback to the trajectory. Field: `evaluation: EvaluationResult`. The controller sets `security_domain` to a tag from the active scope so the event passes trajectory validation and is visible in the optimizer's filtered trajectory. Emission is controlled by `Controller(include_feedback=True)` (the default). The controller filters `sub_scores` by the active security domain scope before constructing this event.
 
 ### LogEvent (extends Event)
 
@@ -103,7 +103,7 @@ Signals the start of a new target run. Field: `trajectory: ReadableTrajectory`. 
 
 ### RunEndEvent (extends Event)
 
-Signals the end of a target run. Field: `trajectory: ReadableTrajectory`. When sent to the optimizer, this is a `FilteredTrajectory`. The optimizer's `_dispatch` archives the trajectory from this.
+Signals the end of a target run. Sent after evaluation and `FeedbackEvent` emission. Field: `evaluation: EvaluationResult | None` (default `None`). The optimizer can read the evaluation directly from this event, or from the `FeedbackEvent` on the trajectory. The optimizer's `_dispatch` archives the current trajectory on this event.
 
 ### RunEndResponse (extends EventResponse)
 

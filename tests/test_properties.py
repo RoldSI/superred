@@ -25,6 +25,7 @@ def _obs(content: str) -> ObservableEvent:
 # Strategies
 # ---------------------------------------------------------------------------
 
+
 # Generate a linear chain of SecurityDomainTags (depth 1-5)
 @st.composite
 def linear_chain(draw: st.DrawFn) -> list[SecurityDomainTag]:
@@ -189,9 +190,7 @@ class TestTrajectoryProperties:
         st.integers(min_value=1, max_value=5),
     )
     @settings(max_examples=100, suppress_health_check=[HealthCheck.differing_executors])
-    def test_multiple_drains_cover_all_entries(
-        self, contents: list[str], n_drains: int
-    ) -> None:
+    def test_multiple_drains_cover_all_entries(self, contents: list[str], n_drains: int) -> None:
         """The union of all drain() calls equals the full snapshot."""
         t = Trajectory()
         for c in contents:

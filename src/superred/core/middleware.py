@@ -97,7 +97,8 @@ def security_domain_filter(scope: Scope) -> Middleware:
                 controllable_domain = event.controllable.security_domain
                 if not scope_includes(scope, controllable_domain):
                     return ControllableNoInjection(
-                        event=event, controllable=event.controllable,
+                        event=event,
+                        controllable=event.controllable,
                     )
 
             return await handler(event)

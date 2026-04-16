@@ -71,8 +71,7 @@ class SecurityDomain:
         for tag in tag_map.values():
             if tag.parent is not None and tag.parent.name not in tag_map:
                 raise ValueError(
-                    f"Tag {tag.name!r} has parent {tag.parent.name!r}"
-                    " which is not in the domain"
+                    f"Tag {tag.name!r} has parent {tag.parent.name!r} which is not in the domain"
                 )
 
         object.__setattr__(self, "_tags", tag_map)
@@ -101,9 +100,7 @@ class SecurityDomain:
             Includes the empty set (no tags selected).
         """
         # Build children map
-        children: dict[str, list[SecurityDomainTag]] = {
-            tag.name: [] for tag in self._tags.values()
-        }
+        children: dict[str, list[SecurityDomainTag]] = {tag.name: [] for tag in self._tags.values()}
         for tag in self._tags.values():
             if tag.parent is not None and tag.parent.name in children:
                 children[tag.parent.name].append(tag)
@@ -118,9 +115,7 @@ class SecurityDomain:
             without_node: list[frozenset[SecurityDomainTag]] = [frozenset()]
             for child in child_nodes:
                 child_ac = _antichains(child)
-                without_node = [
-                    existing | new for existing in without_node for new in child_ac
-                ]
+                without_node = [existing | new for existing in without_node for new in child_ac]
 
             # Include this node: no descendants allowed
             without_node.append(frozenset({node}))

@@ -126,18 +126,21 @@ class TestScopeIncludes:
     def test_empty_scope_includes_nothing(self) -> None:
         """An empty scope covers no tags."""
         from superred.core.types.security_domain import scope_includes
+
         tag = SecurityDomainTag("a")
         assert scope_includes(frozenset(), tag) is False
 
     def test_single_tag_includes_self(self) -> None:
         """A scope with one tag includes that tag."""
         from superred.core.types.security_domain import scope_includes
+
         tag = SecurityDomainTag("a")
         assert scope_includes(frozenset({tag}), tag) is True
 
     def test_single_tag_includes_descendant(self) -> None:
         """A scope with a parent tag includes its descendant."""
         from superred.core.types.security_domain import scope_includes
+
         parent = SecurityDomainTag("parent")
         child = SecurityDomainTag("child", parent=parent)
         assert scope_includes(frozenset({parent}), child) is True
@@ -145,6 +148,7 @@ class TestScopeIncludes:
     def test_single_tag_excludes_ancestor(self) -> None:
         """A scope with a child tag does NOT include its ancestor."""
         from superred.core.types.security_domain import scope_includes
+
         parent = SecurityDomainTag("parent")
         child = SecurityDomainTag("child", parent=parent)
         assert scope_includes(frozenset({child}), parent) is False
@@ -152,6 +156,7 @@ class TestScopeIncludes:
     def test_single_tag_excludes_sibling(self) -> None:
         """A scope with one child does NOT include its sibling."""
         from superred.core.types.security_domain import scope_includes
+
         parent = SecurityDomainTag("parent")
         child_a = SecurityDomainTag("a", parent=parent)
         child_b = SecurityDomainTag("b", parent=parent)
@@ -160,6 +165,7 @@ class TestScopeIncludes:
     def test_multi_tag_scope_any_match(self) -> None:
         """A scope with multiple tags includes if ANY tag includes the target."""
         from superred.core.types.security_domain import scope_includes
+
         root = SecurityDomainTag("root")
         alpha = SecurityDomainTag("alpha", parent=root)
         beta = SecurityDomainTag("beta", parent=root)
@@ -170,6 +176,7 @@ class TestScopeIncludes:
     def test_multi_tag_scope_none_match(self) -> None:
         """A scope with multiple tags excludes if NO tag includes the target."""
         from superred.core.types.security_domain import scope_includes
+
         root = SecurityDomainTag("root")
         alpha = SecurityDomainTag("alpha", parent=root)
         beta = SecurityDomainTag("beta", parent=root)
@@ -179,14 +186,15 @@ class TestScopeIncludes:
     def test_multi_tag_scope_unrelated_trees(self) -> None:
         """Scope with tags from independent trees works correctly."""
         from superred.core.types.security_domain import scope_includes
+
         tree_a = SecurityDomainTag("tree_a")
         tree_b = SecurityDomainTag("tree_b")
         child_a = SecurityDomainTag("child_a", parent=tree_a)
         child_b = SecurityDomainTag("child_b", parent=tree_b)
         scope = frozenset({tree_a, child_b})
-        assert scope_includes(scope, child_a) is True   # via tree_a
-        assert scope_includes(scope, child_b) is True   # via child_b (self)
-        assert scope_includes(scope, tree_b) is False    # child_b doesn't include parent
+        assert scope_includes(scope, child_a) is True  # via tree_a
+        assert scope_includes(scope, child_b) is True  # via child_b (self)
+        assert scope_includes(scope, tree_b) is False  # child_b doesn't include parent
 
 
 class TestDistinctCombinationsEdge:

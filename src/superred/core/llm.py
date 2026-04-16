@@ -49,9 +49,14 @@ class LLMClient:
         The client is a real ``LLMClient`` with ``max_cost=0`` so any
         ``complete()`` call immediately raises ``BudgetExhaustedError``.
         """
-        return cls(LLMConfig(
-            model="noop", api_base="http://noop", api_key="noop", max_cost=0,
-        ))
+        return cls(
+            LLMConfig(
+                model="noop",
+                api_base="http://noop",
+                api_key="noop",
+                max_cost=0,
+            )
+        )
 
     async def complete(
         self,

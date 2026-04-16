@@ -30,7 +30,8 @@ _SIBLING = SecurityDomainTag("sibling", parent=_PARENT)
 def _obs(content: str, tag: SecurityDomainTag = _TAG) -> ObservableEvent:
     """Helper to build an ObservableEvent with default tag."""
     return ObservableEvent(
-        observable=Observable(name="test", security_domain=tag), content=content,
+        observable=Observable(name="test", security_domain=tag),
+        content=content,
     )
 
 
@@ -42,7 +43,8 @@ def _obs(content: str, tag: SecurityDomainTag = _TAG) -> ObservableEvent:
 class TestGetDomain:
     def test_event_returns_security_domain(self) -> None:
         event = ObservableEvent(
-            observable=Observable(name="x", security_domain=_TAG), content="x",
+            observable=Observable(name="x", security_domain=_TAG),
+            content="x",
         )
         assert get_domain(event) is _TAG
 
@@ -50,7 +52,9 @@ class TestGetDomain:
         ctrl = Controllable(name="c", security_domain=_TAG)
         event = ControllablePreCallEvent(controllable=ctrl, request="hi")
         response = ControllableInjection(
-            event=event, controllable=ctrl, value="x",
+            event=event,
+            controllable=ctrl,
+            value="x",
         )
         assert get_domain(response) is _TAG
 
@@ -364,7 +368,9 @@ class TestFilteredTrajectory:
         ctrl = Controllable(name="c", security_domain=_CHILD)
         event = ControllablePreCallEvent(controllable=ctrl, request="hi")
         response = ControllableInjection(
-            event=event, controllable=ctrl, value="x",
+            event=event,
+            controllable=ctrl,
+            value="x",
         )
 
         t.emit(event)
@@ -380,7 +386,9 @@ class TestFilteredTrajectory:
         ctrl = Controllable(name="c", security_domain=_SIBLING)
         event = ControllablePreCallEvent(controllable=ctrl, request="hi")
         response = ControllableInjection(
-            event=event, controllable=ctrl, value="x",
+            event=event,
+            controllable=ctrl,
+            value="x",
         )
 
         t.emit(event)

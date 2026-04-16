@@ -146,6 +146,7 @@ class Controller:
         security_claim: SecurityClaim[Target],
         llm_configs: Sequence[LLMConfig] | None = None,
         max_runs_per_task: int = 100,
+        include_feedback: bool = True,
     ) -> None:
         if max_runs_per_task < 1:
             raise ValueError("max_runs_per_task must be at least 1")
@@ -154,6 +155,7 @@ class Controller:
         self._security_claim = security_claim
         self._llm_configs: list[LLMConfig] = list(llm_configs) if llm_configs else []
         self._max_runs_per_task = max_runs_per_task
+        self._include_feedback = include_feedback
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -187,7 +189,8 @@ class Controller:
 
         try:
             results = await self._iterate_threat_models(
-                effective_scopes, effective_configs,
+                effective_scopes,
+                effective_configs,
             )
         finally:
             await self._target.teardown()
@@ -201,7 +204,8 @@ class Controller:
     # ------------------------------------------------------------------
 
     def _resolve_scopes(
-        self, scopes: Sequence[Scope] | None,
+        self,
+        scopes: Sequence[Scope] | None,
     ) -> list[Scope]:
         """Resolve scopes to test."""
         if scopes is not None:
@@ -211,7 +215,8 @@ class Controller:
         return [c for c in all_combos if c]
 
     def _resolve_llm_configs(
-        self, models: Sequence[str] | None,
+        self,
+        models: Sequence[str] | None,
     ) -> list[LLMConfig]:
         """Resolve LLM configs to test."""
         if not self._llm_configs:
@@ -302,15 +307,17 @@ class Controller:
 
         # Initialize optimizer with filtered surfaces (only in-scope items)
         controllables = [
-            c for c in self._target.get_controllables()
-            if scope_includes(scope, c.security_domain)
+            c for c in self._target.get_controllables() if scope_includes(scope, c.security_domain)
         ]
         observables = [
-            o for o in self._target.get_observables()
+            o
+            for o in self._target.get_observables()
             if scope_includes(scope, o.observable.security_domain)
         ]
         await optimizer.initialize(
-            task.goal, controllables, observables,
+            task.goal,
+            controllables,
+            observables,
             llm_client if llm_client is not None else LLMClient._make_noop(),
         )
 
@@ -335,7 +342,10 @@ class Controller:
             for run_number in range(1, self._max_runs_per_task + 1):
                 try:
                     trajectory, evaluation, done = await self._run_single(
-                        task, channel, scope, run_number,
+                        task,
+                        channel,
+                        scope,
+                        run_number,
                     )
                 except BudgetExhaustedError:
                     logger.info(
@@ -346,9 +356,13 @@ class Controller:
                     break
 
                 run_usage = llm_client.usage if llm_client else LLMUsage()
-                runs.append(RunResult(
-                    trajectory=trajectory, evaluation=evaluation, llm_usage=run_usage,
-                ))
+                runs.append(
+                    RunResult(
+                        trajectory=trajectory,
+                        evaluation=evaluation,
+                        llm_usage=run_usage,
+                    )
+                )
 
                 # Track best score
                 if best_score is None or evaluation.primary_score.value > best_score.value:
@@ -402,6 +416,10 @@ class Controller:
     ) -> tuple[Trajectory, EvaluationResult, bool]:
         """Execute a single optimizer iteration (one target run + evaluation).
 
+        Order: target.run → evaluate → FeedbackEvent → RunEndEvent → close.
+        The optimizer can read the evaluation from RunEndEvent.evaluation
+        or from the FeedbackEvent on the trajectory before deciding ``done``.
+
         Returns:
             A tuple of (trajectory, evaluation, done) where done is True
             if the optimizer wants to stop.
@@ -420,21 +438,15 @@ class Controller:
         # Target runs — events go through the pipeline
         await self._target.run(trajectory.emit, send_event)
 
-        # Signal run end — optimizer gets filtered view
-        end_response = await channel.send(RunEndEvent(trajectory=trajectory.filtered))
-
         # -- Evaluate --
         evaluation = await task.evaluate(trajectory, self._target)
 
         # Filter sub_scores to only include in-scope scores, then append
         # feedback to trajectory.  primary_score, success, and rationale
         # are always included (the optimizer needs the main signal).
-        #
-        # FeedbackEvent requires a security_domain (single tag).  Use
-        # an arbitrary tag from the scope; if the scope is empty the
-        # feedback cannot be emitted (empty scope = nothing in scope).
         filtered_sub = {
-            k: v for k, v in evaluation.sub_scores.items()
+            k: v
+            for k, v in evaluation.sub_scores.items()
             if v.security_domain is None or scope_includes(scope, v.security_domain)
         }
         filtered_eval = EvaluationResult(
@@ -443,13 +455,16 @@ class Controller:
             sub_scores=filtered_sub,
             rationale=evaluation.rationale,
         )
-        # Pick a representative tag for the FeedbackEvent's security_domain.
-        # Any tag in the scope works — all are in scope by definition.
-        feedback_tag = next(iter(scope)) if scope else None
-        trajectory.emit(FeedbackEvent(
-            evaluation=filtered_eval,
-            security_domain=feedback_tag,
-        ))
+        if self._include_feedback and scope:
+            feedback_tag = next(iter(scope))
+            trajectory.emit(
+                FeedbackEvent(evaluation=filtered_eval, security_domain=feedback_tag)
+            )
+
+        # Signal run end — optimizer can read evaluation from this event
+        # or from the FeedbackEvent on the trajectory.
+        end_response = await channel.send(RunEndEvent(evaluation=filtered_eval))
+
         trajectory.close()
 
         done = isinstance(end_response, RunEndResponse) and end_response.done
@@ -491,15 +506,9 @@ class Controller:
                 )
 
             if tmr.skipped_tasks:
-                print(
-                    f"\n    Skipped: {len(tmr.skipped_tasks)} task(s) (NotApplicable)"
-                )
+                print(f"\n    Skipped: {len(tmr.skipped_tasks)} task(s) (NotApplicable)")
 
-        all_task_results = [
-            tr
-            for tmr in result.threat_model_results
-            for tr in tmr.task_results
-        ]
+        all_task_results = [tr for tmr in result.threat_model_results for tr in tmr.task_results]
         if all_task_results:
             best = max(tr.best_score.value for tr in all_task_results)
             total_success = sum(1 for tr in all_task_results if tr.success)

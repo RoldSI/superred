@@ -11,7 +11,9 @@ The optimizer is the attacker agent in superred. It runs as a concurrent actor, 
    For each run (until optimizer signals done):
      - Receives RunStartEvent(trajectory) → sets current_trajectory
      - Receives ControllablePreCallEvent / ControllablePostCallEvent [0..N]
-     - Receives RunEndEvent(trajectory) → archives trajectory
+     - (controller evaluates, emits FeedbackEvent to trajectory)
+     - Receives RunEndEvent(evaluation) → archives trajectory
+       FeedbackEvent is on the trajectory; evaluation is also on the event.
        Respond with RunEndResponse(done=True) to stop, done=False to continue
    Channel closes → run() returns
 4. teardown()
@@ -116,7 +118,7 @@ If `on_event()` raises, `_dispatch` rejects the envelope (propagating the except
 Instead of hook methods, the optimizer receives lifecycle events through the channel:
 
 - `RunStartEvent(trajectory)` — new run starting. The trajectory for this run is available via `self.current_trajectory` after `_dispatch` processes this event. Respond with `EventResponse(event=event)`.
-- `RunEndEvent(trajectory)` — run completed. Respond with `RunEndResponse(event=event, done=False)` to continue with more runs, or `RunEndResponse(event=event, done=True)` to signal the optimizer is finished (goal achieved, budget exhausted).
+- `RunEndEvent(evaluation)` — run completed. Sent after evaluation and `FeedbackEvent` emission, so the optimizer can read feedback from the trajectory or directly from `event.evaluation`. Respond with `RunEndResponse(event=event, done=False)` to continue with more runs, or `RunEndResponse(event=event, done=True)` to signal the optimizer is finished (goal achieved, budget exhausted).
 
 These flow through the channel like any other event. No special methods to override.
 

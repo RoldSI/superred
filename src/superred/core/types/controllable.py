@@ -29,4 +29,3 @@ class Controllable:
     security_domain: SecurityDomainTag
     description: str = ""
     value_type: str = "text"
-

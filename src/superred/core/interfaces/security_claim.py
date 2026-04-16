@@ -41,9 +41,7 @@ class SecurityClaim(Generic[T_Target]):
     _claims: list[SecurityClaim[T_Target]] | None
 
     def __init__(self) -> None:
-        raise TypeError(
-            "Use SecurityClaim.from_tasks() or SecurityClaim.from_claims()"
-        )
+        raise TypeError("Use SecurityClaim.from_tasks() or SecurityClaim.from_claims()")
 
     @classmethod
     def from_tasks(cls, tasks: list[Task[T_Target]]) -> SecurityClaim[T_Target]:
@@ -56,9 +54,7 @@ class SecurityClaim(Generic[T_Target]):
         return claim
 
     @classmethod
-    def from_claims(
-        cls, claims: list[SecurityClaim[T_Target]]
-    ) -> SecurityClaim[T_Target]:
+    def from_claims(cls, claims: list[SecurityClaim[T_Target]]) -> SecurityClaim[T_Target]:
         """Create a claim by composing other claims (iterated lazily)."""
         if not claims:
             raise ValueError("At least one claim required")

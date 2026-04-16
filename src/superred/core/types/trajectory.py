@@ -85,9 +85,7 @@ class Trajectory:
                 raise RuntimeError("Cannot emit to a closed trajectory")
             domain = get_domain(item)
             if domain is None:
-                raise ValueError(
-                    f"Cannot persist {type(item).__name__} without a security_domain"
-                )
+                raise ValueError(f"Cannot persist {type(item).__name__} without a security_domain")
             self._entries.append(item)
             if self._filter is not None:
                 scope, view = self._filter
@@ -122,9 +120,7 @@ class Trajectory:
             RuntimeError: If no filtered scope was configured.
         """
         if self._filter is None:
-            raise RuntimeError(
-                "No filtered view — pass filtered_scope to Trajectory constructor"
-            )
+            raise RuntimeError("No filtered view — pass filtered_scope to Trajectory constructor")
         return self._filter[1]
 
 

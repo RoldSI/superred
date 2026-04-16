@@ -229,9 +229,12 @@ class TestChannelMutations:
 class TestMiddlewareMutations:
     async def test_filter_checks_includes_not_excludes(self) -> None:
         """Kills: `not scope_includes(...)` mutated to `scope_includes(...)`."""
+
         async def handler(event: Event) -> EventResponse:
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="injected",
+                event=event,
+                controllable=event.controllable,
+                value="injected",
             )
 
         filtered = security_domain_filter(EXTERNAL_SCOPE)(handler)
@@ -244,9 +247,12 @@ class TestMiddlewareMutations:
 
     async def test_filter_forwards_in_scope_not_blocks(self) -> None:
         """Kills: in-scope path returning ControllableNoInjection instead of handler result."""
+
         async def handler(event: Event) -> EventResponse:
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="injected",
+                event=event,
+                controllable=event.controllable,
+                value="injected",
             )
 
         filtered = security_domain_filter(ROOT_SCOPE)(handler)
@@ -259,6 +265,7 @@ class TestMiddlewareMutations:
 
     async def test_filter_checks_post_call_events_too(self) -> None:
         """Kills: isinstance check only matching PreCall, not PostCall."""
+
         async def handler(event: Event) -> EventResponse:
             return EventResponse(event=event)
 
@@ -278,7 +285,9 @@ class TestMiddlewareMutations:
                 async def wrapped(event: Event) -> EventResponse:
                     order.append(name)
                     return await handler(event)  # type: ignore[misc]
+
                 return wrapped
+
             return mw
 
         async def inner(event: Event) -> EventResponse:
@@ -386,7 +395,9 @@ class TestControllerRunMutations:
 
         class ScoredTask(StubTask):
             async def evaluate(
-                self, trajectory: Trajectory, target: object,
+                self,
+                trajectory: Trajectory,
+                target: object,
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
@@ -407,22 +418,26 @@ class TestControllerRunMutations:
         """Kills: `>` mutated to `>=` — on a tie, the first evaluation wins."""
         from .conftest import CountingOptimizer
 
-        evals = iter([
-            EvaluationResult(
-                success=False,
-                primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
-                rationale="first",
-            ),
-            EvaluationResult(
-                success=False,
-                primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
-                rationale="second",
-            ),
-        ])
+        evals = iter(
+            [
+                EvaluationResult(
+                    success=False,
+                    primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+                    rationale="first",
+                ),
+                EvaluationResult(
+                    success=False,
+                    primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+                    rationale="second",
+                ),
+            ]
+        )
 
         class TiedTask(StubTask):
             async def evaluate(
-                self, trajectory: Trajectory, target: object,
+                self,
+                trajectory: Trajectory,
+                target: object,
             ) -> EvaluationResult:
                 return next(evals)
 
@@ -480,7 +495,10 @@ class TestControllerRunMutations:
 
         class CapturingOptimizer(StubOptimizer):
             async def initialize(
-                self, goal: object, controllables: object, observables: object,
+                self,
+                goal: object,
+                controllables: object,
+                observables: object,
                 llm_client: object,
             ) -> None:
                 await super().initialize(goal, controllables, observables, llm_client)  # type: ignore[arg-type]
@@ -521,7 +539,8 @@ class TestBestScoreMCDC:
         """MC/DC: A=True makes condition True regardless of B.
         On first run, best_score is None, so the score is always accepted."""
         controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.1)]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -536,7 +555,9 @@ class TestBestScoreMCDC:
 
         class S(StubTask):
             async def evaluate(
-                self, traj: Trajectory, t: object,
+                self,
+                traj: Trajectory,
+                t: object,
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
@@ -544,7 +565,8 @@ class TestBestScoreMCDC:
                 )
 
         controller = Controller(
-            optimizer_factory=lambda: CountingOptimizer(stop_after=2), target=StubTarget(),
+            optimizer_factory=lambda: CountingOptimizer(stop_after=2),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([S()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -559,7 +581,9 @@ class TestBestScoreMCDC:
 
         class S(StubTask):
             async def evaluate(
-                self, traj: Trajectory, t: object,
+                self,
+                traj: Trajectory,
+                t: object,
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
@@ -567,7 +591,8 @@ class TestBestScoreMCDC:
                 )
 
         controller = Controller(
-            optimizer_factory=lambda: CountingOptimizer(stop_after=2), target=StubTarget(),
+            optimizer_factory=lambda: CountingOptimizer(stop_after=2),
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([S()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -604,7 +629,9 @@ class TestControllerDefaultValues:
         from superred.core.controller import ThreatModelResult
 
         result = ThreatModelResult(
-            scope=EXTERNAL_SCOPE, llm_config=None, task_results=[],
+            scope=EXTERNAL_SCOPE,
+            llm_config=None,
+            task_results=[],
         )
         assert result.skipped_tasks == []
         assert isinstance(result.skipped_tasks, list)

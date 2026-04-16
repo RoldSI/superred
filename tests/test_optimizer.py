@@ -48,7 +48,9 @@ class MinimalOptimizer(Optimizer):
             return RunEndResponse(event=event, done=False)
         if isinstance(event, ControllablePreCallEvent):
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="test",
+                event=event,
+                controllable=event.controllable,
+                value="test",
             )
         return EventResponse(event=event)
 
@@ -73,7 +75,7 @@ class TestOptimizerTrajectoryTracking:
         task = asyncio.create_task(opt.run(channel))
         trajectory = Trajectory()
         await channel.send(RunStartEvent(trajectory=trajectory))
-        await channel.send(RunEndEvent(trajectory=trajectory))
+        await channel.send(RunEndEvent())
         assert opt.current_trajectory is None
         assert len(opt.past_trajectories) == 1
         assert opt.past_trajectories[0] is trajectory
@@ -86,9 +88,9 @@ class TestOptimizerTrajectoryTracking:
         task = asyncio.create_task(opt.run(channel))
         t1, t2 = Trajectory(), Trajectory()
         await channel.send(RunStartEvent(trajectory=t1))
-        await channel.send(RunEndEvent(trajectory=t1))
+        await channel.send(RunEndEvent())
         await channel.send(RunStartEvent(trajectory=t2))
-        await channel.send(RunEndEvent(trajectory=t2))
+        await channel.send(RunEndEvent())
         assert len(opt.past_trajectories) == 2
         assert opt.past_trajectories[0] is t1
         assert opt.past_trajectories[1] is t2
@@ -100,7 +102,7 @@ class TestOptimizerTrajectoryTracking:
         opt = MinimalOptimizer()
         channel = EventChannel()
         task = asyncio.create_task(opt.run(channel))
-        await channel.send(RunEndEvent(trajectory=Trajectory()))
+        await channel.send(RunEndEvent())
         assert opt.past_trajectories == []
         assert opt.current_trajectory is None
         channel.close()
@@ -112,7 +114,7 @@ class TestOptimizerTrajectoryTracking:
         task = asyncio.create_task(opt.run(channel))
         t = Trajectory()
         await channel.send(RunStartEvent(trajectory=t))
-        await channel.send(RunEndEvent(trajectory=t))
+        await channel.send(RunEndEvent())
         past = opt.past_trajectories
         past.clear()
         assert len(opt.past_trajectories) == 1
@@ -131,12 +133,10 @@ class TestOptimizerDefaultRun:
         ctrl = Controllable(name="input", security_domain=tag)
         t = Trajectory()
         await channel.send(RunStartEvent(trajectory=t))
-        resp = await channel.send(
-            ControllablePreCallEvent(controllable=ctrl, request="hi")
-        )
+        resp = await channel.send(ControllablePreCallEvent(controllable=ctrl, request="hi"))
         assert isinstance(resp, ControllableInjection)
         assert resp.value == "test"
-        await channel.send(RunEndEvent(trajectory=t))
+        await channel.send(RunEndEvent())
         channel.close()
         await task
         types = [type(e).__name__ for e in opt.events_seen]
@@ -152,9 +152,13 @@ class TestOptimizerExceptionHandling:
         sender gets the exception instead of deadlocking."""
 
         class FailingOptimizer(Optimizer):
-            async def initialize(self, goal: Goal, controllables: list[Controllable],
-                                 observables: list[ObservableValue],
-                                 llm_client: LLMClient) -> None:
+            async def initialize(
+                self,
+                goal: Goal,
+                controllables: list[Controllable],
+                observables: list[ObservableValue],
+                llm_client: LLMClient,
+            ) -> None:
                 await super().initialize(goal, controllables, observables, llm_client)
 
             async def on_event(self, event: Event) -> EventResponse:
@@ -185,7 +189,7 @@ class TestOptimizerExceptionHandling:
         t = Trajectory()
         await channel.send(RunStartEvent(trajectory=t))
         with pytest.raises(ValueError, match="end failed"):
-            await channel.send(RunEndEvent(trajectory=t))
+            await channel.send(RunEndEvent())
         assert opt.current_trajectory is None
         assert opt.past_trajectories[0] is t
         channel.close()
@@ -207,7 +211,7 @@ class TestOptimizerExceptionHandling:
         task = asyncio.create_task(opt.run(channel))
         # Send RunEndEvent WITHOUT a preceding RunStartEvent
         with pytest.raises(ValueError, match="end failed"):
-            await channel.send(RunEndEvent(trajectory=Trajectory()))
+            await channel.send(RunEndEvent())
         assert opt.current_trajectory is None
         assert opt.past_trajectories == []
         channel.close()
@@ -242,12 +246,15 @@ class TestOptimizerExceptionHandling:
         await channel.send(RunStartEvent(trajectory=t))
         # This send gets the exception via reject()
         with pytest.raises(ValueError, match="ctrl failed"):
-            await channel.send(ControllablePreCallEvent(
-                controllable=ctrl, request="hi",
-            ))
+            await channel.send(
+                ControllablePreCallEvent(
+                    controllable=ctrl,
+                    request="hi",
+                )
+            )
         # Subsequent sends raise immediately (channel poisoned)
         with pytest.raises(ValueError, match="ctrl failed"):
-            await channel.send(RunEndEvent(trajectory=t))
+            await channel.send(RunEndEvent())
         with pytest.raises(ValueError, match="ctrl failed"):
             await task
 

@@ -41,7 +41,6 @@ class ConfigSpec:
     description: str
 
 
-
 @dataclass(frozen=True)
 class QueryParam:
     """A parameter for a post-run query.

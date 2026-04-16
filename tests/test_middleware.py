@@ -55,7 +55,9 @@ class TestCompose:
                     resp = await handler(event)
                     order.append(f"{name}_after")
                     return resp
+
                 return wrapped
+
             return mw
 
         async def inner(event: Event) -> EventResponse:
@@ -76,6 +78,7 @@ class TestCompose:
                 nonlocal called
                 called = True
                 return await handler(event)
+
             return wrapped
 
         async def handler(event: Event) -> EventResponse:
@@ -94,9 +97,12 @@ class TestCompose:
 class TestSecurityDomainFilter:
     async def test_blocks_out_of_scope_pre_call(self) -> None:
         """Pre-call event for a domain outside scope is blocked."""
+
         async def handler(event: Event) -> EventResponse:
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="x",
+                event=event,
+                controllable=event.controllable,
+                value="x",
             )
 
         filtered = security_domain_filter(frozenset({CHILD_TAG}))(handler)
@@ -110,6 +116,7 @@ class TestSecurityDomainFilter:
 
     async def test_blocks_out_of_scope_post_call(self) -> None:
         """Post-call event outside scope is also blocked."""
+
         async def handler(event: Event) -> EventResponse:
             return EventResponse(event=event)
 
@@ -123,9 +130,12 @@ class TestSecurityDomainFilter:
 
     async def test_passes_in_scope(self) -> None:
         """Events within scope are forwarded to the handler."""
+
         async def handler(event: Event) -> EventResponse:
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="x",
+                event=event,
+                controllable=event.controllable,
+                value="x",
             )
 
         filtered = security_domain_filter(frozenset({PARENT_TAG}))(handler)
@@ -138,6 +148,7 @@ class TestSecurityDomainFilter:
 
     async def test_passes_non_controllable_events(self) -> None:
         """Non-controllable events always pass through."""
+
         async def handler(event: Event) -> EventResponse:
             return EventResponse(event=event)
 
@@ -149,6 +160,7 @@ class TestSecurityDomainFilter:
 
     async def test_blocked_event_not_forwarded(self) -> None:
         """Blocked events do not reach the handler."""
+
         async def handler(event: Event) -> EventResponse:
             raise AssertionError("Should not be called")
 
@@ -173,7 +185,9 @@ class TestTrajectoryRecorder:
 
         async def handler(event: Event) -> EventResponse:
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="x",
+                event=event,
+                controllable=event.controllable,
+                value="x",
             )
 
         wrapped = trajectory_recorder(trajectory)(handler)
@@ -227,8 +241,16 @@ class TestTrajectoryRecorder:
         # the recorder ever ran
         entries = trajectory.snapshot()
         assert len([e for e in entries if isinstance(e, ControllablePreCallEvent)]) == 0
-        assert len([e for e in entries
-                     if isinstance(e, (ControllableInjection, ControllableNoInjection))]) == 0
+        assert (
+            len(
+                [
+                    e
+                    for e in entries
+                    if isinstance(e, (ControllableInjection, ControllableNoInjection))
+                ]
+            )
+            == 0
+        )
 
     @staticmethod
     async def _unreachable_handler(event: Event) -> EventResponse:
