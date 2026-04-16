@@ -889,3 +889,47 @@ class TestEventsFrozenMutations:
         )
         with pytest.raises(AttributeError):
             fe.security_domain = None  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Controller: BudgetExhaustedError must stop the task — kills break→continue
+# ---------------------------------------------------------------------------
+
+
+class TestBudgetExhaustedStopsTask:
+    async def test_budget_exhausted_breaks_not_continues(self) -> None:
+        """Kills mutation: `break` → `continue` in BudgetExhaustedError handler.
+
+        When BudgetExhaustedError is raised mid-run, the controller must stop
+        the task (break), not silently skip and continue to the next run.
+        """
+        from superred.core.types.event import EventHandler, EventResponseHandler
+        from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+        run_count = 0
+
+        class BudgetBlowingTarget(StubTarget):
+            async def run(
+                self, emit: EventHandler, send_event: EventResponseHandler,
+            ) -> None:
+                nonlocal run_count
+                run_count += 1
+                if run_count >= 2:
+                    raise BudgetExhaustedError(
+                        "Budget gone", usage=LLMUsage(calls=10, cost=1.0),
+                    )
+                await super().run(emit, send_event)
+
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=False),
+            target=BudgetBlowingTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=10,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        # Only 1 successful run should be recorded — the second raised
+        # BudgetExhaustedError and the loop should break, not continue.
+        assert len(tr.runs) == 1
+        assert run_count == 2
