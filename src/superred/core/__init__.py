@@ -1,7 +1,14 @@
 """Core interfaces and types for the superred framework."""
 
 from superred.core.channel import EventChannel, EventEnvelope
-from superred.core.controller import Controller, ControllerResult, RunResult, TaskResult
+from superred.core.controller import (
+    Controller,
+    ControllerResult,
+    OptimizerFactory,
+    RunResult,
+    TaskResult,
+    ThreatModelResult,
+)
 from superred.core.interfaces import (
     NotApplicable,
     Optimizer,
@@ -39,11 +46,13 @@ from superred.core.types import (
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
+    Scope,
     Score,
     SecurityDomain,
     SecurityDomainTag,
     Trajectory,
     get_domain,
+    scope_includes,
 )
 
 __all__ = [
@@ -53,8 +62,10 @@ __all__ = [
     # Controller
     "Controller",
     "ControllerResult",
+    "OptimizerFactory",
     "RunResult",
     "TaskResult",
+    "ThreatModelResult",
     # Middleware
     "Middleware",
     "compose",
@@ -90,9 +101,11 @@ __all__ = [
     "RunEndEvent",
     "RunEndResponse",
     "RunStartEvent",
+    "Scope",
     "Score",
     "SecurityDomain",
     "SecurityDomainTag",
     "Trajectory",
     "get_domain",
+    "scope_includes",
 ]

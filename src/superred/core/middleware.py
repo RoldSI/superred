@@ -28,7 +28,7 @@ from superred.core.types.events import (
     ControllablePostCallEvent,
     ControllablePreCallEvent,
 )
-from superred.core.types.security_domain import SecurityDomainTag
+from superred.core.types.security_domain import Scope, scope_includes
 from superred.core.types.trajectory import Trajectory
 
 # A middleware wraps an EventResponseHandler and returns a new one.
@@ -79,22 +79,23 @@ def trajectory_recorder(trajectory: Trajectory) -> Middleware:
     return apply
 
 
-def security_domain_filter(scope: SecurityDomainTag) -> Middleware:
+def security_domain_filter(scope: Scope) -> Middleware:
     """Middleware that filters controllable events by security domain.
 
     Events for controllables outside *scope* are answered with
     :class:`ControllableNoInjection` without reaching the inner handler.
 
     Args:
-        scope: The security domain tag to test against. Events whose
-            controllable's domain is included by this tag pass through.
+        scope: A frozenset of security domain tags (antichain). Events whose
+            controllable's domain is included by any tag in the scope pass
+            through.
     """
 
     def apply(handler: EventResponseHandler) -> EventResponseHandler:
         async def filtered(event: Event) -> EventResponse:
             if isinstance(event, (ControllablePreCallEvent, ControllablePostCallEvent)):
                 controllable_domain = event.controllable.security_domain
-                if not scope.includes(controllable_domain):
+                if not scope_includes(scope, controllable_domain):
                     return ControllableNoInjection(
                         event=event, controllable=event.controllable,
                     )

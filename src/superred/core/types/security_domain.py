@@ -16,6 +16,10 @@ Example::
 A tag *includes* all of its descendants: ``internal.includes(user)``
 is ``True`` because internal scope encompasses user-controlled surfaces.
 Unrelated roots form independent trees in the forest.
+
+A :data:`Scope` is a ``frozenset[SecurityDomainTag]`` representing a
+combination of security domain tags to test simultaneously.  Use
+:func:`scope_includes` to check whether a scope covers a given tag.
 """
 
 from __future__ import annotations
@@ -129,3 +133,21 @@ class SecurityDomain:
             result = [existing | new for existing in result for new in tree_ac]
 
         return result
+
+
+Scope = frozenset[SecurityDomainTag]
+"""A set of security domain tags defining the attack surface scope.
+
+Each frozenset is an antichain: no tag is an ancestor of another.
+An item is in scope if ANY tag in the set includes it.
+"""
+
+
+def scope_includes(scope: Scope, tag: SecurityDomainTag) -> bool:
+    """Whether *scope* covers *tag*.
+
+    Returns ``True`` if any tag in *scope* includes *tag* (i.e. *tag*
+    is equal to or a descendant of at least one scope member).
+    An empty scope covers nothing.
+    """
+    return any(s.includes(tag) for s in scope)

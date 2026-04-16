@@ -247,9 +247,9 @@ emit(LogEvent(
 - **`cleanup()`** - Called after each run+evaluation cycle. Reset databases, clear caches, etc. so the next run starts fresh.
 - **`teardown()`** - Called once at the very end. Close connections, stop containers, etc.
 
-## Complete Real Example: SimpleChatTarget
+## Complete Real Example: BasicLLMChatTarget
 
-See [simple_chat_target/target.py](../../superred-modules/targets/simple_chat/src/simple_chat_target/target.py) for a working implementation that calls a real LLM via litellm.
+See [basic_llm_chat_target/target.py](../../superred-modules/targets/basic_llm_chat/src/basic_llm_chat_target/target.py) for a working implementation that calls a real LLM via litellm.
 
 ## Multiple Controllables
 

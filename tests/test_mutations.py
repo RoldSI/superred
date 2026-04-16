@@ -29,12 +29,14 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
+    FeedbackEvent,
     ObservableEvent,
     RunEndEvent,
     RunEndResponse,
+    RunStartEvent,
 )
 from superred.core.types.observable import Observable
-from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
+from superred.core.types.security_domain import Scope, SecurityDomain, SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
 from .conftest import (
@@ -47,11 +49,19 @@ from .conftest import (
     StubTask,
 )
 
+# Scope constants
+EXTERNAL_SCOPE: Scope = frozenset({EXTERNAL_TAG})
+ROOT_SCOPE: Scope = frozenset({ROOT_TAG})
+
 _EXT_OBS = Observable(name="log", security_domain=EXTERNAL_TAG)
 
 
 def _obs(content: str) -> ObservableEvent:
     return ObservableEvent(observable=_EXT_OBS, content=content)
+
+
+def _first_tmr(result):
+    return result.threat_model_results[0]
 
 
 # ---------------------------------------------------------------------------
@@ -218,13 +228,13 @@ class TestChannelMutations:
 
 class TestMiddlewareMutations:
     async def test_filter_checks_includes_not_excludes(self) -> None:
-        """Kills: `not scope.includes(...)` mutated to `scope.includes(...)`."""
+        """Kills: `not scope_includes(...)` mutated to `scope_includes(...)`."""
         async def handler(event: Event) -> EventResponse:
             return ControllableInjection(
                 event=event, controllable=event.controllable, value="injected",
             )
 
-        filtered = security_domain_filter(EXTERNAL_TAG)(handler)
+        filtered = security_domain_filter(EXTERNAL_SCOPE)(handler)
 
         # INTERNAL is NOT included by EXTERNAL — must be blocked
         c = Controllable(name="c", security_domain=INTERNAL_TAG)
@@ -239,7 +249,7 @@ class TestMiddlewareMutations:
                 event=event, controllable=event.controllable, value="injected",
             )
 
-        filtered = security_domain_filter(ROOT_TAG)(handler)
+        filtered = security_domain_filter(ROOT_SCOPE)(handler)
 
         c = Controllable(name="c", security_domain=EXTERNAL_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
@@ -252,7 +262,7 @@ class TestMiddlewareMutations:
         async def handler(event: Event) -> EventResponse:
             return EventResponse(event=event)
 
-        filtered = security_domain_filter(EXTERNAL_TAG)(handler)
+        filtered = security_domain_filter(EXTERNAL_SCOPE)(handler)
 
         c = Controllable(name="c", security_domain=INTERNAL_TAG)
         event = ControllablePostCallEvent(controllable=c, request="hi", answer="bye")
@@ -324,46 +334,40 @@ class TestSecurityClaimMutations:
 class TestControllerRunMutations:
     async def test_done_true_stops_loop(self) -> None:
         """Kills: `if done: break` removed or negated."""
-        optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer=optimizer,
+            optimizer_factory=lambda: StubOptimizer(done=True),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=10,
         )
-        result = await controller.run()
-        assert len(result.task_results[0].runs) == 1  # stopped at 1, not 10
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert len(_first_tmr(result).task_results[0].runs) == 1  # stopped at 1, not 10
 
     async def test_done_false_continues_to_max(self) -> None:
         """Kills: `done=True` default or `max_runs_per_task` off-by-one."""
-        optimizer = StubOptimizer(done=False)
         controller = Controller(
-            optimizer=optimizer,
+            optimizer_factory=lambda: StubOptimizer(done=False),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=3,
         )
-        result = await controller.run()
-        assert len(result.task_results[0].runs) == 3
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert len(_first_tmr(result).task_results[0].runs) == 3
 
     async def test_success_tracked_across_runs(self) -> None:
         """Kills: `if evaluation.success: success = True` removed or
         `success` initialized to True."""
-        optimizer = StubOptimizer(done=False)
         controller = Controller(
-            optimizer=optimizer,
+            optimizer_factory=lambda: StubOptimizer(done=False),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=2,
         )
-        result = await controller.run()
-        assert result.task_results[0].success is False
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].success is False
 
     async def test_best_score_uses_greater_than(self) -> None:
         """Kills: `>` mutated to `>=` or `<` in score comparison."""
@@ -390,15 +394,14 @@ class TestControllerRunMutations:
                 )
 
         controller = Controller(
-            optimizer=ScoreOptimizer(done=False),
+            optimizer_factory=lambda: ScoreOptimizer(done=False),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([ScoredTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        result = await controller.run()
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
         # Best should be 0.8 (first run), not 0.5 (last run)
-        assert result.task_results[0].best_score.value == 0.8
+        assert _first_tmr(result).task_results[0].best_score.value == 0.8
 
     async def test_best_score_tie_keeps_first(self) -> None:
         """Kills: `>` mutated to `>=` — on a tie, the first evaluation wins."""
@@ -424,27 +427,24 @@ class TestControllerRunMutations:
                 return next(evals)
 
         controller = Controller(
-            optimizer=CountingOptimizer(stop_after=2),
+            optimizer_factory=lambda: CountingOptimizer(stop_after=2),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([TiedTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        result = await controller.run()
-        assert result.task_results[0].best_evaluation.rationale == "first"
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].best_evaluation.rationale == "first"
 
     async def test_trajectory_close_called(self) -> None:
         """Kills: `trajectory.close()` removed from _run_single."""
-        optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer=optimizer,
+            optimizer_factory=lambda: StubOptimizer(done=True),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        result = await controller.run()
-        traj = result.task_results[0].runs[0].trajectory
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        traj = _first_tmr(result).task_results[0].runs[0].trajectory
         # Trajectory must be closed — emitting should raise
         with pytest.raises(RuntimeError, match="closed"):
             traj.emit(_obs("x"))
@@ -453,24 +453,22 @@ class TestControllerRunMutations:
         """Kills: `optimizer.initialize()` call removed."""
         optimizer = StubOptimizer(done=True)
         controller = Controller(
-            optimizer=optimizer,
+            optimizer_factory=lambda: optimizer,
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        await controller.run()
+        await controller.run(scopes=[EXTERNAL_SCOPE])
         assert optimizer.initialized is True
 
     async def test_max_runs_validation(self) -> None:
         """Kills: `max_runs_per_task < 1` check removed."""
         with pytest.raises(ValueError):
             Controller(
-                optimizer=StubOptimizer(),
+                optimizer_factory=lambda: StubOptimizer(),
                 target=StubTarget(),
                 security_claim=SecurityClaim.from_tasks([StubTask()]),
-                security_domain_tag=EXTERNAL_TAG,
-                llm_config=STUB_LLM_CONFIG,
+                llm_configs=[STUB_LLM_CONFIG],
                 max_runs_per_task=0,
             )
 
@@ -491,15 +489,13 @@ class TestControllerRunMutations:
                 received_observables = observables
 
         optimizer = CapturingOptimizer(done=True)
-        target = StubTarget()
         controller = Controller(
-            optimizer=optimizer,
-            target=target,
+            optimizer_factory=lambda: optimizer,
+            target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        await controller.run()
+        await controller.run(scopes=[EXTERNAL_SCOPE])
 
         assert received_controllables is not None
         assert isinstance(received_controllables, list)
@@ -525,13 +521,12 @@ class TestBestScoreMCDC:
         """MC/DC: A=True makes condition True regardless of B.
         On first run, best_score is None, so the score is always accepted."""
         controller = Controller(
-            optimizer=StubOptimizer(done=True), target=StubTarget(),
+            optimizer_factory=lambda: StubOptimizer(done=True), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.1)]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        result = await controller.run()
-        assert result.task_results[0].best_score.value == 0.1
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].best_score.value == 0.1
 
     async def test_higher_score_replaces(self) -> None:
         """MC/DC: A=False, B=True — higher score replaces."""
@@ -549,13 +544,12 @@ class TestBestScoreMCDC:
                 )
 
         controller = Controller(
-            optimizer=CountingOptimizer(stop_after=2), target=StubTarget(),
+            optimizer_factory=lambda: CountingOptimizer(stop_after=2), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([S()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        result = await controller.run()
-        assert result.task_results[0].best_score.value == 0.7
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].best_score.value == 0.7
 
     async def test_lower_score_does_not_replace(self) -> None:
         """MC/DC: A=False, B=False — lower score does NOT replace."""
@@ -573,13 +567,12 @@ class TestBestScoreMCDC:
                 )
 
         controller = Controller(
-            optimizer=CountingOptimizer(stop_after=2), target=StubTarget(),
+            optimizer_factory=lambda: CountingOptimizer(stop_after=2), target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([S()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        result = await controller.run()
-        assert result.task_results[0].best_score.value == 0.9
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].best_score.value == 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -598,20 +591,21 @@ class TestControllerDefaultValues:
         """Kills mutant 9: `max_runs_per_task: int = 100` → `101`.
         Verifies the default value is exactly 100."""
         controller = Controller(
-            optimizer=StubOptimizer(),
+            optimizer_factory=lambda: StubOptimizer(),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
         assert controller._max_runs_per_task == 100
 
-    def test_controller_result_skipped_defaults_empty(self) -> None:
+    def test_threat_model_result_skipped_defaults_empty(self) -> None:
         """Kills mutant 8: `skipped_tasks = field(default_factory=list)` → `None`.
-        Verifies ControllerResult can be constructed without skipped_tasks."""
-        from superred.core.controller import ControllerResult
+        Verifies ThreatModelResult can be constructed without skipped_tasks."""
+        from superred.core.controller import ThreatModelResult
 
-        result = ControllerResult(task_results=[])
+        result = ThreatModelResult(
+            scope=EXTERNAL_SCOPE, llm_config=None, task_results=[],
+        )
         assert result.skipped_tasks == []
         assert isinstance(result.skipped_tasks, list)
 
@@ -715,3 +709,156 @@ class TestSecurityClaimFromTasksClaimsField:
         assert result == [t]
         # Iterate again — must still work (re-iterable)
         assert list(claim) == [t]
+
+
+# ---------------------------------------------------------------------------
+# LLMConfig repr masking boundary — kills mutants 277, 278
+# ---------------------------------------------------------------------------
+
+
+class TestLLMConfigReprBoundary:
+    def test_exactly_four_char_key_is_masked(self) -> None:
+        """Kills mutant 277: `> 4` -> `>= 4` — a 4-char key should show '***'
+        because it's not longer than 4."""
+        from superred.core.types.llm import LLMConfig
+
+        config = LLMConfig(model="m", api_base="b", api_key="abcd")
+        r = repr(config)
+        assert "***" in r
+        assert "abcd" not in r
+
+    def test_five_char_key_shows_prefix(self) -> None:
+        """Kills mutant 278: `> 4` -> `> 5` — a 5-char key should show partial mask."""
+        from superred.core.types.llm import LLMConfig
+
+        config = LLMConfig(model="m", api_base="b", api_key="abcde")
+        r = repr(config)
+        assert "abcd..." in r
+        assert "abcde" not in r
+
+
+# ---------------------------------------------------------------------------
+# Frozen result dataclasses — kills mutants 2, 4, 5, 6, 7
+# ---------------------------------------------------------------------------
+
+
+class TestResultFrozenness:
+    def test_run_result_is_frozen(self) -> None:
+        """Kills mutant 2: `frozen=True` -> `frozen=False` on RunResult."""
+        from superred.core.controller import RunResult
+        from superred.core.types.llm import LLMUsage
+
+        t = Trajectory()
+        t.close()
+        rr = RunResult(
+            trajectory=t,
+            evaluation=EvaluationResult(
+                success=False,
+                primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+            ),
+            llm_usage=LLMUsage(),
+        )
+        with pytest.raises(AttributeError):
+            rr.trajectory = t  # type: ignore[misc]
+
+    def test_task_result_is_frozen(self) -> None:
+        """Kills mutant 4: `frozen=True` -> `frozen=False` on TaskResult."""
+        from superred.core.controller import TaskResult
+        from superred.core.types.llm import LLMUsage
+
+        tr = TaskResult(
+            task=StubTask(),
+            runs=[],
+            best_score=Score(0.0),
+            best_evaluation=EvaluationResult(success=False, primary_score=Score(0.0)),
+            success=False,
+            llm_usage=LLMUsage(),
+        )
+        with pytest.raises(AttributeError):
+            tr.success = True  # type: ignore[misc]
+
+    def test_threat_model_result_is_frozen(self) -> None:
+        """Kills mutant 6: `frozen=True` -> `frozen=False` on ThreatModelResult."""
+        from superred.core.controller import ThreatModelResult
+
+        tmr = ThreatModelResult(
+            scope=EXTERNAL_SCOPE,
+            llm_config=None,
+            task_results=[],
+        )
+        with pytest.raises(AttributeError):
+            tmr.scope = ROOT_SCOPE  # type: ignore[misc]
+
+    def test_controller_result_is_frozen(self) -> None:
+        """Kills mutant 7: `frozen=True` -> `frozen=False` on ControllerResult."""
+        from superred.core.controller import ControllerResult
+
+        cr = ControllerResult(threat_model_results=[])
+        with pytest.raises(AttributeError):
+            cr.threat_model_results = []  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Event base type mutations — kills mutants 191, 192, 194, 200, 201
+# ---------------------------------------------------------------------------
+
+
+class TestEventTypeMutations:
+    def test_event_is_frozen(self) -> None:
+        """Kills mutant 191: `frozen=True` -> `frozen=False` on Event."""
+        e = Event()
+        with pytest.raises(AttributeError):
+            e.security_domain = None  # type: ignore[misc]
+
+    def test_event_response_is_frozen(self) -> None:
+        """Kills mutant 200: `frozen=True` -> `frozen=False` on EventResponse."""
+        e = Event()
+        r = EventResponse(event=e)
+        with pytest.raises(AttributeError):
+            r.event = e  # type: ignore[misc]
+
+    def test_event_response_types_default_is_empty_tuple(self) -> None:
+        """Kills mutant 194: `response_types = ()` -> `response_types = None`."""
+        assert Event.response_types == ()
+        assert isinstance(Event.response_types, tuple)
+
+
+# ---------------------------------------------------------------------------
+# Events frozen/kw_only — kills mutants 211-242 (events.py dataclass mutations)
+# ---------------------------------------------------------------------------
+
+
+class TestEventsFrozenMutations:
+    def test_observable_event_is_frozen(self) -> None:
+        """Kills mutants 211/212."""
+        obs = Observable(name="o", security_domain=EXTERNAL_TAG)
+        e = ObservableEvent(observable=obs, content="x")
+        with pytest.raises(AttributeError):
+            e.content = "y"  # type: ignore[misc]
+
+    def test_controllable_pre_call_is_frozen(self) -> None:
+        """Kills mutants 216/217."""
+        c = Controllable(name="c", security_domain=EXTERNAL_TAG)
+        e = ControllablePreCallEvent(controllable=c, request="x")
+        with pytest.raises(AttributeError):
+            e.request = "y"  # type: ignore[misc]
+
+    def test_run_start_response_types(self) -> None:
+        """Kills mutant 248: `RunStartEvent.response_types = (EventResponse,)` -> `None`."""
+        assert RunStartEvent.response_types == (EventResponse,)
+
+    def test_run_end_response_is_frozen(self) -> None:
+        """Kills mutants 241/242."""
+        e = Event()
+        r = RunEndResponse(event=e, done=True)
+        with pytest.raises(AttributeError):
+            r.done = False  # type: ignore[misc]
+
+    def test_feedback_event_is_frozen(self) -> None:
+        """Kills mutants 232/233."""
+        fe = FeedbackEvent(
+            evaluation=EvaluationResult(success=False, primary_score=Score(0.0)),
+            security_domain=EXTERNAL_TAG,
+        )
+        with pytest.raises(AttributeError):
+            fe.security_domain = None  # type: ignore[misc]

@@ -192,23 +192,23 @@ full_claim = SecurityClaim.from_claims([
 Package a security claim as a reusable module with a factory function:
 
 ```python
-# secret_leak_claim/__init__.py
+# basic_secret_leak_claim/__init__.py
 from typing import cast
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import Task
 
-def secret_leak_claim(secret="TIGER-42", trigger="spaghetti") -> SecurityClaim[Target]:
-    task = SecretLeakTask(secret=secret, trigger=trigger)
+def basic_secret_leak_claim(secret="TIGER-42", trigger="spaghetti") -> SecurityClaim[Target]:
+    task = BasicSecretLeakTask(secret=secret, trigger=trigger)
     return SecurityClaim.from_tasks(cast(list[Task[Target]], [task]))
 ```
 
 Users then import and use it directly:
 
 ```python
-from secret_leak_claim import secret_leak_claim
+from basic_secret_leak_claim import basic_secret_leak_claim
 
-claim = secret_leak_claim(secret="MY_SECRET")
+claim = basic_secret_leak_claim(secret="MY_SECRET")
 controller = Controller(optimizer=opt, target=target, security_claim=claim, ...)
 ```
 

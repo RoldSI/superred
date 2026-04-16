@@ -21,7 +21,7 @@ from __future__ import annotations
 import threading
 
 from superred.core.types.event import Event, EventResponse
-from superred.core.types.security_domain import SecurityDomainTag
+from superred.core.types.security_domain import Scope, SecurityDomainTag, scope_includes
 
 # Items stored on the trajectory: events and their responses.
 TrajectoryItem = Event | EventResponse
@@ -59,13 +59,13 @@ class Trajectory:
 
     def __init__(
         self,
-        filtered_scope: SecurityDomainTag | None = None,
+        filtered_scope: Scope | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self._entries: list[TrajectoryItem] = []
         self._closed: bool = False
         self._drain_cursor: int = 0
-        self._filter: tuple[SecurityDomainTag, FilteredTrajectory] | None = None
+        self._filter: tuple[Scope, FilteredTrajectory] | None = None
         if filtered_scope is not None:
             self._filter = (filtered_scope, FilteredTrajectory())
 
@@ -91,7 +91,7 @@ class Trajectory:
             self._entries.append(item)
             if self._filter is not None:
                 scope, view = self._filter
-                if scope.includes(domain):
+                if scope_includes(scope, domain):
                     view._push(item)
 
     def close(self) -> None:

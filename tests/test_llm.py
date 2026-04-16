@@ -235,6 +235,7 @@ class TestControllerLLMIntegration:
         """The optimizer can access self.llm after controller sets it."""
         from superred.core.controller import Controller
         from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.security_domain import Scope
 
         from .conftest import EXTERNAL_TAG, StubOptimizer, StubTarget, StubTask
 
@@ -252,14 +253,14 @@ class TestControllerLLMIntegration:
             api_key="sk-test",
             max_cost=5.00,
         )
+        scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
-            optimizer=CapturingOptimizer(done=True),
+            optimizer_factory=lambda: CapturingOptimizer(done=True),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=config,
+            llm_configs=[config],
         )
-        await controller.run()
+        await controller.run(scopes=[scope])
 
         assert captured_client is not None
         assert isinstance(captured_client, LLMClient)
@@ -268,19 +269,20 @@ class TestControllerLLMIntegration:
         """RunResult and TaskResult always have LLMUsage (zero calls when unused)."""
         from superred.core.controller import Controller
         from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.security_domain import Scope
 
         from .conftest import EXTERNAL_TAG, STUB_LLM_CONFIG, StubOptimizer, StubTarget, StubTask
 
+        scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
-            optimizer=StubOptimizer(done=True),
+            optimizer_factory=lambda: StubOptimizer(done=True),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=STUB_LLM_CONFIG,
+            llm_configs=[STUB_LLM_CONFIG],
         )
-        result = await controller.run()
+        result = await controller.run(scopes=[scope])
 
-        tr = result.task_results[0]
+        tr = result.threat_model_results[0].task_results[0]
         assert tr.llm_usage.calls == 0
         assert tr.llm_usage.cost == 0.0
         assert tr.runs[0].llm_usage.calls == 0
@@ -293,6 +295,7 @@ class TestControllerLLMIntegration:
         """RunResult and TaskResult track LLM usage."""
         from superred.core.controller import Controller
         from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.security_domain import Scope
 
         from .conftest import EXTERNAL_TAG, StubOptimizer, StubTarget, StubTask
 
@@ -326,16 +329,16 @@ class TestControllerLLMIntegration:
             api_base="http://test",
             api_key="sk-test",
         )
+        scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
-            optimizer=LLMUsingOptimizer(done=True),
+            optimizer_factory=lambda: LLMUsingOptimizer(done=True),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=config,
+            llm_configs=[config],
         )
-        result = await controller.run()
+        result = await controller.run(scopes=[scope])
 
-        tr = result.task_results[0]
+        tr = result.threat_model_results[0].task_results[0]
         assert tr.llm_usage.calls == 1
         assert tr.llm_usage.cost == pytest.approx(0.005)
 
@@ -360,6 +363,7 @@ class TestBudgetExhaustionGraceful:
         from superred.core.controller import Controller
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.event import EventResponse
+        from superred.core.types.security_domain import Scope
 
         from .conftest import EXTERNAL_TAG, StubOptimizer, StubTarget, StubTask
 
@@ -397,19 +401,20 @@ class TestBudgetExhaustionGraceful:
             max_cost=1.00,
         )
         target = StubTarget()
+        scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
-            optimizer=LLMEveryRunOptimizer(done=False),
+            optimizer_factory=lambda: LLMEveryRunOptimizer(done=False),
             target=target,
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=config,
+            llm_configs=[config],
             max_runs_per_task=10,
         )
-        result = await controller.run()
+        result = await controller.run(scopes=[scope])
 
         # Should have results, not a crash
-        assert len(result.task_results) == 1
-        tr = result.task_results[0]
+        tmr = result.threat_model_results[0]
+        assert len(tmr.task_results) == 1
+        tr = tmr.task_results[0]
         # 2 runs completed (calls 1 and 2), 3rd run hit budget and was aborted
         assert len(tr.runs) == 2
         assert tr.llm_usage.cost == pytest.approx(1.20)
@@ -425,20 +430,12 @@ class TestBudgetExhaustionGraceful:
         from superred.core.controller import Controller
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.event import EventResponse
+        from superred.core.types.security_domain import Scope
 
         from .conftest import EXTERNAL_TAG, StubOptimizer, StubTarget, StubTask
 
         mock_acompletion.return_value = _make_mock_response()
 
-        # First call costs $1.00 and succeeds (budget check is pre-call,
-        # cost is recorded post-call). Second call hits the pre-call check
-        # ($1.00 >= $0.50) and raises BudgetExhaustedError.
-        # But actually: if budget is $0.50 and first call costs $1.00,
-        # the first call goes through (pre-call check: $0 < $0.50 → OK),
-        # then on the second run the pre-call check sees $1.00 >= $0.50 → raises.
-        # So the first run completes, second run aborts.
-        # To truly exhaust on the first run, we need the optimizer to call
-        # complete() twice in one run.
         class DoubleCallOptimizer(StubOptimizer):
             async def on_event(self, event):
                 from superred.core.types.events import (
@@ -468,17 +465,18 @@ class TestBudgetExhaustionGraceful:
             api_key="sk-test",
             max_cost=0.50,
         )
+        scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
-            optimizer=DoubleCallOptimizer(done=True),
+            optimizer_factory=lambda: DoubleCallOptimizer(done=True),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=config,
+            llm_configs=[config],
         )
-        result = await controller.run()
+        result = await controller.run(scopes=[scope])
 
-        assert len(result.task_results) == 1
-        tr = result.task_results[0]
+        tmr = result.threat_model_results[0]
+        assert len(tmr.task_results) == 1
+        tr = tmr.task_results[0]
         # First run aborted — no completed runs
         assert len(tr.runs) == 0
         assert tr.success is False
@@ -495,6 +493,7 @@ class TestBudgetExhaustionGraceful:
         from superred.core.controller import Controller
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.event import EventResponse
+        from superred.core.types.security_domain import Scope
 
         from .conftest import EXTERNAL_TAG, StubOptimizer, StubTarget, StubTask
 
@@ -532,25 +531,78 @@ class TestBudgetExhaustionGraceful:
         )
         task_a = StubTask(goal_text="Task A")
         task_b = StubTask(goal_text="Task B")
+        scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
-            optimizer=LLMOnceOptimizer(done=False),
+            optimizer_factory=lambda: LLMOnceOptimizer(done=False),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([task_a, task_b]),
-            security_domain_tag=EXTERNAL_TAG,
-            llm_config=config,
+            llm_configs=[config],
         )
-        result = await controller.run()
+        result = await controller.run(scopes=[scope])
 
         # Both tasks should have results
-        assert len(result.task_results) == 2
+        tmr = result.threat_model_results[0]
+        assert len(tmr.task_results) == 2
         # Each task got 1 completed run before budget stopped it
-        assert len(result.task_results[0].runs) == 1
-        assert len(result.task_results[1].runs) == 1
+        assert len(tmr.task_results[0].runs) == 1
+        assert len(tmr.task_results[1].runs) == 1
 
 
 # ---------------------------------------------------------------------------
 # Optimizer.llm property tests
 # ---------------------------------------------------------------------------
+
+
+class TestLLMClientNoop:
+    """Tests for LLMClient._make_noop() — the zero-budget client for non-LLM optimizers."""
+
+    def test_noop_is_llm_client(self) -> None:
+        """The noop client is a real LLMClient instance."""
+        client = LLMClient._make_noop()
+        assert isinstance(client, LLMClient)
+
+    def test_noop_has_zero_usage(self) -> None:
+        """The noop client starts with zero usage."""
+        client = LLMClient._make_noop()
+        assert client.usage.calls == 0
+        assert client.usage.cost == 0.0
+
+    async def test_noop_raises_budget_exhausted(self) -> None:
+        """Any complete() call immediately raises BudgetExhaustedError."""
+        client = LLMClient._make_noop()
+        with pytest.raises(BudgetExhaustedError):
+            await client.complete([{"role": "user", "content": "hello"}])
+
+    async def test_noop_controller_no_llm_configs(self) -> None:
+        """Controller without llm_configs passes noop client to optimizer."""
+        from superred.core.controller import Controller
+        from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.security_domain import Scope
+
+        from .conftest import EXTERNAL_TAG, StubOptimizer, StubTarget, StubTask
+
+        captured_client: object = None
+
+        class CapturingOptimizer(StubOptimizer):
+            async def initialize(self, goal, controllables, observables, llm_client) -> None:
+                await super().initialize(goal, controllables, observables, llm_client)
+                nonlocal captured_client
+                captured_client = llm_client
+
+        scope: Scope = frozenset({EXTERNAL_TAG})
+        controller = Controller(
+            optimizer_factory=lambda: CapturingOptimizer(done=True),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            # No llm_configs
+        )
+        await controller.run(scopes=[scope])
+
+        assert captured_client is not None
+        assert isinstance(captured_client, LLMClient)
+        # Calling complete should raise immediately
+        with pytest.raises(BudgetExhaustedError):
+            await captured_client.complete([{"role": "user", "content": "x"}])
 
 
 class TestOptimizerLLMProperty:

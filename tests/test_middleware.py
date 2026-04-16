@@ -99,7 +99,7 @@ class TestSecurityDomainFilter:
                 event=event, controllable=event.controllable, value="x",
             )
 
-        filtered = security_domain_filter(CHILD_TAG)(handler)
+        filtered = security_domain_filter(frozenset({CHILD_TAG}))(handler)
 
         # SIBLING_TAG is NOT included by CHILD_TAG
         c = Controllable(name="c", security_domain=SIBLING_TAG)
@@ -113,7 +113,7 @@ class TestSecurityDomainFilter:
         async def handler(event: Event) -> EventResponse:
             return EventResponse(event=event)
 
-        filtered = security_domain_filter(CHILD_TAG)(handler)
+        filtered = security_domain_filter(frozenset({CHILD_TAG}))(handler)
 
         c = Controllable(name="c", security_domain=SIBLING_TAG)
         event = ControllablePostCallEvent(controllable=c, request="hi", answer="bye")
@@ -128,7 +128,7 @@ class TestSecurityDomainFilter:
                 event=event, controllable=event.controllable, value="x",
             )
 
-        filtered = security_domain_filter(PARENT_TAG)(handler)
+        filtered = security_domain_filter(frozenset({PARENT_TAG}))(handler)
 
         c = Controllable(name="c", security_domain=CHILD_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
@@ -141,7 +141,7 @@ class TestSecurityDomainFilter:
         async def handler(event: Event) -> EventResponse:
             return EventResponse(event=event)
 
-        filtered = security_domain_filter(CHILD_TAG)(handler)
+        filtered = security_domain_filter(frozenset({CHILD_TAG}))(handler)
         event = RunStartEvent(trajectory=Trajectory())
         response = await filtered(event)
 
@@ -152,7 +152,7 @@ class TestSecurityDomainFilter:
         async def handler(event: Event) -> EventResponse:
             raise AssertionError("Should not be called")
 
-        filtered = security_domain_filter(CHILD_TAG)(handler)
+        filtered = security_domain_filter(frozenset({CHILD_TAG}))(handler)
 
         c = Controllable(name="c", security_domain=SIBLING_TAG)
         event = ControllablePreCallEvent(controllable=c, request="hi")
@@ -169,7 +169,7 @@ class TestSecurityDomainFilter:
 class TestTrajectoryRecorder:
     async def test_records_in_scope_event_and_response(self) -> None:
         """In-scope event and its response are both recorded."""
-        trajectory = Trajectory(filtered_scope=PARENT_TAG)
+        trajectory = Trajectory(filtered_scope=frozenset({PARENT_TAG}))
 
         async def handler(event: Event) -> EventResponse:
             return ControllableInjection(
@@ -190,12 +190,12 @@ class TestTrajectoryRecorder:
     async def test_records_out_of_scope_event_and_noinjection(self) -> None:
         """Out-of-scope events blocked by the filter are still recorded
         by the recorder (because recorder is outermost in the compose chain)."""
-        trajectory = Trajectory(filtered_scope=CHILD_TAG)
+        trajectory = Trajectory(filtered_scope=frozenset({CHILD_TAG}))
 
         # Compose in the correct order: recorder outermost, filter inner
         wrapped = compose(
             trajectory_recorder(trajectory),
-            security_domain_filter(CHILD_TAG),
+            security_domain_filter(frozenset({CHILD_TAG})),
         )(self._unreachable_handler)
 
         # SIBLING is out of scope for CHILD
@@ -212,11 +212,11 @@ class TestTrajectoryRecorder:
     async def test_wrong_compose_order_loses_out_of_scope_events(self) -> None:
         """If filter is outermost (wrong order), out-of-scope events are
         never seen by the recorder — they vanish from the trajectory."""
-        trajectory = Trajectory(filtered_scope=CHILD_TAG)
+        trajectory = Trajectory(filtered_scope=frozenset({CHILD_TAG}))
 
         # WRONG order: filter outermost, recorder inner
         wrapped = compose(
-            security_domain_filter(CHILD_TAG),
+            security_domain_filter(frozenset({CHILD_TAG})),
             trajectory_recorder(trajectory),
         )(self._unreachable_handler)
 

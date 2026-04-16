@@ -13,9 +13,9 @@ source .venv/bin/activate
 pip install -e ./superred
 
 # Install modules you need
-pip install -e ./superred-modules/targets/simple_chat
-pip install -e ./superred-modules/optimizers/trivial_prompt
-pip install -e ./superred-modules/security_claims/secret_leak
+pip install -e ./superred-modules/targets/basic_llm_chat
+pip install -e ./superred-modules/optimizers/basic_prompt_list
+pip install -e ./superred-modules/security_claims/basic_secret_leak
 ```
 
 ## Minimal Example
@@ -24,23 +24,23 @@ pip install -e ./superred-modules/security_claims/secret_leak
 import asyncio
 from superred.core.controller import Controller
 from superred.core.interfaces.security_claim import SecurityClaim
-from simple_chat_target import SimpleChatTarget, USER_INPUT_TAG
-from trivial_prompt_optimizer import TrivialPromptOptimizer
-from secret_leak_claim import secret_leak_claim
+from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
+from basic_prompt_list_optimizer import BasicPromptListOptimizer
+from basic_secret_leak_claim import basic_secret_leak_claim
 
 async def main():
     # 1. Create the AI system under test
-    target = SimpleChatTarget(
+    target = BasicLLMChatTarget(
         model="gpt-4o-mini",
         api_base="https://your-litellm-proxy.example.com",
         api_key="sk-your-key",
     )
 
     # 2. Create the attacker
-    optimizer = TrivialPromptOptimizer()
+    optimizer = BasicPromptListOptimizer()
 
     # 3. Define what to test
-    claim = secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
+    claim = basic_secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
 
     # 4. Run the evaluation
     controller = Controller(

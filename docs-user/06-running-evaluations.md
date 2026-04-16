@@ -206,9 +206,9 @@ from dotenv import load_dotenv
 
 from superred.core.controller import Controller
 from superred.core.types.llm import LLMConfig
-from simple_chat_target import SimpleChatTarget, USER_INPUT_TAG
-from trivial_prompt_optimizer import TrivialPromptOptimizer
-from secret_leak_claim import secret_leak_claim
+from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
+from basic_prompt_list_optimizer import BasicPromptListOptimizer
+from basic_secret_leak_claim import basic_secret_leak_claim
 
 
 async def main():
@@ -217,13 +217,13 @@ async def main():
     api_base = os.environ["LITELLM_API_BASE"]
     api_key = os.environ["LITELLM_API_KEY"]
 
-    target = SimpleChatTarget(
+    target = BasicLLMChatTarget(
         model="gpt-4o-mini",
         api_base=api_base,
         api_key=api_key,
     )
-    optimizer = TrivialPromptOptimizer()
-    claim = secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
+    optimizer = BasicPromptListOptimizer()
+    claim = basic_secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
 
     controller = Controller(
         optimizer=optimizer,

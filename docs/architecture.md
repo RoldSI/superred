@@ -51,42 +51,47 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
 0. User instantiates target with manual values (API keys, etc.)
    → target = MyTarget(api_key="sk-...")
 
-1. Controller constructed with optimizer, target, security_claim,
-   security_domain_tag, max_runs_per_task, llm_config
+1. Controller constructed with optimizer_factory, target, security_claim,
+   llm_configs (optional), max_runs_per_task
 
-2. await controller.run():
+2. await controller.run(scopes=..., models=...):
 
-   For each task in security_claim:
-     a. task.configure_target(target)
-        → sets pre-run config via target.set_config()
-        → raises NotApplicable if incompatible (task skipped)
+   Resolve scopes (default: target.security_domain.distinct_combinations())
+   Resolve llm_configs (filter by models= if provided)
 
-     b. Create LLMClient from llm_config — fresh per task (budget is per-task)
-        Filter controllables and observables by scope
-        optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)
+   For each (scope, llm_config) threat model:
+     For each task in security_claim:
+       a. task.configure_target(target)
+          → sets pre-run config via target.set_config()
+          → raises NotApplicable if incompatible (task skipped)
 
-     c. channel = EventChannel()
-        optimizer_task = asyncio.create_task(optimizer.run(channel))
+       b. Create LLMClient from llm_config — fresh per task (budget is per-task)
+          Create fresh optimizer via optimizer_factory()
+          Filter controllables and observables by scope
+          optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)
 
-     d. For each run (until optimizer signals done or max_runs):
-        i.   Create Trajectory (full) and FilteredTrajectory (optimizer's view)
-             channel.send(RunStartEvent(filtered_trajectory))
-        ii.  target.run(emit, send_event)
-             → target emits LogEvent instances via emit(event); send_event bridges to channel with filtering
-             → trajectory_recorder middleware records events/responses directly to trajectory
-        iii. channel.send(RunEndEvent(filtered_trajectory))
-             → optimizer responds with RunEndResponse(done=True/False)
-        iv.  task.evaluate(trajectory, target) → EvaluationResult
-             → emit FeedbackEvent(evaluation=filtered_eval, security_domain=scope) to trajectory, close it
-        v.   target.cleanup()
-             → resets target state for next run
-        vi.  If done=True, break
+       c. channel = EventChannel()
+          optimizer_task = asyncio.create_task(optimizer.run(channel))
 
-     e. channel.close() → optimizer.run() exits
-        await optimizer_task
+       d. For each run (until optimizer signals done or max_runs):
+          i.   Create Trajectory (full) and FilteredTrajectory (optimizer's view)
+               channel.send(RunStartEvent(filtered_trajectory))
+          ii.  target.run(emit, send_event)
+               → target emits LogEvent instances via emit(event); send_event bridges to channel with filtering
+               → trajectory_recorder middleware records events/responses directly to trajectory
+          iii. channel.send(RunEndEvent(filtered_trajectory))
+               → optimizer responds with RunEndResponse(done=True/False)
+          iv.  task.evaluate(trajectory, target) → EvaluationResult
+               → emit FeedbackEvent(evaluation=filtered_eval, security_domain=scope_tag) to trajectory, close it
+          v.   target.cleanup()
+               → resets target state for next run
+          vi.  If done=True, break
+
+       e. channel.close() → optimizer.run() exits
+          await optimizer_task, optimizer.teardown()
 
    3. Print summary to stdout
-   4. optimizer.teardown(), target.teardown()
+   4. target.teardown()
    5. Return ControllerResult
 ```
 
@@ -137,7 +142,8 @@ The controller does not create its own event loop. This allows embedding in larg
 ```
 src/superred/core/
   channel.py           -- EventEnvelope, EventChannel (thread-safe)
-  controller.py        -- Controller, RunResult, TaskResult, ControllerResult
+  controller.py        -- Controller, RunResult, TaskResult, ThreatModelResult,
+                          ControllerResult, OptimizerFactory
   llm.py               -- LLMClient (constrained LLM proxy for optimizers)
   middleware.py         -- Middleware type, compose(), security_domain_filter(),
                           trajectory_recorder()
@@ -159,7 +165,7 @@ src/superred/core/
     trajectory.py      -- Trajectory, FilteredTrajectory, ReadableTrajectory,
                           EmitFn, get_domain
     evaluation.py      -- Score, EvaluationResult
-    security_domain.py -- SecurityDomainTag, SecurityDomain
+    security_domain.py -- SecurityDomainTag, SecurityDomain, Scope, scope_includes
 ```
 
 ## Detailed Component Documentation

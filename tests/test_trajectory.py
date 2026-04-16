@@ -214,7 +214,7 @@ class TestTrajectory:
 
 class TestFilteredTrajectory:
     def test_snapshot_filters_by_scope(self) -> None:
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         t.emit(_obs("child", _CHILD))
         t.emit(_obs("sibling", _SIBLING))
         snap = t.filtered.snapshot()
@@ -222,18 +222,18 @@ class TestFilteredTrajectory:
         assert snap[0].content == "child"
 
     def test_snapshot_includes_descendants(self) -> None:
-        t = Trajectory(filtered_scope=_PARENT)
+        t = Trajectory(filtered_scope=frozenset({_PARENT}))
         t.emit(_obs("child", _CHILD))
         t.emit(_obs("sibling", _SIBLING))
         assert len(t.filtered.snapshot()) == 2
 
     def test_snapshot_empty_when_nothing_in_scope(self) -> None:
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         t.emit(_obs("x", _SIBLING))
         assert t.filtered.snapshot() == []
 
     def test_drain_returns_new_in_scope_entries(self) -> None:
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         t.emit(_obs("a", _CHILD))
         t.emit(_obs("b", _SIBLING))
 
@@ -253,7 +253,7 @@ class TestFilteredTrajectory:
 
     def test_drain_cursor_independent_of_underlying(self) -> None:
         """FilteredTrajectory's drain cursor is independent of Trajectory's."""
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         t.emit(_obs("a", _CHILD))
 
         # Drain the underlying trajectory
@@ -263,13 +263,13 @@ class TestFilteredTrajectory:
 
     def test_no_emit_or_close(self) -> None:
         """FilteredTrajectory is read-only — no emit() or close()."""
-        t = Trajectory(filtered_scope=_TAG)
+        t = Trajectory(filtered_scope=frozenset({_TAG}))
         assert not hasattr(t.filtered, "emit")
         assert not hasattr(t.filtered, "close")
 
     def test_no_trajectory_reference(self) -> None:
         """FilteredTrajectory holds no reference to the underlying Trajectory."""
-        t = Trajectory(filtered_scope=_TAG)
+        t = Trajectory(filtered_scope=frozenset({_TAG}))
         filtered = t.filtered
         for attr in dir(filtered):
             val = getattr(filtered, attr)
@@ -281,7 +281,7 @@ class TestFilteredTrajectory:
 
     def test_thread_safety(self) -> None:
         """Concurrent drain() calls on FilteredTrajectory are safe."""
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         for i in range(100):
             t.emit(_obs(str(i), _CHILD))
         results: list[list[object]] = []
@@ -303,13 +303,13 @@ class TestFilteredTrajectory:
 
     def test_empty_trajectory(self) -> None:
         """FilteredTrajectory on an empty trajectory returns empty results."""
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         assert t.filtered.snapshot() == []
         assert t.filtered.drain() == []
 
     def test_scope_matches_everything(self) -> None:
         """Parent scope includes all descendants."""
-        t = Trajectory(filtered_scope=_PARENT)
+        t = Trajectory(filtered_scope=frozenset({_PARENT}))
         t.emit(_obs("child", _CHILD))
         t.emit(_obs("sibling", _SIBLING))
         t.emit(_obs("parent", _PARENT))
@@ -317,7 +317,7 @@ class TestFilteredTrajectory:
 
     def test_live_updates_visible(self) -> None:
         """Entries emitted after construction are pushed to filtered view."""
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         assert t.filtered.snapshot() == []
 
         t.emit(_obs("new", _CHILD))
@@ -332,7 +332,7 @@ class TestFilteredTrajectory:
 
     def test_concurrent_emit_and_filtered_reads(self) -> None:
         """Thread safety: concurrent emit() and filtered snapshot()/drain()."""
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
         n_emitters = 5
         n_per_emitter = 100
         barrier = threading.Barrier(n_emitters + 1)
@@ -359,7 +359,7 @@ class TestFilteredTrajectory:
 
     def test_event_response_domain_derived_from_event(self) -> None:
         """EventResponse domain is derived from its event's domain for filtering."""
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
 
         ctrl = Controllable(name="c", security_domain=_CHILD)
         event = ControllablePreCallEvent(controllable=ctrl, request="hi")
@@ -375,7 +375,7 @@ class TestFilteredTrajectory:
 
     def test_out_of_scope_event_response_excluded(self) -> None:
         """EventResponse for out-of-scope event is excluded from filtered view."""
-        t = Trajectory(filtered_scope=_CHILD)
+        t = Trajectory(filtered_scope=frozenset({_CHILD}))
 
         ctrl = Controllable(name="c", security_domain=_SIBLING)
         event = ControllablePreCallEvent(controllable=ctrl, request="hi")

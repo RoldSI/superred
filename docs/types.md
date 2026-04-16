@@ -281,4 +281,12 @@ Immutable after construction via `__setattr__`/`__delattr__` overrides.
 - `roots` — tags with no parent.
 
 **Methods**:
-- `distinct_combinations()` — generates all antichains (subsets where no tag is an ancestor of another) as a Cartesian product across independent trees. This is the set of distinct security-domain scopes to test. Includes the empty set.
+- `distinct_combinations()` — generates all antichains (subsets where no tag is an ancestor of another) as a Cartesian product across independent trees. Returns `list[frozenset[SecurityDomainTag]]` (i.e., `list[Scope]`). This is the set of distinct security-domain scopes to test. Includes the empty set.
+
+### Scope (type alias)
+
+`Scope = frozenset[SecurityDomainTag]` — a set of tags representing a multi-tag attack surface scope. The controller uses scopes to filter all optimizer inputs. `scope_includes(scope, tag)` returns `True` if any tag in the scope includes the target tag (via `SecurityDomainTag.includes()`).
+
+### scope_includes (function)
+
+`scope_includes(scope: Scope, tag: SecurityDomainTag) -> bool` — helper that checks whether a security domain tag falls within a scope. Returns `True` if `any(s.includes(tag) for s in scope)`.
