@@ -101,11 +101,16 @@ async def on_event(self, event):
         pass
 
     if isinstance(event, RunEndEvent):
-        # Read what happened in this run
-        entries = event.trajectory.snapshot()
-        for entry in entries:
-            if isinstance(entry, LogEvent):
-                print(f"  [{entry.label}]: {entry.content}")
+        # Read what happened in this run via self.current_trajectory
+        if self.current_trajectory is not None:
+            entries = self.current_trajectory.snapshot()
+            for entry in entries:
+                if isinstance(entry, LogEvent):
+                    print(f"  [{entry.label}]: {entry.content}")
+
+        # Read feedback directly from the event
+        if event.evaluation is not None:
+            print(f"Score: {event.evaluation.primary_score.value}")
 
         # Past runs are available too
         for past in self.past_trajectories:
@@ -119,23 +124,30 @@ The trajectories you see are **filtered** — you only see entries within your s
 
 ## Reading Feedback
 
-After each run, the controller emits a `FeedbackEvent` to the trajectory. On subsequent runs, you can read it:
+After each run, the controller sends a `RunEndEvent` with the evaluation result. You can read feedback directly from the event, or from past trajectories (since `RunEndEvent` is persisted to the trajectory):
 
 ```python
-from superred.core.types.event import FeedbackEvent
-
 async def on_event(self, event):
+    if isinstance(event, RunEndEvent):
+        # Read feedback directly from the event:
+        if event.evaluation is not None:
+            score = event.evaluation.primary_score.value
+            success = event.evaluation.success
+            print(f"This run: score={score}, success={success}")
+        return RunEndResponse(event=event, done=False)
+
     if isinstance(event, RunStartEvent) and self.past_trajectories:
+        # Or read from past trajectories:
         last_traj = self.past_trajectories[-1]
         for entry in last_traj.snapshot():
-            if isinstance(entry, FeedbackEvent):
+            if isinstance(entry, RunEndEvent) and entry.evaluation is not None:
                 score = entry.evaluation.primary_score.value
                 success = entry.evaluation.success
                 print(f"Last run: score={score}, success={success}")
         return EventResponse(event=event)
 ```
 
-Note: feedback is added to the trajectory AFTER `RunEndEvent`. So you read the previous run's feedback at the next `RunStartEvent`, not at `RunEndEvent`.
+When `include_feedback=True` (the default), `RunEndEvent.evaluation` carries the filtered evaluation. When `include_feedback=False`, `evaluation` is `None`.
 
 ## Example: Fixed Prompt List
 
@@ -197,7 +209,7 @@ class AdaptiveOptimizer(Optimizer):
             if self.past_trajectories:
                 last = self.past_trajectories[-1]
                 for entry in last.snapshot():
-                    if isinstance(entry, FeedbackEvent):
+                    if isinstance(entry, RunEndEvent) and entry.evaluation is not None:
                         score = entry.evaluation.primary_score.value
                         if score > self._best_score:
                             self._best_score = score

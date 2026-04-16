@@ -89,10 +89,6 @@ The optimizer's injection for a controllable. Fields: `value: str`, `controllabl
 
 Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Fields: `controllable: Controllable`, plus the inherited `event`.
 
-### FeedbackEvent (extends Event)
-
-Emitted by the controller after evaluation to deliver filtered feedback to the trajectory. Field: `evaluation: EvaluationResult`. The controller sets `security_domain` to a tag from the active scope so the event passes trajectory validation and is visible in the optimizer's filtered trajectory. Emission is controlled by `Controller(include_feedback=True)` (the default). The controller filters `sub_scores` by the active security domain scope before constructing this event.
-
 ### LogEvent (extends Event)
 
 One-way logging event emitted by the target to record information in the trajectory. Fields: `content: Any`, `label: str = ""`. Used instead of the former `TrajectoryEntry` for target-side logging (e.g. model requests, model responses). The target sets the `security_domain` on the event directly.
@@ -103,7 +99,7 @@ Signals the start of a new target run. Field: `trajectory: ReadableTrajectory`. 
 
 ### RunEndEvent (extends Event)
 
-Signals the end of a target run. Sent after evaluation and `FeedbackEvent` emission. Field: `evaluation: EvaluationResult | None` (default `None`). The optimizer can read the evaluation directly from this event, or from the `FeedbackEvent` on the trajectory. The optimizer's `_dispatch` archives the current trajectory on this event.
+Signals the end of a target run. Sent after evaluation. Field: `evaluation: EvaluationResult | None` (default `None`). Persisted to the trajectory (unlike `RunStartEvent`). The `security_domain` is set from the active scope (required for trajectory validation). When `Controller(include_feedback=True)` (the default), `evaluation` carries the filtered `EvaluationResult`; when `include_feedback=False`, `evaluation` is `None`. The optimizer reads feedback directly from `event.evaluation`, or from past trajectories. The optimizer's `_dispatch` archives the current trajectory on this event.
 
 ### RunEndResponse (extends EventResponse)
 
@@ -153,7 +149,7 @@ Built-in middleware that filters controllable events by security domain. Events 
 
 ### trajectory_recorder(trajectory)
 
-Built-in middleware that records events and responses directly to the trajectory. Takes only a `trajectory` parameter (no scope). Records `Event` and `EventResponse` objects as they pass through. Lifecycle events (`RunStartEvent`, `RunEndEvent`) are NOT persisted.
+Built-in middleware that records events and responses directly to the trajectory. Takes only a `trajectory` parameter (no scope). Records `Event` and `EventResponse` objects as they pass through. `RunStartEvent` is NOT persisted. `RunEndEvent` IS persisted (it carries the evaluation result and has `security_domain` set from the scope).
 
 **Design decision**: Middleware is function composition, not channel pipes. Each middleware wraps the callback — no background tasks, no extra channels, no sentinel cleanup. This gives the composability of pipeline architectures with zero overhead.
 
@@ -206,7 +202,7 @@ No `emit()` or `close()` — read-only. Uses `__slots__` to prevent `__dict__`.
 
 ### Score (frozen)
 
-A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags each score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope before emitting a `FeedbackEvent` to the trajectory.
+A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags each score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope before attaching the evaluation to `RunEndEvent`.
 
 ### EvaluationResult (frozen)
 
@@ -216,7 +212,7 @@ The result of evaluating one run:
 - `sub_scores: dict[str, Score]` — named sub-scores for multi-objective analysis (default empty).
 - `rationale: str` — optional free-text explanation from the evaluator (default empty).
 
-**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each score carries a `security_domain` — the controller filters sub_scores by the active scope before emitting a `FeedbackEvent` to the trajectory, so the optimizer only sees scores within its security domain. `primary_score` is always included (the main optimization signal).
+**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each score carries a `security_domain` — the controller filters sub_scores by the active scope before attaching the evaluation to `RunEndEvent`, so the optimizer only sees scores within its security domain. `primary_score` is always included (the main optimization signal).
 
 ## Security Domains (`security_domain.py`)
 

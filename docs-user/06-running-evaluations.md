@@ -119,8 +119,8 @@ The Controller records all events and responses directly in the trajectory as `E
 from superred.core.types.event import (
     ControllableInjection,
     ControllablePreCallEvent,
-    FeedbackEvent,
     LogEvent,
+    RunEndEvent,
 )
 
 for run in tr.runs:
@@ -132,11 +132,11 @@ for run in tr.runs:
             print(f"Injection: {entry.value}")
         elif isinstance(entry, LogEvent):
             print(f"Log [{entry.label}]: {entry.content}")
-        elif isinstance(entry, FeedbackEvent):
+        elif isinstance(entry, RunEndEvent) and entry.evaluation is not None:
             print(f"Feedback: {entry.evaluation.primary_score.value}")
 ```
 
-Controllable events and their responses are recorded in the trajectory. Lifecycle events (`RunStartEvent`, `RunEndEvent`) flow through the channel only and are NOT stored in the trajectory.
+Controllable events and their responses are recorded in the trajectory. `RunEndEvent` is also persisted to the trajectory (it carries the evaluation result). `RunStartEvent` flows through the channel only and is NOT stored in the trajectory.
 
 ## Multiple Tasks
 

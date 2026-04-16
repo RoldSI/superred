@@ -29,7 +29,6 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    FeedbackEvent,
     ObservableEvent,
     RunEndEvent,
     RunEndResponse,
@@ -881,14 +880,14 @@ class TestEventsFrozenMutations:
         with pytest.raises(AttributeError):
             r.done = False  # type: ignore[misc]
 
-    def test_feedback_event_is_frozen(self) -> None:
-        """Kills mutants 232/233."""
-        fe = FeedbackEvent(
+    def test_run_end_event_is_frozen(self) -> None:
+        """Kills mutants for RunEndEvent frozen=True."""
+        re = RunEndEvent(
             evaluation=EvaluationResult(success=False, primary_score=Score(0.0)),
             security_domain=EXTERNAL_TAG,
         )
         with pytest.raises(AttributeError):
-            fe.security_domain = None  # type: ignore[misc]
+            re.security_domain = None  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

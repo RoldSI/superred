@@ -15,7 +15,6 @@ from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
     ControllablePreCallEvent,
-    FeedbackEvent,
     ObservableEvent,
     RunEndEvent,
     RunEndResponse,
@@ -391,7 +390,7 @@ class TestParallelTarget:
 
 
 class TestFeedbackInTrajectory:
-    async def test_feedback_entry_appended(self) -> None:
+    async def test_run_end_persisted_with_evaluation(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
             target=StubTarget(),
@@ -400,9 +399,77 @@ class TestFeedbackInTrajectory:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
-        assert len(feedback) == 1
-        assert feedback[0].evaluation.primary_score.value == 0.5
+        run_ends = [e for e in entries if isinstance(e, RunEndEvent)]
+        assert len(run_ends) == 1
+        assert run_ends[0].evaluation is not None
+        assert run_ends[0].evaluation.primary_score.value == 0.5
+
+    async def test_run_end_has_security_domain_from_scope(self) -> None:
+        """RunEndEvent persisted to trajectory gets security_domain from scope."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
+        run_ends = [e for e in entries if isinstance(e, RunEndEvent)]
+        assert len(run_ends) == 1
+        assert run_ends[0].security_domain in EXTERNAL_SCOPE
+
+    async def test_run_end_visible_in_filtered_trajectory(self) -> None:
+        """RunEndEvent is visible in the optimizer's filtered trajectory."""
+        seen_run_end_on_trajectory = False
+
+        class _InspectingOptimizer(StubOptimizer):
+            async def on_event(self, event: Event) -> EventResponse:
+                nonlocal seen_run_end_on_trajectory
+                if isinstance(event, RunEndEvent):
+                    if self.current_trajectory is not None:
+                        for entry in self.current_trajectory.snapshot():
+                            if isinstance(entry, RunEndEvent):
+                                seen_run_end_on_trajectory = True
+                    return RunEndResponse(event=event, done=True)
+                return await super().on_event(event)
+
+        controller = Controller(
+            optimizer_factory=lambda: _InspectingOptimizer(),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert seen_run_end_on_trajectory
+
+    async def test_include_feedback_false_sends_evaluation_none(self) -> None:
+        """When include_feedback=False, RunEndEvent.evaluation is None."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask(score=0.9)]),
+            llm_configs=[STUB_LLM_CONFIG],
+            include_feedback=False,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
+        run_ends = [e for e in entries if isinstance(e, RunEndEvent)]
+        assert len(run_ends) == 1
+        assert run_ends[0].evaluation is None
+
+    async def test_include_feedback_false_still_persists_run_end(self) -> None:
+        """RunEndEvent is persisted even when include_feedback=False."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            include_feedback=False,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
+        run_ends = [e for e in entries if isinstance(e, RunEndEvent)]
+        assert len(run_ends) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +979,7 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
 
         # One feedback entry at the scope level
         assert len(feedback) == 1
@@ -937,7 +1004,7 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run(scopes=[ROOT_SCOPE])
         entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
         fb = feedback[0]
         assert "external_asr" in fb.evaluation.sub_scores
         assert "internal_leak" in fb.evaluation.sub_scores
@@ -955,7 +1022,7 @@ class TestScopedScoreFiltering:
                     if run_count == 2:
                         for past in self.past_trajectories:
                             for entry in past.snapshot():
-                                if isinstance(entry, FeedbackEvent):
+                                if isinstance(entry, RunEndEvent) and entry.evaluation is not None:
                                     sub_score_names_seen.extend(
                                         entry.evaluation.sub_scores.keys(),
                                     )
@@ -992,7 +1059,7 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
         fb = feedback[0]
         # primary_score domain is ROOT, scope is EXTERNAL — still included
         assert fb.evaluation.primary_score.value == 0.9
@@ -1024,7 +1091,7 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
         fb = feedback[0]
         assert fb.evaluation.sub_scores == {}
         # primary_score and success still present
@@ -1054,7 +1121,7 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
         fb = feedback[0]
         assert fb.evaluation.success is False
         assert fb.evaluation.rationale == "Attack partially succeeded"
@@ -1089,7 +1156,7 @@ class TestScopedScoreFiltering:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         entries = _first_tmr(result).task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
         fb = feedback[0]
         # None-domain sub_score always included
         assert "always_visible" in fb.evaluation.sub_scores

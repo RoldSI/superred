@@ -136,19 +136,17 @@ if isinstance(event, RunEndEvent):
             ...
 ```
 
-**2. Evaluation and FeedbackEvent emitted BEFORE RunEndEvent**
+**2. RunEndEvent is now persisted to the trajectory**
 
-The controller now evaluates the run and emits `FeedbackEvent` to the trajectory *before* sending `RunEndEvent` to the optimizer. Previously, `RunEndEvent` was sent first, then evaluation happened. This means the optimizer can read feedback from the trajectory at `RunEndEvent` time.
-
-New order: `target.run()` → `evaluate()` → `FeedbackEvent` → `RunEndEvent` → `trajectory.close()`.
+`RunEndEvent` is persisted to the trajectory (previously it was not). Its `security_domain` is set from the active scope (required for trajectory validation). Evaluation happens *before* `RunEndEvent` is sent. The order is: `target.run()` → `evaluate()` → `RunEndEvent` (with evaluation) → `trajectory.close()`.
 
 **3. Controller `include_feedback` flag**
 
-`Controller.__init__` accepts `include_feedback: bool = True`. When `True`, the controller emits a `FeedbackEvent` to the trajectory after evaluation, with `security_domain` set to a tag from the active scope. Set to `False` to skip `FeedbackEvent` emission entirely.
+`Controller.__init__` accepts `include_feedback: bool = True`. When `True`, `RunEndEvent.evaluation` carries the filtered `EvaluationResult`; when `False`, `evaluation` is `None`. The optimizer reads feedback from `event.evaluation` on `RunEndEvent`, or from past trajectories (since `RunEndEvent` is persisted).
 
-**Impact**: Optimizers that accessed `RunEndEvent.trajectory` must switch to `self.current_trajectory` or `event.evaluation`. Optimizers that handled `FeedbackEvent` in `on_event()` should remove that handler — feedback no longer flows through the channel. Read it from `event.evaluation` on `RunEndEvent` or from the trajectory instead.
+**Impact**: Optimizers that accessed `RunEndEvent.trajectory` must switch to `self.current_trajectory` or `event.evaluation`. `FeedbackEvent` has been removed entirely — remove any imports or `isinstance` checks for it. Read feedback from `event.evaluation` on `RunEndEvent` or from the trajectory instead.
 
 **Migration**:
 1. Replace `event.trajectory` on `RunEndEvent` with `self.current_trajectory` or `event.evaluation`.
-2. Remove `FeedbackEvent` handlers from `on_event()` — they are dead code.
-3. To read feedback, use `event.evaluation` on `RunEndEvent` or query the trajectory.
+2. Remove all `FeedbackEvent` imports and handlers — the type no longer exists.
+3. To read feedback, use `event.evaluation` on `RunEndEvent` or query past trajectories.

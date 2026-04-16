@@ -13,7 +13,7 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    FeedbackEvent,
+
     ObservableEvent,
     RunEndEvent,
     RunEndResponse,
@@ -49,7 +49,6 @@ __all__ = [
     "EventHandler",
     "EventResponse",
     "EventResponseHandler",
-    "FeedbackEvent",
     "FilteredTrajectory",
     "Goal",
     "LLMConfig",

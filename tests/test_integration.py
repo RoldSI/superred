@@ -23,7 +23,6 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    FeedbackEvent,
     ObservableEvent,
     RunEndEvent,
     RunEndResponse,
@@ -230,7 +229,7 @@ class AdaptiveOptimizer(Optimizer):
             # Check feedback from trajectory
             if self.current_trajectory is not None:
                 for entry in self.current_trajectory.snapshot():
-                    if isinstance(entry, FeedbackEvent):
+                    if isinstance(entry, RunEndEvent) and entry.evaluation is not None:
                         score = entry.evaluation.primary_score.value
                         self._best_score = max(self._best_score, score)
 
@@ -433,8 +432,8 @@ class TestMultiTaskClaim:
 @pytest.mark.integration
 class TestFeedbackFlowsToOptimizer:
     """This test verifies the complete feedback loop: evaluation result is
-    appended to trajectory as FeedbackEvent, and the optimizer can read it
-    from the trajectory on subsequent runs."""
+    persisted on the RunEndEvent in the trajectory, and the optimizer can
+    read it from the trajectory on subsequent runs."""
 
     async def test_optimizer_reads_feedback_from_trajectory(self) -> None:
         target = RAGTarget()
@@ -454,9 +453,11 @@ class TestFeedbackFlowsToOptimizer:
         tmr = _first_tmr(result)
         for run_result in tmr.task_results[0].runs:
             entries = run_result.trajectory.snapshot()
-            feedback_entries = [e for e in entries if isinstance(e, FeedbackEvent)]
-            assert len(feedback_entries) == 1
-            fb = feedback_entries[0]
+            run_end_entries = [
+                e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None
+            ]
+            assert len(run_end_entries) == 1
+            fb = run_end_entries[0]
             assert isinstance(fb.evaluation, EvaluationResult)
             assert fb.security_domain is not None
 
@@ -484,9 +485,9 @@ class TestTrajectoryDataIntegrity:
         entries = trajectory.snapshot()
 
         # Trajectory has controllable events/responses,
-        # target entries (ObservableEvent), and FeedbackEvent
+        # target entries (ObservableEvent), and RunEndEvent with evaluation
         observable_events = [e for e in entries if isinstance(e, ObservableEvent)]
-        feedback = [e for e in entries if isinstance(e, FeedbackEvent)]
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
         ctrl_events = [e for e in entries if isinstance(e, ControllablePreCallEvent)]
 
         assert len(observable_events) >= 2  # at least model_request + model_response
@@ -661,7 +662,7 @@ class TestDomainFilteredOptimizerInputs:
                 if isinstance(event, RunEndEvent):
                     if self.current_trajectory is not None:
                         for entry in self.current_trajectory.snapshot():
-                            if isinstance(entry, FeedbackEvent):
+                            if isinstance(entry, RunEndEvent) and entry.evaluation is not None:
                                 feedback_scores.append(
                                     entry.evaluation.primary_score.value,
                                 )

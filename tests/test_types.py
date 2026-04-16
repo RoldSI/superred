@@ -1,4 +1,4 @@
-"""Unit tests for core value types: Goal, Score, EvaluationResult, FeedbackEvent,
+"""Unit tests for core value types: Goal, Score, EvaluationResult,
 Controllable, Observable, ObservableValue, ConfigSpec, QuerySpec, QueryParam,
 and Event hierarchy.
 
@@ -21,7 +21,6 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    FeedbackEvent,
     ObservableEvent,
     RunEndEvent,
     RunEndResponse,
@@ -155,56 +154,6 @@ class TestObservableEvent:
         obs = Observable(name="x", security_domain=tag)
         e = ObservableEvent(observable=obs, content="hello")
         assert e.security_domain is tag
-
-
-# ---------------------------------------------------------------------------
-# FeedbackEvent
-# ---------------------------------------------------------------------------
-
-
-class TestFeedbackEvent:
-    def test_wraps_evaluation(self) -> None:
-        tag = SecurityDomainTag("ext")
-        ev = EvaluationResult(
-            success=True,
-            primary_score=Score(value=1.0, security_domain=tag),
-        )
-        fb = FeedbackEvent(evaluation=ev)
-        assert fb.evaluation is ev
-
-    def test_no_default_security_domain(self) -> None:
-        """FeedbackEvent does not auto-derive security_domain."""
-        ev = EvaluationResult(
-            success=True,
-            primary_score=Score(value=1.0),
-        )
-        fb = FeedbackEvent(evaluation=ev)
-        assert fb.security_domain is None
-
-    def test_explicit_security_domain_preserved(self) -> None:
-        """Explicit security_domain is preserved on FeedbackEvent."""
-        tag = SecurityDomainTag("custom")
-        ev = EvaluationResult(
-            success=True,
-            primary_score=Score(value=1.0),
-        )
-        fb = FeedbackEvent(evaluation=ev, security_domain=tag)
-        assert fb.security_domain is tag
-
-    def test_frozen(self) -> None:
-        """FeedbackEvent is a frozen dataclass (inherits from Event)."""
-        tag = SecurityDomainTag("ext")
-        ev1 = EvaluationResult(
-            success=True,
-            primary_score=Score(value=1.0, security_domain=tag),
-        )
-        ev2 = EvaluationResult(
-            success=False,
-            primary_score=Score(value=0.0, security_domain=tag),
-        )
-        fb = FeedbackEvent(evaluation=ev1)
-        with pytest.raises(FrozenInstanceError):
-            fb.evaluation = ev2  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

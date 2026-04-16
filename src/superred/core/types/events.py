@@ -120,25 +120,7 @@ class ControllableNoInjection(EventResponse):
     controllable: Controllable
 
 
-# -- Feedback event ----------------------------------------------------------
-
-
-@dataclass(frozen=True, kw_only=True)
-class FeedbackEvent(Event):
-    """Evaluation feedback appended by the controller after each run.
-
-    The controller emits this event to the trajectory when
-    ``include_feedback=True`` (the default).  The caller must supply
-    a ``security_domain`` so the event passes trajectory validation.
-
-    Attributes:
-        evaluation: The (possibly filtered) evaluation result.
-    """
-
-    evaluation: EvaluationResult
-
-
-# -- Run lifecycle events (channel only, NOT persisted to trajectory) --------
+# -- Run lifecycle events ----------------------------------------------------
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -161,16 +143,21 @@ class RunStartEvent(Event):
 class RunEndEvent(Event):
     """Signals the end of a target run.
 
-    Sent by the controller after evaluation and feedback emission.
-    NOT persisted to the trajectory.
+    Sent by the controller after evaluation.  Persisted to the trajectory
+    so the optimizer can read feedback from past runs.
     Valid responses: :class:`RunEndResponse`.
 
-    The optimizer can read the evaluation result directly from this
-    event, or from the :class:`FeedbackEvent` on the trajectory.
+    When ``include_feedback=True`` (the default), ``evaluation`` carries
+    the scope-filtered evaluation result.  When ``False``, ``evaluation``
+    is ``None`` — the event is still persisted (the optimizer needs it
+    for lifecycle) but carries no feedback data.
+
+    The caller must set ``security_domain`` so the event passes trajectory
+    validation.
 
     Attributes:
         evaluation: The (scope-filtered) evaluation result for this run,
-            or ``None`` if evaluation was not performed.
+            or ``None`` when feedback is disabled.
     """
 
     evaluation: EvaluationResult | None = None

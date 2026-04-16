@@ -25,7 +25,7 @@ controller = Controller(
     security_claim=claim,
     llm_configs=[llm_config],       # optional — omit for non-LLM optimizers
     max_runs_per_task=100,          # safety limit, default 100
-    include_feedback=True,          # emit FeedbackEvent to trajectory (default True)
+    include_feedback=True,          # populate RunEndEvent.evaluation (default True)
 )
 
 # Run with explicit scopes
@@ -64,8 +64,8 @@ For each (scope, llm_config) combination:
      - Create `Trajectory(filtered_scope=scope)`. Access `trajectory.filtered` for optimizer's view.
      - Send `RunStartEvent(filtered_trajectory)` through channel — optimizer gets filtered view.
      - `target.run(emit, send_event)` — target emits `LogEvent` instances via `emit(event)`; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records all events and responses directly to the trajectory.
-     - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores). When `include_feedback=True` (default), emits a `FeedbackEvent(evaluation=filtered_eval, security_domain=<scope_tag>)` to the trajectory.
-     - Send `RunEndEvent(evaluation=filtered_eval)` through channel — optimizer can read feedback from this event or from the trajectory. Check `RunEndResponse.done`.
+     - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores).
+     - Send `RunEndEvent(evaluation=filtered_eval, security_domain=<scope_tag>)` through channel — `RunEndEvent` is persisted to the trajectory. When `include_feedback=True` (default), `evaluation` carries the filtered result; when `False`, `evaluation` is `None`. Check `RunEndResponse.done`.
      - Close the trajectory.
      - `target.cleanup()` — reset target state for next run.
      - Track best score, success across runs.
@@ -81,7 +81,7 @@ For each (scope, llm_config) combination:
 - `_iterate_threat_models(scopes, llm_configs)` — iterates all (scope, llm_config) combinations.
 - `_iterate_tasks(scope, llm_config)` — manages all tasks for one threat model.
 - `_run_task(task, scope, llm_config)` — manages the full lifecycle for one task: configure, create fresh optimizer, initialize, build middleware stack, run loop, collect results.
-- `_run_single(task, channel, scope, run_number)` — executes one iteration: RunStartEvent → target.run → evaluate → FeedbackEvent → RunEndEvent → close trajectory. Returns `(trajectory, evaluation, done)`.
+- `_run_single(task, channel, scope, run_number)` — executes one iteration: RunStartEvent → target.run → evaluate → RunEndEvent (with evaluation) → close trajectory. Returns `(trajectory, evaluation, done)`.
 
 The `send_event` callback passed to `target.run` is built by composing middleware onto `channel.send`:
 ```python
@@ -101,7 +101,7 @@ The controller enforces the security domain scope across **all optimizer inputs*
 2. **Observables**: Filtered with `scope_includes(scope, o.observable.security_domain)` before `optimizer.initialize()`. Out-of-scope observables are never exposed to the optimizer.
 3. **Events**: `ControllablePreCallEvent` and `ControllablePostCallEvent` for out-of-scope controllables are answered with `ControllableNoInjection` without reaching the optimizer. Implemented as the `security_domain_filter` middleware composed onto `channel.send`.
 4. **Trajectory**: The optimizer receives a `FilteredTrajectory` (via `RunStartEvent`) that only exposes items within the security domain scope.
-5. **Feedback**: Each `Score` in the `EvaluationResult` carries a `security_domain`. The controller filters `sub_scores` to only include in-scope scores. When `include_feedback=True` (default), a `FeedbackEvent` is emitted to the trajectory with `security_domain` set to a tag from the scope, making it visible in the filtered trajectory. `primary_score`, `success`, and `rationale` are always included (the optimizer needs the main optimization signal). The `RunEndEvent` also carries the filtered evaluation directly, so the optimizer can read it without querying the trajectory.
+5. **Feedback**: Each `Score` in the `EvaluationResult` carries a `security_domain`. The controller filters `sub_scores` to only include in-scope scores. The `RunEndEvent` carries the filtered evaluation directly (when `include_feedback=True`, the default) and is persisted to the trajectory with `security_domain` set to a tag from the scope. `primary_score`, `success`, and `rationale` are always included (the optimizer needs the main optimization signal). The optimizer reads feedback from `event.evaluation` on `RunEndEvent`, or from past trajectories.
 
 A `Scope` is a `frozenset[SecurityDomainTag]`. `scope_includes(scope, tag)` returns `True` if ANY tag in the scope includes the target tag. This allows testing specific security boundaries — scoping to `{external_tag}` tests only external-facing surfaces, while scoping to `{root_tag}` tests everything.
 
@@ -112,9 +112,9 @@ There is no separate event log. The `trajectory_recorder` middleware records all
 - **Controllable events** — `ControllablePreCallEvent`, `ControllablePostCallEvent`.
 - **Controllable responses** — `ControllableInjection`, `ControllableNoInjection`.
 - **Log events** — `LogEvent` emitted by the target (model requests, model responses, etc.).
-- **Feedback** — `FeedbackEvent` emitted by the controller after evaluation.
+- **RunEndEvent** — persisted to the trajectory by the controller after evaluation. Carries `evaluation: EvaluationResult | None` and has `security_domain` set from the scope.
 
-The trajectory IS the event log. Lifecycle events (`RunStartEvent`, `RunEndEvent`) are NOT persisted to the trajectory — they carry no additional information and always appear at fixed positions. To inspect events and responses for a run, query the trajectory items by type.
+The trajectory IS the event log. `RunStartEvent` is NOT persisted to the trajectory — it carries no additional information and always appears at a fixed position. `RunEndEvent` IS persisted because it carries the evaluation result. To inspect events and responses for a run, query the trajectory items by type.
 
 ## Result types
 

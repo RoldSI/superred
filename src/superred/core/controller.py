@@ -33,7 +33,7 @@ from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.llm import LLMClient
 from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
 from superred.core.types.evaluation import EvaluationResult, Score
-from superred.core.types.events import FeedbackEvent, RunEndEvent, RunEndResponse, RunStartEvent
+from superred.core.types.events import RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
 from superred.core.types.security_domain import Scope, scope_includes
 from superred.core.types.trajectory import Trajectory
@@ -207,12 +207,24 @@ class Controller:
         self,
         scopes: Sequence[Scope] | None,
     ) -> list[Scope]:
-        """Resolve scopes to test."""
+        """Resolve scopes to test.
+
+        Every scope must be non-empty — an empty scope covers nothing
+        and cannot provide a security domain for trajectory events.
+
+        Raises:
+            ValueError: If any scope is empty.
+        """
         if scopes is not None:
-            return list(scopes)
-        # Default: all non-empty combinations from the target's domain
-        all_combos = self._target.security_domain.distinct_combinations()
-        return [c for c in all_combos if c]
+            resolved = list(scopes)
+        else:
+            # Default: all non-empty combinations from the target's domain
+            all_combos = self._target.security_domain.distinct_combinations()
+            resolved = [c for c in all_combos if c]
+        for s in resolved:
+            if not s:
+                raise ValueError("Scope must not be empty")
+        return resolved
 
     def _resolve_llm_configs(
         self,
@@ -416,14 +428,16 @@ class Controller:
     ) -> tuple[Trajectory, EvaluationResult, bool]:
         """Execute a single optimizer iteration (one target run + evaluation).
 
-        Order: target.run → evaluate → FeedbackEvent → RunEndEvent → close.
-        The optimizer can read the evaluation from RunEndEvent.evaluation
-        or from the FeedbackEvent on the trajectory before deciding ``done``.
+        Order: target.run → evaluate → RunEndEvent (persisted) → close.
+        The optimizer reads the evaluation from RunEndEvent.evaluation
+        (when ``include_feedback=True``) or from the trajectory.
 
         Returns:
             A tuple of (trajectory, evaluation, done) where done is True
             if the optimizer wants to stop.
         """
+        assert scope, "scope must contain at least one tag"
+
         trajectory = Trajectory(filtered_scope=scope)
 
         # Signal run start — optimizer gets filtered view
@@ -441,9 +455,9 @@ class Controller:
         # -- Evaluate --
         evaluation = await task.evaluate(trajectory, self._target)
 
-        # Filter sub_scores to only include in-scope scores, then append
-        # feedback to trajectory.  primary_score, success, and rationale
-        # are always included (the optimizer needs the main signal).
+        # Filter sub_scores to only include in-scope scores.
+        # primary_score, success, and rationale are always included
+        # (the optimizer needs the main signal).
         filtered_sub = {
             k: v
             for k, v in evaluation.sub_scores.items()
@@ -455,15 +469,16 @@ class Controller:
             sub_scores=filtered_sub,
             rationale=evaluation.rationale,
         )
-        if self._include_feedback and scope:
-            feedback_tag = next(iter(scope))
-            trajectory.emit(
-                FeedbackEvent(evaluation=filtered_eval, security_domain=feedback_tag)
-            )
 
-        # Signal run end — optimizer can read evaluation from this event
-        # or from the FeedbackEvent on the trajectory.
-        end_response = await channel.send(RunEndEvent(evaluation=filtered_eval))
+        # RunEndEvent is persisted to the trajectory.
+        # include_feedback controls whether evaluation data is attached.
+        run_end_eval = filtered_eval if self._include_feedback else None
+        run_end = RunEndEvent(
+            evaluation=run_end_eval,
+            security_domain=next(iter(scope)),
+        )
+        trajectory.emit(run_end)
+        end_response = await channel.send(run_end)
 
         trajectory.close()
 

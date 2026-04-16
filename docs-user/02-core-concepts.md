@@ -74,9 +74,9 @@ For each task in the security claim, the Controller runs this loop:
       - Target emits entries via emit() and calls send_event() at controllable points
       - Optimizer responds with injections
       - Controller records events/responses as trajectory entries
-   d. Send RunEndEvent to optimizer
+   d. task.evaluate(trajectory, target)  # did the attack work?
+   e. Send RunEndEvent(evaluation) to optimizer
       - Optimizer responds with done=True/False
-   e. task.evaluate(trajectory, target)  # did the attack work?
    f. target.cleanup()                   # reset for next run
 4. optimizer.teardown()
 5. target.teardown()
@@ -98,11 +98,11 @@ The target and optimizer communicate through events:
 Every run produces a **trajectory** - an ordered list of `Event | EventResponse` objects recording what happened. Common event types in the trajectory include:
 
 - `LogEvent` - one-way logging from the target (e.g., model requests, model responses). Has `content` and `label` fields.
-- `FeedbackEvent` - evaluation result emitted by the controller. Has an `evaluation: EvaluationResult` field.
+- `RunEndEvent` - persisted to the trajectory by the controller after evaluation. Has an `evaluation: EvaluationResult | None` field.
 - `ControllablePreCallEvent` / `ControllablePostCallEvent` - controllable events recorded by the controller.
 - `ControllableInjection` / `ControllableNoInjection` - responses to controllable events recorded by the controller.
 
-Lifecycle events (`RunStartEvent`, `RunEndEvent`) are NOT stored in the trajectory.
+`RunStartEvent` is NOT stored in the trajectory. `RunEndEvent` IS stored — it carries the evaluation result.
 
 Each event has a `security_domain` tag (or `None` for events that are always visible regardless of scope). The optimizer sees a **filtered** trajectory that only includes entries within its scope (plus entries with `None` security domain).
 

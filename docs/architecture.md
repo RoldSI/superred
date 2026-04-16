@@ -79,13 +79,15 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
           ii.  target.run(emit, send_event)
                → target emits LogEvent instances via emit(event); send_event bridges to channel with filtering
                → trajectory_recorder middleware records events/responses directly to trajectory
-          iii. channel.send(RunEndEvent(filtered_trajectory))
+          iii. task.evaluate(trajectory, target) → EvaluationResult
+               → controller filters sub_scores by scope
+          iv.  channel.send(RunEndEvent(evaluation=filtered_eval, security_domain=scope_tag))
+               → RunEndEvent is persisted to the trajectory
                → optimizer responds with RunEndResponse(done=True/False)
-          iv.  task.evaluate(trajectory, target) → EvaluationResult
-               → emit FeedbackEvent(evaluation=filtered_eval, security_domain=scope_tag) to trajectory, close it
-          v.   target.cleanup()
+          v.   Close the trajectory
+          vi.  target.cleanup()
                → resets target state for next run
-          vi.  If done=True, break
+          vii. If done=True, break
 
        e. channel.close() → optimizer.run() exits
           await optimizer_task, optimizer.teardown()
@@ -160,7 +162,7 @@ src/superred/core/
     observable.py      -- Observable, ObservableValue
     event.py           -- Event, EventResponse, ControllablePreCallEvent,
                           ControllablePostCallEvent, ControllableInjection,
-                          ControllableNoInjection, FeedbackEvent, LogEvent,
+                          ControllableNoInjection, LogEvent,
                           RunStartEvent, RunEndEvent, RunEndResponse
     trajectory.py      -- Trajectory, FilteredTrajectory, ReadableTrajectory,
                           EmitFn, get_domain

@@ -154,16 +154,17 @@ The optimizer receives a `FilteredTrajectory` — a read-only view that only sho
 # In the optimizer:
 async def on_event(self, event):
     if isinstance(event, RunEndEvent):
-        # event.trajectory is a FilteredTrajectory
-        entries = event.trajectory.snapshot()
-        # Only sees entries tagged with in-scope security domains
+        # self.current_trajectory is a FilteredTrajectory
+        if self.current_trajectory is not None:
+            entries = self.current_trajectory.snapshot()
+            # Only sees entries tagged with in-scope security domains
 ```
 
 The target writes to the full `Trajectory`. The Controller creates the filtered view at trajectory construction time via `Trajectory(filtered_scope=scope)`.
 
 ## Score Filtering
 
-Each `Score` in an `EvaluationResult` has a `security_domain` (`SecurityDomainTag | None`). `None` means always visible. The Controller filters `sub_scores` before writing feedback:
+Each `Score` in an `EvaluationResult` has a `security_domain` (`SecurityDomainTag | None`). `None` means always visible. The Controller filters `sub_scores` before attaching the evaluation to `RunEndEvent`:
 
 ```python
 # Task returns scores at different domains

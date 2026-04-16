@@ -34,7 +34,7 @@ from superred.core.types import (
     EventHandler,
     EventResponse,
     EventResponseHandler,
-    FeedbackEvent,
+
     FilteredTrajectory,
     Goal,
     Observable,
@@ -89,7 +89,6 @@ __all__ = [
     "EventHandler",
     "EventResponse",
     "EventResponseHandler",
-    "FeedbackEvent",
     "FilteredTrajectory",
     "Goal",
     "ObservableEvent",

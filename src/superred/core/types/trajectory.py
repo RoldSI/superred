@@ -3,8 +3,9 @@
 A run produces a trajectory storing :class:`Event` and
 :class:`EventResponse` objects directly. The trajectory is the single
 source of truth for a run — one-way log events from the target,
-controllable events and their responses, and feedback events all live
-here. Lifecycle events (RunStart/RunEnd) are NOT persisted.
+controllable events and their responses, and the :class:`RunEndEvent`
+(which carries evaluation feedback) all live here. :class:`RunStartEvent`
+is NOT persisted.
 
 Each item's security domain is derived via :func:`get_domain`:
 events carry ``security_domain`` directly, responses derive theirs
