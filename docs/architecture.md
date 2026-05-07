@@ -149,6 +149,8 @@ src/superred/core/
   llm.py               -- LLMClient (constrained LLM proxy for optimizers)
   middleware.py         -- Middleware type, compose(), security_domain_filter(),
                           trajectory_recorder()
+  persistence.py       -- per-threat-model JSON serialization (used when the
+                          Controller is given a results_dir; module-private)
   interfaces/
     optimizer.py       -- Optimizer ABC (actor model: run, on_event, _dispatch)
     target.py          -- Target ABC, EventHandler type alias
