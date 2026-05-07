@@ -26,6 +26,7 @@ controller = Controller(
     llm_configs=[llm_config],       # optional — omit for non-LLM optimizers
     max_runs_per_task=100,          # safety limit, default 100
     include_feedback=True,          # populate RunEndEvent.evaluation (default True)
+    results_dir="results/run-1",    # optional — persist one JSON per threat model
 )
 
 # Run with explicit scopes
@@ -175,3 +176,16 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 - **LLM access as threat model parameter**: The model and budget are experiment-level settings, not optimizer choices. The controller creates a constrained `LLMClient` per task and the optimizer cannot escape the configured model/credentials. Budget limits are a fairness measure for comparing optimizer strategies.
 - **Per-task LLM budget**: Each task gets a fresh `LLMClient` with reset counters. This ensures budget fairness when evaluating across multiple tasks and enables per-task budget analysis.
 - **Cumulative usage snapshots**: `RunResult.llm_usage` is cumulative (includes all prior runs) rather than per-run delta. This is more useful for budget-vs-performance curves — each point shows (total_budget_spent, score_at_that_point).
+
+## Persistence (`results_dir`)
+
+When `results_dir` is provided, the controller writes one JSON file per completed threat model to that directory:
+
+- **Filename**: `{scope_tag1.scope_tag2...}__{model}.json` with tags sorted alphabetically. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_configs` is empty, the model segment is `no-llm`.
+- **When**: immediately after each `_iterate_tasks` returns and before the next threat model begins. If a later threat model raises, the already-completed ones are intact on disk.
+- **Atomicity**: each file is written via temp file + `rename`, so a partial write cannot leave a corrupt JSON behind.
+- **Contents**: `version`, `completed_at`, `scope` (sorted tag names), `llm_config` (model + max_cost only), `task_results` (each with the full per-run trajectory, evaluation, and cumulative `llm_usage`), and `skipped_tasks`.
+- **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed — keep credentials out of log/observable payloads.
+- **Collisions**: if a destination file already exists, the writer raises `FileExistsError` rather than overwriting. Pass a per-run subdirectory if you re-run into the same parent.
+
+When `results_dir` is `None` (the default), nothing is written and behavior is unchanged.

@@ -24,6 +24,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from superred.core.channel import EventChannel
 from superred.core.interfaces.optimizer import Optimizer
@@ -32,6 +33,7 @@ from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.llm import LLMClient
 from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
+from superred.core.persistence import write_threat_model_result
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
@@ -137,6 +139,14 @@ class Controller:
             config represents a different attacker model to test.  Optional
             — pass an empty list or omit for non-LLM optimizers.
         max_runs_per_task: Safety limit on runs per task.
+        results_dir: Optional directory for persisted artifacts. When set,
+            each completed threat model is written atomically to
+            ``{results_dir}/{scope}__{model}.json`` immediately after it
+            finishes — so a later threat model that crashes does not lose
+            already-completed ones. Trajectories, evaluations, and
+            cumulative LLM usage per run are included; ``LLMConfig.api_key``
+            and ``api_base`` are not. Trajectory contents are not scrubbed
+            for secrets.
     """
 
     def __init__(
@@ -147,6 +157,7 @@ class Controller:
         llm_configs: Sequence[LLMConfig] | None = None,
         max_runs_per_task: int = 100,
         include_feedback: bool = True,
+        results_dir: str | Path | None = None,
     ) -> None:
         if max_runs_per_task < 1:
             raise ValueError("max_runs_per_task must be at least 1")
@@ -156,6 +167,7 @@ class Controller:
         self._llm_configs: list[LLMConfig] = list(llm_configs) if llm_configs else []
         self._max_runs_per_task = max_runs_per_task
         self._include_feedback = include_feedback
+        self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -247,19 +259,22 @@ class Controller:
         scopes: list[Scope],
         llm_configs: list[LLMConfig],
     ) -> list[ThreatModelResult]:
-        """Iterate all (scope, llm_config) combinations."""
-        results: list[ThreatModelResult] = []
+        """Iterate all (scope, llm_config) combinations.
 
-        if llm_configs:
-            for scope in scopes:
-                for llm_config in llm_configs:
-                    result = await self._iterate_tasks(scope, llm_config)
-                    results.append(result)
-        else:
-            # No LLM configs — iterate scopes only
-            for scope in scopes:
-                result = await self._iterate_tasks(scope, None)
+        After each completed threat model, the result is persisted to
+        ``self._results_dir`` (when configured) before the next one
+        begins. This keeps already-finished threat models safe if a
+        later iteration raises.
+        """
+        results: list[ThreatModelResult] = []
+        config_axis: list[LLMConfig | None] = list(llm_configs) if llm_configs else [None]
+
+        for scope in scopes:
+            for llm_config in config_axis:
+                result = await self._iterate_tasks(scope, llm_config)
                 results.append(result)
+                if self._results_dir is not None:
+                    write_threat_model_result(result, self._results_dir)
 
         return results
 
