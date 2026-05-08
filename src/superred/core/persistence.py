@@ -4,12 +4,24 @@ Module-private. Imported only by :mod:`superred.core.controller`. No
 public re-exports — opting into persistence is a single keyword argument
 on the :class:`Controller` constructor.
 
-Wire format: one JSON file per completed threat model, written
-atomically (temp file + ``rename``) so the on-disk artifact is either
-absent or fully formed. ``LLMConfig`` fields ``api_key`` and
-``api_base`` are explicitly excluded from serialization. Trajectory
-contents are not scrubbed for secrets — the caller is responsible for
-not putting credentials into log/observable payloads.
+Layout (per completed threat model):
+
+* ``{results_dir}/{scope}__{model}.json`` — claim-level summary with
+  one entry per task plus aggregates (mean/max primary score, success
+  count, total LLM usage). Each task entry references its detail file.
+* ``{results_dir}/{scope}__{model}/{NNNNN}__{goal}.json`` — one detail
+  file per task, containing all runs (trajectories, evaluations, LLM
+  usage). Tasks are 1-indexed; the index is zero-padded to 5 digits and
+  the suffix is the sanitized goal description (truncated).
+
+All files are written atomically (temp file + ``rename``). Per-task
+detail files are written first; the claim-level file lands last and
+acts as a completion marker for the threat model.
+
+``LLMConfig`` fields ``api_key`` and ``api_base`` are explicitly
+excluded from serialization. Trajectory contents are not scrubbed for
+secrets — the caller is responsible for not putting credentials into
+log/observable payloads.
 """
 
 from __future__ import annotations
@@ -46,9 +58,10 @@ if TYPE_CHECKING:
     )
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_-]")
+_TASK_FILENAME_MAX_GOAL = 50
 
 
 def _sanitize_segment(s: str) -> str:
@@ -57,7 +70,7 @@ def _sanitize_segment(s: str) -> str:
 
 
 def filename_for(scope: Scope, llm_config: LLMConfig | None) -> str:
-    """Deterministic filename for a (scope, llm_config) threat model.
+    """Deterministic filename for the (scope, llm_config) claim-level file.
 
     Format: ``{sanitized_tag1.sanitized_tag2...}__{sanitized_model}.json``
     with tags sorted alphabetically. ``llm_config is None`` becomes
@@ -66,6 +79,27 @@ def filename_for(scope: Scope, llm_config: LLMConfig | None) -> str:
     scope_part = ".".join(_sanitize_segment(t.name) for t in sorted(scope, key=lambda t: t.name))
     model_part = _sanitize_segment(llm_config.model) if llm_config is not None else "no-llm"
     return f"{scope_part}__{model_part}.json"
+
+
+def _subfolder_for(scope: Scope, llm_config: LLMConfig | None) -> str:
+    """Deterministic name of the per-task subfolder for a threat model.
+
+    Same stem as :func:`filename_for` minus the ``.json`` suffix.
+    """
+    return filename_for(scope, llm_config).removesuffix(".json")
+
+
+def task_filename(index: int, goal_description: str) -> str:
+    """Filename for a single task within a threat model subfolder.
+
+    Format: ``{NNNNN}__{sanitized_truncated_goal}.json``. *index* is
+    1-based and zero-padded to 5 digits. The goal description is
+    sanitized and truncated to keep filenames manageable; if the
+    sanitized form is empty, ``task`` is used as a placeholder.
+    """
+    sanitized = _sanitize_segment(goal_description)[:_TASK_FILENAME_MAX_GOAL].rstrip("_")
+    suffix = sanitized or "task"
+    return f"{index:05d}__{suffix}.json"
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +220,65 @@ def _serialize_run_result(run: RunResult, run_number: int) -> dict[str, Any]:
     }
 
 
-def _serialize_task_result(tr: TaskResult) -> dict[str, Any]:
+# ---------------------------------------------------------------------------
+# Claim-level summary
+# ---------------------------------------------------------------------------
+
+
+def _compute_summary(tmr: ThreatModelResult) -> dict[str, Any]:
+    """Aggregates over the security claim within one threat model.
+
+    Skipped tasks (``NotApplicable``) are excluded from the score
+    aggregates and counted separately. ``max_primary_score`` and
+    ``mean_primary_score`` are ``None`` when no tasks were evaluated.
+    """
+    n_tasks = len(tmr.task_results)
+    n_skipped = len(tmr.skipped_tasks)
+    n_success = sum(1 for tr in tmr.task_results if tr.success)
+    if tmr.task_results:
+        scores = [tr.best_score.value for tr in tmr.task_results]
+        max_score: float | None = max(scores)
+        mean_score: float | None = sum(scores) / len(scores)
+    else:
+        max_score = None
+        mean_score = None
+    total_calls = sum(tr.llm_usage.calls for tr in tmr.task_results)
+    total_cost = sum(tr.llm_usage.cost for tr in tmr.task_results)
     return {
+        "n_tasks": n_tasks,
+        "n_success": n_success,
+        "n_skipped": n_skipped,
+        "max_primary_score": max_score,
+        "mean_primary_score": mean_score,
+        "total_llm_usage": {"calls": total_calls, "cost": total_cost},
+    }
+
+
+def _serialize_task_summary(tr: TaskResult, task_file_relpath: str) -> dict[str, Any]:
+    """Claim-level entry for one task — points at its detail file."""
+    return {
+        "task": {"goal": tr.task.goal.description},
+        "file": task_file_relpath,
+        "success": tr.success,
+        "best_score": _serialize_score(tr.best_score),
+        "llm_usage": _serialize_llm_usage(tr.llm_usage),
+        "stop_reason": tr.stop_reason,
+        "n_runs": len(tr.runs),
+    }
+
+
+def _serialize_full_task(tr: TaskResult, tmr: ThreatModelResult) -> dict[str, Any]:
+    """Self-contained per-task detail (the file in the subfolder).
+
+    Includes the threat-model context (scope, llm_config,
+    controller_config) so a single detail file is meaningful in
+    isolation, without needing the claim-level file.
+    """
+    return {
+        "version": SCHEMA_VERSION,
+        "scope": sorted(t.name for t in tmr.scope),
+        "llm_config": _serialize_llm_config(tmr.llm_config),
+        "controller_config": _serialize_controller_config(tmr.controller_config),
         "task": {"goal": tr.task.goal.description},
         "success": tr.success,
         "best_score": _serialize_score(tr.best_score),
@@ -198,15 +289,23 @@ def _serialize_task_result(tr: TaskResult) -> dict[str, Any]:
     }
 
 
-def serialize_threat_model_result(tmr: ThreatModelResult) -> dict[str, Any]:
-    """Build the JSON-serializable dict for a single threat model."""
+def serialize_claim_level(
+    tmr: ThreatModelResult,
+    task_summaries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the JSON dict for the claim-level file.
+
+    Takes pre-built task summaries (each with the relative path to its
+    detail file) so the writer can fill in paths after deciding them.
+    """
     return {
         "version": SCHEMA_VERSION,
         "completed_at": datetime.now(UTC).isoformat(),
         "scope": sorted(t.name for t in tmr.scope),
         "llm_config": _serialize_llm_config(tmr.llm_config),
         "controller_config": _serialize_controller_config(tmr.controller_config),
-        "task_results": [_serialize_task_result(t) for t in tmr.task_results],
+        "summary": _compute_summary(tmr),
+        "task_results": task_summaries,
         "skipped_tasks": [{"goal": t.goal.description} for t in tmr.skipped_tasks],
     }
 
@@ -216,23 +315,52 @@ def serialize_threat_model_result(tmr: ThreatModelResult) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path:
-    """Persist *tmr* to ``{results_dir}/{filename_for(...)}`` atomically.
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Write *payload* as JSON to *path* atomically (temp file + rename)."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=_json_fallback))
+    tmp.replace(path)
 
-    The directory is created if needed. The write is atomic: data lands
-    in a sibling ``.tmp`` file first, then ``rename``\\ s into place. If
-    the destination file already exists, raises :class:`FileExistsError`
-    rather than overwriting silently.
+
+def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path:
+    """Persist *tmr* under *results_dir* using the subfolder layout.
+
+    Per-task detail files are written into
+    ``{results_dir}/{subfolder}/`` first; the claim-level file lands
+    last and acts as a completion marker. Each individual file is
+    written via temp file + ``rename`` so a partial write can never
+    leave a malformed JSON behind.
+
+    Raises:
+        FileExistsError: if either the claim-level file or the task
+            subfolder already exists. Choose a fresh ``results_dir``
+            (or per-run subdirectory) to avoid collisions.
+
+    Returns:
+        The path to the written claim-level file.
     """
     results_dir.mkdir(parents=True, exist_ok=True)
-    target = results_dir / filename_for(tmr.scope, tmr.llm_config)
-    if target.exists():
-        raise FileExistsError(f"Threat-model output already exists: {target}")
-    payload = serialize_threat_model_result(tmr)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=_json_fallback))
-    tmp.replace(target)
-    return target
+    claim_file = results_dir / filename_for(tmr.scope, tmr.llm_config)
+    subfolder_name = _subfolder_for(tmr.scope, tmr.llm_config)
+    subfolder = results_dir / subfolder_name
+
+    if claim_file.exists():
+        raise FileExistsError(f"Claim-level output already exists: {claim_file}")
+    if subfolder.exists():
+        raise FileExistsError(f"Task subfolder already exists: {subfolder}")
+
+    subfolder.mkdir(parents=True)
+
+    task_summaries: list[dict[str, Any]] = []
+    for index, tr in enumerate(tmr.task_results, start=1):
+        fname = task_filename(index, tr.task.goal.description)
+        detail_path = subfolder / fname
+        _atomic_write_json(detail_path, _serialize_full_task(tr, tmr))
+        rel_path = f"{subfolder_name}/{fname}"
+        task_summaries.append(_serialize_task_summary(tr, rel_path))
+
+    _atomic_write_json(claim_file, serialize_claim_level(tmr, task_summaries))
+    return claim_file
 
 
 def _json_fallback(obj: Any) -> Any:

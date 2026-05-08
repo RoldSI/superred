@@ -105,7 +105,7 @@ async def test_no_results_dir_writes_nothing(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_single_threat_model_creates_expected_file(tmp_path: Path) -> None:
+async def test_single_threat_model_creates_claim_and_subfolder(tmp_path: Path) -> None:
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
         target=StubTarget(),
@@ -114,16 +114,43 @@ async def test_single_threat_model_creates_expected_file(tmp_path: Path) -> None
         results_dir=tmp_path,
     )
     await controller.run(scopes=[EXTERNAL_SCOPE])
-    expected = tmp_path / "external__test-model.json"
-    assert expected.exists()
-    payload = json.loads(expected.read_text())
-    assert payload["scope"] == ["external"]
-    assert payload["llm_config"]["model"] == "test-model"
-    assert len(payload["task_results"]) == 1
-    tr = payload["task_results"][0]
-    assert tr["success"] is True
-    assert tr["best_score"]["value"] == 0.8
-    assert tr["runs"][0]["llm_usage"] == {"calls": 0, "cost": 0.0}
+
+    claim = tmp_path / "external__test-model.json"
+    subfolder = tmp_path / "external__test-model"
+    assert claim.exists()
+    assert subfolder.is_dir()
+    detail_files = sorted(subfolder.glob("*.json"))
+    assert len(detail_files) == 1
+    assert detail_files[0].name.startswith("00001__")
+
+    claim_payload = json.loads(claim.read_text())
+    assert claim_payload["scope"] == ["external"]
+    assert claim_payload["llm_config"]["model"] == "test-model"
+    assert claim_payload["controller_config"]["max_runs_per_task"] == 100
+    summary = claim_payload["summary"]
+    assert summary["n_tasks"] == 1
+    assert summary["n_success"] == 1
+    assert summary["n_skipped"] == 0
+    assert summary["max_primary_score"] == 0.8
+    assert summary["mean_primary_score"] == 0.8
+    assert summary["total_llm_usage"] == {"calls": 0, "cost": 0.0}
+
+    entry = claim_payload["task_results"][0]
+    assert entry["file"] == f"external__test-model/{detail_files[0].name}"
+    assert entry["success"] is True
+    assert entry["best_score"]["value"] == 0.8
+    assert entry["stop_reason"] == "done"
+    assert entry["n_runs"] == 1
+    # Trajectory and best_evaluation live in the detail file, not the claim.
+    assert "trajectory" not in entry
+    assert "best_evaluation" not in entry
+
+    detail = json.loads(detail_files[0].read_text())
+    assert detail["scope"] == ["external"]
+    assert detail["task"]["goal"] == "Test goal"
+    assert detail["stop_reason"] == "done"
+    assert detail["runs"][0]["llm_usage"] == {"calls": 0, "cost": 0.0}
+    assert detail["runs"][0]["trajectory"][-1]["type"] == "RunEndEvent"
 
 
 async def test_results_dir_str_is_accepted(tmp_path: Path) -> None:
@@ -137,6 +164,7 @@ async def test_results_dir_str_is_accepted(tmp_path: Path) -> None:
     )
     await controller.run(scopes=[EXTERNAL_SCOPE])
     assert (tmp_path / "out" / "external__test-model.json").exists()
+    assert (tmp_path / "out" / "external__test-model").is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +172,7 @@ async def test_results_dir_str_is_accepted(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_two_scopes_produce_two_files(tmp_path: Path) -> None:
+async def test_two_scopes_produce_two_layouts(tmp_path: Path) -> None:
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
         target=TwoTagTarget(),
@@ -158,6 +186,8 @@ async def test_two_scopes_produce_two_files(tmp_path: Path) -> None:
         "external__test-model.json",
         "internal__test-model.json",
     ]
+    assert (tmp_path / "external__test-model").is_dir()
+    assert (tmp_path / "internal__test-model").is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +238,7 @@ async def test_no_tmp_leftover_after_successful_run(tmp_path: Path) -> None:
         results_dir=tmp_path,
     )
     await controller.run(scopes=[EXTERNAL_SCOPE])
-    assert not list(tmp_path.glob("*.tmp"))
+    assert not list(tmp_path.rglob("*.tmp"))
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +258,16 @@ async def test_include_feedback_false_persists_run_end_with_null_eval(
         include_feedback=False,
     )
     await controller.run(scopes=[EXTERNAL_SCOPE])
-    parsed = json.loads((tmp_path / "external__test-model.json").read_text())
+    detail_files = list((tmp_path / "external__test-model").glob("*.json"))
+    assert len(detail_files) == 1
+    detail = json.loads(detail_files[0].read_text())
     # The per-run RunResult.evaluation is still populated...
-    assert parsed["task_results"][0]["runs"][0]["evaluation"]["primary_score"]["value"] == 0.5
+    assert detail["runs"][0]["evaluation"]["primary_score"]["value"] == 0.5
     # ...but the RunEndEvent in the trajectory carries evaluation=None.
-    traj = parsed["task_results"][0]["runs"][0]["trajectory"]
+    traj = detail["runs"][0]["trajectory"]
     end_events = [item for item in traj if item.get("type") == "RunEndEvent"]
     assert len(end_events) == 1
     assert end_events[0]["evaluation"] is None
+    # And the controller_config block records that include_feedback was False.
+    claim = json.loads((tmp_path / "external__test-model.json").read_text())
+    assert claim["controller_config"]["include_feedback"] is False

@@ -16,6 +16,7 @@ from superred.core.controller import (
 )
 from superred.core.persistence import (
     SCHEMA_VERSION,
+    _compute_summary,
     _sanitize_segment,
     _serialize_evaluation,
     _serialize_event,
@@ -24,7 +25,8 @@ from superred.core.persistence import (
     _serialize_score,
     _serialize_trajectory,
     filename_for,
-    serialize_threat_model_result,
+    serialize_claim_level,
+    task_filename,
     write_threat_model_result,
 )
 from superred.core.types.controllable import Controllable
@@ -237,7 +239,108 @@ def test_serialize_trajectory_preserves_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: serialize_threat_model_result + write_threat_model_result
+# task_filename helper
+# ---------------------------------------------------------------------------
+
+
+def test_task_filename_pads_to_five_digits() -> None:
+    assert task_filename(1, "Goal").startswith("00001__")
+    assert task_filename(42, "Goal").startswith("00042__")
+    assert task_filename(99999, "Goal").startswith("99999__")
+
+
+def test_task_filename_sanitizes_and_truncates_goal() -> None:
+    long = "Inject the correct key into every controllable / regardless of trust"
+    name = task_filename(7, long)
+    assert name.startswith("00007__")
+    # Truncated to <=50 chars in the goal portion.
+    goal_part = name.removeprefix("00007__").removesuffix(".json")
+    assert len(goal_part) <= 50
+    # Sanitized — no slashes or spaces.
+    assert "/" not in goal_part
+    assert " " not in goal_part
+
+
+def test_task_filename_falls_back_to_task_when_empty() -> None:
+    assert task_filename(3, "").endswith("00003__task.json")
+
+
+# ---------------------------------------------------------------------------
+# Summary aggregation
+# ---------------------------------------------------------------------------
+
+
+def _make_task_result(score: float, success: bool, calls: int = 0, cost: float = 0.0) -> TaskResult:
+    """Helper: a minimal TaskResult with the given primary score."""
+    primary = Score(value=score, security_domain=EXTERNAL_TAG)
+    ev = EvaluationResult(success=success, primary_score=primary)
+    return TaskResult(
+        task=StubTask(),
+        runs=[],
+        best_score=primary,
+        best_evaluation=ev,
+        success=success,
+        llm_usage=LLMUsage(calls=calls, cost=cost),
+        stop_reason="done",
+    )
+
+
+def test_compute_summary_basic_aggregates() -> None:
+    tmr = ThreatModelResult(
+        scope=frozenset({EXTERNAL_TAG}),
+        llm_config=None,
+        controller_config=ControllerConfig(max_runs_per_task=10, include_feedback=True),
+        task_results=[
+            _make_task_result(0.2, success=False, calls=1, cost=0.001),
+            _make_task_result(0.8, success=True, calls=4, cost=0.005),
+            _make_task_result(0.5, success=False, calls=2, cost=0.002),
+        ],
+    )
+    summary = _compute_summary(tmr)
+    assert summary["n_tasks"] == 3
+    assert summary["n_success"] == 1
+    assert summary["n_skipped"] == 0
+    assert summary["max_primary_score"] == 0.8
+    assert summary["mean_primary_score"] == pytest.approx(0.5)
+    assert summary["total_llm_usage"] == {"calls": 7, "cost": pytest.approx(0.008)}
+
+
+def test_compute_summary_excludes_skipped_from_mean() -> None:
+    """Skipped tasks aren't in task_results — they have no score and
+    must not affect the mean. Only n_skipped reflects them."""
+    tmr = ThreatModelResult(
+        scope=frozenset({EXTERNAL_TAG}),
+        llm_config=None,
+        controller_config=ControllerConfig(max_runs_per_task=10, include_feedback=True),
+        task_results=[_make_task_result(0.4, success=False)],
+        skipped_tasks=[StubTask(goal_text="not applicable")],
+    )
+    summary = _compute_summary(tmr)
+    assert summary["n_tasks"] == 1
+    assert summary["n_skipped"] == 1
+    assert summary["mean_primary_score"] == 0.4
+
+
+def test_compute_summary_no_tasks_yields_null_score() -> None:
+    """When the claim has no tasks (or all skipped), score aggregates
+    are None rather than crashing on division by zero."""
+    tmr = ThreatModelResult(
+        scope=frozenset({EXTERNAL_TAG}),
+        llm_config=None,
+        controller_config=ControllerConfig(max_runs_per_task=10, include_feedback=True),
+        task_results=[],
+        skipped_tasks=[StubTask(goal_text="x"), StubTask(goal_text="y")],
+    )
+    summary = _compute_summary(tmr)
+    assert summary["n_tasks"] == 0
+    assert summary["n_skipped"] == 2
+    assert summary["max_primary_score"] is None
+    assert summary["mean_primary_score"] is None
+    assert summary["total_llm_usage"] == {"calls": 0, "cost": 0.0}
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: write_threat_model_result + serialize_claim_level
 # ---------------------------------------------------------------------------
 
 
@@ -268,55 +371,112 @@ def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult
     )
 
 
-def test_serialize_threat_model_result_shape() -> None:
+def test_serialize_claim_level_shape() -> None:
     tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    payload = serialize_threat_model_result(tmr)
+    summaries = [{"task": {"goal": "Test goal"}, "file": "external__m/00001__Test_goal.json"}]
+    payload = serialize_claim_level(tmr, summaries)
     assert payload["version"] == SCHEMA_VERSION
     datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
     assert payload["scope"] == ["external"]
     assert payload["llm_config"] == {"model": "m", "max_cost": None}
     assert payload["controller_config"] == {"max_runs_per_task": 100, "include_feedback": True}
-    assert len(payload["task_results"]) == 1
-    tr = payload["task_results"][0]
-    assert tr["task"]["goal"] == "Test goal"
-    assert tr["success"] is True
-    assert tr["stop_reason"] == "done"
-    assert tr["runs"][0]["run_number"] == 1
-    assert tr["runs"][0]["llm_usage"] == {"calls": 2, "cost": 0.01}
+    assert payload["summary"]["n_tasks"] == 1
+    assert payload["summary"]["n_success"] == 1
+    assert payload["summary"]["mean_primary_score"] == 0.7
+    assert payload["summary"]["max_primary_score"] == 0.7
+    assert payload["task_results"] == summaries
     assert payload["skipped_tasks"] == []
 
 
-def test_write_threat_model_result_atomic_and_named(tmp_path: Path) -> None:
+def test_write_threat_model_result_creates_layout(tmp_path: Path) -> None:
+    """One claim file in main folder, one detail file per task in subfolder."""
     tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
     written = write_threat_model_result(tmr, tmp_path)
     assert written == tmp_path / "external__m.json"
-    assert written.exists()
-    # No leftover .tmp file after a clean write.
-    assert not list(tmp_path.glob("*.tmp"))
-    parsed = json.loads(written.read_text())
-    assert parsed["scope"] == ["external"]
-    # Secret never makes it to disk.
-    assert "SECRET" not in written.read_text()
+    subfolder = tmp_path / "external__m"
+    assert subfolder.is_dir()
+    detail_files = sorted(subfolder.glob("*.json"))
+    assert len(detail_files) == 1
+    assert detail_files[0].name.startswith("00001__")
+    # No leftover .tmp files anywhere.
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+def test_claim_file_links_to_detail_with_relative_path(tmp_path: Path) -> None:
+    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
+    claim = write_threat_model_result(tmr, tmp_path)
+    parsed = json.loads(claim.read_text())
+    entry = parsed["task_results"][0]
+    rel = entry["file"]
+    # Path is relative to results_dir and points at an actual file.
+    assert (tmp_path / rel).exists()
+    assert rel.startswith("external__m/")
+    assert rel.endswith(".json")
+    # Claim entry has the summary fields, NOT the trajectory.
+    assert "trajectory" not in entry
+    assert entry["n_runs"] == 1
+    assert entry["stop_reason"] == "done"
+    assert entry["best_score"]["value"] == 0.7
+
+
+def test_detail_file_is_self_contained(tmp_path: Path) -> None:
+    """A detail file carries its own scope/llm_config/controller_config
+    so it is meaningful in isolation."""
+    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
+    write_threat_model_result(tmr, tmp_path)
+    detail_files = list((tmp_path / "external__m").glob("*.json"))
+    assert len(detail_files) == 1
+    detail = json.loads(detail_files[0].read_text())
+    assert detail["version"] == SCHEMA_VERSION
+    assert detail["scope"] == ["external"]
+    assert detail["llm_config"] == {"model": "m", "max_cost": None}
+    assert detail["controller_config"] == {"max_runs_per_task": 100, "include_feedback": True}
+    assert detail["task"]["goal"] == "Test goal"
+    assert detail["stop_reason"] == "done"
+    assert len(detail["runs"]) == 1
+    assert detail["runs"][0]["run_number"] == 1
+    assert "trajectory" in detail["runs"][0]
+
+
+def test_no_secret_in_any_written_file(tmp_path: Path) -> None:
+    """``api_key`` and ``api_base`` are excluded from BOTH the claim
+    file and every detail file."""
+    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
+    write_threat_model_result(tmr, tmp_path)
+    for path in tmp_path.rglob("*.json"):
+        text = path.read_text()
+        assert "SECRET" not in text
+        assert "api_key" not in text
+        assert "api_base" not in text
 
 
 def test_write_threat_model_result_creates_directory(tmp_path: Path) -> None:
     target_dir = tmp_path / "nested" / "results"
     tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
     write_threat_model_result(tmr, target_dir)
-    assert target_dir.exists()
     assert (target_dir / "external__m.json").exists()
+    assert (target_dir / "external__m" / "00001__Test_goal.json").exists()
 
 
-def test_write_threat_model_result_refuses_overwrite(tmp_path: Path) -> None:
+def test_write_threat_model_result_refuses_overwrite_claim(tmp_path: Path) -> None:
     tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
     write_threat_model_result(tmr, tmp_path)
     with pytest.raises(FileExistsError):
         write_threat_model_result(tmr, tmp_path)
 
 
+def test_write_threat_model_result_refuses_existing_subfolder(tmp_path: Path) -> None:
+    """Pre-existing subfolder (without claim file) also blocks writes."""
+    (tmp_path / "external__m").mkdir()
+    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
+    with pytest.raises(FileExistsError):
+        write_threat_model_result(tmr, tmp_path)
+
+
 def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
     """Non-datetime, non-JSON-native objects in trajectory content fall
-    back to ``repr`` rather than crashing the write."""
+    back to ``repr`` rather than crashing the write. Trajectory lives
+    in the per-task detail file under the new layout."""
 
     class Opaque:
         def __repr__(self) -> str:
@@ -345,9 +505,9 @@ def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
         controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
         task_results=[tr],
     )
-    written = write_threat_model_result(tmr, tmp_path)
-    parsed = json.loads(written.read_text())
-    content = parsed["task_results"][0]["runs"][0]["trajectory"][0]["content"]
+    write_threat_model_result(tmr, tmp_path)
+    detail = json.loads(next((tmp_path / "external__no-llm").glob("*.json")).read_text())
+    content = detail["runs"][0]["trajectory"][0]["content"]
     assert content == "<Opaque sentinel>"
 
 
@@ -377,7 +537,7 @@ def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
         controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
         task_results=[tr],
     )
-    written = write_threat_model_result(tmr, tmp_path)
-    parsed = json.loads(written.read_text())
-    content = parsed["task_results"][0]["runs"][0]["trajectory"][0]["content"]
+    write_threat_model_result(tmr, tmp_path)
+    detail = json.loads(next((tmp_path / "external__no-llm").glob("*.json")).read_text())
+    content = detail["runs"][0]["trajectory"][0]["content"]
     assert "2026-01-01T12:00:00" in content

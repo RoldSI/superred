@@ -179,13 +179,27 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 
 ## Persistence (`results_dir`)
 
-When `results_dir` is provided, the controller writes one JSON file per completed threat model to that directory:
+When `results_dir` is provided, the controller writes a two-level layout per completed threat model:
 
-- **Filename**: `{scope_tag1.scope_tag2...}__{model}.json` with tags sorted alphabetically. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_configs` is empty, the model segment is `no-llm`.
+```
+results_dir/
+├── {scope}__{model}.json            ← claim-level summary (one per threat model)
+├── {scope}__{model}/
+│   ├── 00001__{goal}.json            ← per-task detail (one per task)
+│   └── ...
+├── {other_scope}__{model}.json
+└── {other_scope}__{model}/
+    └── ...
+```
+
+- **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_configs` is empty, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
 - **When**: immediately after each `_iterate_tasks` returns and before the next threat model begins. If a later threat model raises, the already-completed ones are intact on disk.
-- **Atomicity**: each file is written via temp file + `rename`, so a partial write cannot leave a corrupt JSON behind.
-- **Contents**: `version`, `completed_at`, `scope` (sorted tag names), `llm_config` (model + max_cost only), `task_results` (each with the full per-run trajectory, evaluation, and cumulative `llm_usage`), and `skipped_tasks`.
-- **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed — keep credentials out of log/observable payloads.
-- **Collisions**: if a destination file already exists, the writer raises `FileExistsError` rather than overwriting. Pass a per-run subdirectory if you re-run into the same parent.
+- **Atomicity**: each individual file is written via temp file + `rename`. Per-task detail files are written first; the claim-level file lands last and acts as a completion marker for the threat model.
+- **Claim-level file**: `version`, `completed_at`, `scope`, `llm_config` (model + max_cost only), `controller_config` (max_runs_per_task, include_feedback), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
+- **Per-task detail file**: self-contained — repeats `version`, `scope`, `llm_config`, `controller_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`).
+- **Aggregates**: `mean_primary_score` excludes `NotApplicable` tasks (they are reported separately as `n_skipped`). When the claim has no evaluable tasks, `mean_primary_score` and `max_primary_score` are `null`.
+- **`stop_reason` per task**: one of `"done"` (optimizer signaled `RunEndResponse(done=True)`), `"max_runs"` (hit the safety cap), or `"budget_exhausted"` (`BudgetExhaustedError` was raised).
+- **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded from both claim and detail files. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed — keep credentials out of log/observable payloads.
+- **Collisions**: if either the claim-level file or the task subfolder already exists, the writer raises `FileExistsError` rather than overwriting. Pass a per-run subdirectory if you re-run into the same parent.
 
 When `results_dir` is `None` (the default), nothing is written and behavior is unchanged.
