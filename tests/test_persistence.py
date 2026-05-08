@@ -264,9 +264,9 @@ def test_task_filename_only_strips_underscore_not_other_chars() -> None:
     """Trailing letters must be preserved — only underscores are stripped.
     Guards against widening the rstrip charset (e.g. ``rstrip('XX_XX')``)."""
     # Goal sanitizes to "fooX_" (trailing _ from spaces); strip ONLY the _.
-    assert task_filename(1, "fooX_").endswith("00001__fooX.json")
+    assert _task_filename(1, "fooX_").endswith("00001__fooX.json")
     # And X-only trailing must be left alone.
-    assert task_filename(2, "barX").endswith("00002__barX.json")
+    assert _task_filename(2, "barX").endswith("00002__barX.json")
 
 
 # ---------------------------------------------------------------------------
