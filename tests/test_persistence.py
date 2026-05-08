@@ -260,6 +260,15 @@ def test_task_filename_falls_back_to_task_when_empty() -> None:
     assert task_filename(3, "").endswith("00003__task.json")
 
 
+def test_task_filename_only_strips_underscore_not_other_chars() -> None:
+    """Trailing letters must be preserved — only underscores are stripped.
+    Guards against widening the rstrip charset (e.g. ``rstrip('XX_XX')``)."""
+    # Goal sanitizes to "fooX_" (trailing _ from spaces); strip ONLY the _.
+    assert task_filename(1, "fooX_").endswith("00001__fooX.json")
+    # And X-only trailing must be left alone.
+    assert task_filename(2, "barX").endswith("00002__barX.json")
+
+
 # ---------------------------------------------------------------------------
 # Summary aggregation
 # ---------------------------------------------------------------------------

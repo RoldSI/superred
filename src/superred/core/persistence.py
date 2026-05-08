@@ -338,7 +338,8 @@ def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path
     if subfolder.exists():
         raise FileExistsError(f"Task subfolder already exists: {subfolder}")
 
-    subfolder.mkdir(parents=True)
+    # subfolder's parent is results_dir, already created above — no parents=True needed.
+    subfolder.mkdir()
 
     task_summaries: list[dict[str, Any]] = []
     for index, tr in enumerate(tmr.task_results, start=1):
