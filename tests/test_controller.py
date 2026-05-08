@@ -265,9 +265,7 @@ class TestControllerRun:
                 nonlocal run_count
                 run_count += 1
                 if run_count >= 2:
-                    raise BudgetExhaustedError(
-                        "Budget gone", usage=LLMUsage(calls=10, cost=1.0)
-                    )
+                    raise BudgetExhaustedError("Budget gone", usage=LLMUsage(calls=10, cost=1.0))
                 await super().run(emit, send_event)
 
         controller = Controller(
