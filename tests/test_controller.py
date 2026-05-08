@@ -4,12 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from superred.core.controller import (
-    Controller,
-    ControllerConfig,
-    ControllerResult,
-    ThreatModelResult,
-)
+from superred.core.controller import Controller, ControllerResult, ThreatModelResult
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.llm import LLMClient
@@ -180,7 +175,6 @@ class TestResultTypesFrozen:
         tmr = ThreatModelResult(
             scope=EXTERNAL_SCOPE,
             llm_config=None,
-            controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
             task_results=[],
         )
         assert tmr.skipped_tasks == []
@@ -255,21 +249,6 @@ class TestControllerRun:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         assert _first_tmr(result).task_results[0].stop_reason == "max_runs"
-
-    async def test_controller_config_propagated(self) -> None:
-        """ThreatModelResult carries the controller's settings for reproducibility."""
-        controller = Controller(
-            optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
-            max_runs_per_task=7,
-            include_feedback=False,
-        )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        cc = _first_tmr(result).controller_config
-        assert cc.max_runs_per_task == 7
-        assert cc.include_feedback is False
 
     async def test_stop_reason_budget_exhausted(self) -> None:
         """BudgetExhaustedError mid-run -> stop_reason='budget_exhausted'."""

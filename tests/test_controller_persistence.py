@@ -126,7 +126,6 @@ async def test_single_threat_model_creates_claim_and_subfolder(tmp_path: Path) -
     claim_payload = json.loads(claim.read_text())
     assert claim_payload["scope"] == ["external"]
     assert claim_payload["llm_config"]["model"] == "test-model"
-    assert claim_payload["controller_config"]["max_runs_per_task"] == 100
     summary = claim_payload["summary"]
     assert summary["n_tasks"] == 1
     assert summary["n_success"] == 1
@@ -268,6 +267,3 @@ async def test_include_feedback_false_persists_run_end_with_null_eval(
     end_events = [item for item in traj if item.get("type") == "RunEndEvent"]
     assert len(end_events) == 1
     assert end_events[0]["evaluation"] is None
-    # And the controller_config block records that include_feedback was False.
-    claim = json.loads((tmp_path / "external__test-model.json").read_text())
-    assert claim["controller_config"]["include_feedback"] is False

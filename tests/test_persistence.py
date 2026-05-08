@@ -8,12 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from superred.core.controller import (
-    ControllerConfig,
-    RunResult,
-    TaskResult,
-    ThreatModelResult,
-)
+from superred.core.controller import RunResult, TaskResult, ThreatModelResult
 from superred.core.persistence import (
     SCHEMA_VERSION,
     _compute_summary,
@@ -289,7 +284,6 @@ def test_compute_summary_basic_aggregates() -> None:
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
         llm_config=None,
-        controller_config=ControllerConfig(max_runs_per_task=10, include_feedback=True),
         task_results=[
             _make_task_result(0.2, success=False, calls=1, cost=0.001),
             _make_task_result(0.8, success=True, calls=4, cost=0.005),
@@ -311,7 +305,6 @@ def test_compute_summary_excludes_skipped_from_mean() -> None:
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
         llm_config=None,
-        controller_config=ControllerConfig(max_runs_per_task=10, include_feedback=True),
         task_results=[_make_task_result(0.4, success=False)],
         skipped_tasks=[StubTask(goal_text="not applicable")],
     )
@@ -327,7 +320,6 @@ def test_compute_summary_no_tasks_yields_null_score() -> None:
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
         llm_config=None,
-        controller_config=ControllerConfig(max_runs_per_task=10, include_feedback=True),
         task_results=[],
         skipped_tasks=[StubTask(goal_text="x"), StubTask(goal_text="y")],
     )
@@ -365,7 +357,6 @@ def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult
     return ThreatModelResult(
         scope=scope,
         llm_config=LLMConfig(model="m", api_base="x", api_key="SECRET"),
-        controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
         task_results=[task_result],
         skipped_tasks=[],
     )
@@ -379,7 +370,6 @@ def test_serialize_claim_level_shape() -> None:
     datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
     assert payload["scope"] == ["external"]
     assert payload["llm_config"] == {"model": "m", "max_cost": None}
-    assert payload["controller_config"] == {"max_runs_per_task": 100, "include_feedback": True}
     assert payload["summary"]["n_tasks"] == 1
     assert payload["summary"]["n_success"] == 1
     assert payload["summary"]["mean_primary_score"] == 0.7
@@ -420,8 +410,8 @@ def test_claim_file_links_to_detail_with_relative_path(tmp_path: Path) -> None:
 
 
 def test_detail_file_is_self_contained(tmp_path: Path) -> None:
-    """A detail file carries its own scope/llm_config/controller_config
-    so it is meaningful in isolation."""
+    """A detail file carries its own scope/llm_config so it is meaningful
+    in isolation."""
     tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
     write_threat_model_result(tmr, tmp_path)
     detail_files = list((tmp_path / "external__m").glob("*.json"))
@@ -430,7 +420,6 @@ def test_detail_file_is_self_contained(tmp_path: Path) -> None:
     assert detail["version"] == SCHEMA_VERSION
     assert detail["scope"] == ["external"]
     assert detail["llm_config"] == {"model": "m", "max_cost": None}
-    assert detail["controller_config"] == {"max_runs_per_task": 100, "include_feedback": True}
     assert detail["task"]["goal"] == "Test goal"
     assert detail["stop_reason"] == "done"
     assert len(detail["runs"]) == 1
@@ -502,7 +491,6 @@ def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
         llm_config=None,
-        controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
         task_results=[tr],
     )
     write_threat_model_result(tmr, tmp_path)
@@ -534,7 +522,6 @@ def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
         llm_config=None,
-        controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
         task_results=[tr],
     )
     write_threat_model_result(tmr, tmp_path)

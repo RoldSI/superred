@@ -50,12 +50,7 @@ from superred.core.types.security_domain import Scope, SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
 if TYPE_CHECKING:
-    from superred.core.controller import (
-        ControllerConfig,
-        RunResult,
-        TaskResult,
-        ThreatModelResult,
-    )
+    from superred.core.controller import RunResult, TaskResult, ThreatModelResult
 
 
 SCHEMA_VERSION = 2
@@ -155,10 +150,6 @@ def _serialize_llm_config(cfg: LLMConfig | None) -> dict[str, Any] | None:
 
 def _serialize_llm_usage(u: LLMUsage) -> dict[str, Any]:
     return {"calls": u.calls, "cost": u.cost}
-
-
-def _serialize_controller_config(cc: ControllerConfig) -> dict[str, Any]:
-    return {"max_runs_per_task": cc.max_runs_per_task, "include_feedback": cc.include_feedback}
 
 
 def _event_base(event: Event) -> dict[str, Any]:
@@ -270,15 +261,14 @@ def _serialize_task_summary(tr: TaskResult, task_file_relpath: str) -> dict[str,
 def _serialize_full_task(tr: TaskResult, tmr: ThreatModelResult) -> dict[str, Any]:
     """Self-contained per-task detail (the file in the subfolder).
 
-    Includes the threat-model context (scope, llm_config,
-    controller_config) so a single detail file is meaningful in
-    isolation, without needing the claim-level file.
+    Includes the threat-model context (scope, llm_config) so a single
+    detail file is meaningful in isolation, without needing the
+    claim-level file.
     """
     return {
         "version": SCHEMA_VERSION,
         "scope": sorted(t.name for t in tmr.scope),
         "llm_config": _serialize_llm_config(tmr.llm_config),
-        "controller_config": _serialize_controller_config(tmr.controller_config),
         "task": {"goal": tr.task.goal.description},
         "success": tr.success,
         "best_score": _serialize_score(tr.best_score),
@@ -303,7 +293,6 @@ def serialize_claim_level(
         "completed_at": datetime.now(UTC).isoformat(),
         "scope": sorted(t.name for t in tmr.scope),
         "llm_config": _serialize_llm_config(tmr.llm_config),
-        "controller_config": _serialize_controller_config(tmr.controller_config),
         "summary": _compute_summary(tmr),
         "task_results": task_summaries,
         "skipped_tasks": [{"goal": t.goal.description} for t in tmr.skipped_tasks],
