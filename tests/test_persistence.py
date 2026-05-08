@@ -12,16 +12,16 @@ from superred.core.controller import RunResult, TaskResult, ThreatModelResult
 from superred.core.persistence import (
     SCHEMA_VERSION,
     _compute_summary,
+    _filename_for,
     _sanitize_segment,
+    _serialize_claim_level,
     _serialize_evaluation,
     _serialize_event,
     _serialize_llm_config,
     _serialize_response,
     _serialize_score,
     _serialize_trajectory,
-    filename_for,
-    serialize_claim_level,
-    task_filename,
+    _task_filename,
     write_threat_model_result,
 )
 from superred.core.types.controllable import Controllable
@@ -58,19 +58,19 @@ def test_sanitize_segment_replaces_unsafe() -> None:
 
 def test_filename_for_sorts_scope() -> None:
     scope = frozenset({EXTERNAL_TAG, ROOT_TAG})
-    name = filename_for(scope, None)
+    name = _filename_for(scope, None)
     # ROOT_TAG = "root", EXTERNAL_TAG = "external" — sorted: external, root
     assert name == "external.root__no-llm.json"
 
 
 def test_filename_for_with_model() -> None:
     cfg = LLMConfig(model="openai/gpt-4o-mini", api_base="x", api_key="x")
-    name = filename_for(frozenset({EXTERNAL_TAG}), cfg)
+    name = _filename_for(frozenset({EXTERNAL_TAG}), cfg)
     assert name == "external__openai_gpt-4o-mini.json"
 
 
 def test_filename_for_no_llm() -> None:
-    name = filename_for(frozenset({EXTERNAL_TAG}), None)
+    name = _filename_for(frozenset({EXTERNAL_TAG}), None)
     assert name == "external__no-llm.json"
 
 
@@ -234,19 +234,19 @@ def test_serialize_trajectory_preserves_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# task_filename helper
+# _task_filename helper
 # ---------------------------------------------------------------------------
 
 
 def test_task_filename_pads_to_five_digits() -> None:
-    assert task_filename(1, "Goal").startswith("00001__")
-    assert task_filename(42, "Goal").startswith("00042__")
-    assert task_filename(99999, "Goal").startswith("99999__")
+    assert _task_filename(1, "Goal").startswith("00001__")
+    assert _task_filename(42, "Goal").startswith("00042__")
+    assert _task_filename(99999, "Goal").startswith("99999__")
 
 
 def test_task_filename_sanitizes_and_truncates_goal() -> None:
     long = "Inject the correct key into every controllable / regardless of trust"
-    name = task_filename(7, long)
+    name = _task_filename(7, long)
     assert name.startswith("00007__")
     # Truncated to <=50 chars in the goal portion.
     goal_part = name.removeprefix("00007__").removesuffix(".json")
@@ -257,7 +257,7 @@ def test_task_filename_sanitizes_and_truncates_goal() -> None:
 
 
 def test_task_filename_falls_back_to_task_when_empty() -> None:
-    assert task_filename(3, "").endswith("00003__task.json")
+    assert _task_filename(3, "").endswith("00003__task.json")
 
 
 def test_task_filename_only_strips_underscore_not_other_chars() -> None:
@@ -341,7 +341,7 @@ def test_compute_summary_no_tasks_yields_null_score() -> None:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: write_threat_model_result + serialize_claim_level
+# End-to-end: write_threat_model_result + _serialize_claim_level
 # ---------------------------------------------------------------------------
 
 
@@ -374,7 +374,7 @@ def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult
 def test_serialize_claim_level_shape() -> None:
     tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
     summaries = [{"task": {"goal": "Test goal"}, "file": "external__m/00001__Test_goal.json"}]
-    payload = serialize_claim_level(tmr, summaries)
+    payload = _serialize_claim_level(tmr, summaries)
     assert payload["version"] == SCHEMA_VERSION
     datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
     assert payload["scope"] == ["external"]

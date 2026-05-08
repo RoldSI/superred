@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from superred.core.controller import RunResult, TaskResult, ThreatModelResult
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_-]")
 _TASK_FILENAME_MAX_GOAL = 50
@@ -64,7 +64,7 @@ def _sanitize_segment(s: str) -> str:
     return _SAFE_SEGMENT_RE.sub("_", s)
 
 
-def filename_for(scope: Scope, llm_config: LLMConfig | None) -> str:
+def _filename_for(scope: Scope, llm_config: LLMConfig | None) -> str:
     """Deterministic filename for the (scope, llm_config) claim-level file.
 
     Format: ``{sanitized_tag1.sanitized_tag2...}__{sanitized_model}.json``
@@ -79,12 +79,12 @@ def filename_for(scope: Scope, llm_config: LLMConfig | None) -> str:
 def _subfolder_for(scope: Scope, llm_config: LLMConfig | None) -> str:
     """Deterministic name of the per-task subfolder for a threat model.
 
-    Same stem as :func:`filename_for` minus the ``.json`` suffix.
+    Same stem as :func:`_filename_for` minus the ``.json`` suffix.
     """
-    return filename_for(scope, llm_config).removesuffix(".json")
+    return _filename_for(scope, llm_config).removesuffix(".json")
 
 
-def task_filename(index: int, goal_description: str) -> str:
+def _task_filename(index: int, goal_description: str) -> str:
     """Filename for a single task within a threat model subfolder.
 
     Format: ``{NNNNN}__{sanitized_truncated_goal}.json``. *index* is
@@ -279,7 +279,7 @@ def _serialize_full_task(tr: TaskResult, tmr: ThreatModelResult) -> dict[str, An
     }
 
 
-def serialize_claim_level(
+def _serialize_claim_level(
     tmr: ThreatModelResult,
     task_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -329,7 +329,7 @@ def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path
         The path to the written claim-level file.
     """
     results_dir.mkdir(parents=True, exist_ok=True)
-    claim_file = results_dir / filename_for(tmr.scope, tmr.llm_config)
+    claim_file = results_dir / _filename_for(tmr.scope, tmr.llm_config)
     subfolder_name = _subfolder_for(tmr.scope, tmr.llm_config)
     subfolder = results_dir / subfolder_name
 
@@ -343,13 +343,13 @@ def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path
 
     task_summaries: list[dict[str, Any]] = []
     for index, tr in enumerate(tmr.task_results, start=1):
-        fname = task_filename(index, tr.task.goal.description)
+        fname = _task_filename(index, tr.task.goal.description)
         detail_path = subfolder / fname
         _atomic_write_json(detail_path, _serialize_full_task(tr, tmr))
         rel_path = f"{subfolder_name}/{fname}"
         task_summaries.append(_serialize_task_summary(tr, rel_path))
 
-    _atomic_write_json(claim_file, serialize_claim_level(tmr, task_summaries))
+    _atomic_write_json(claim_file, _serialize_claim_level(tmr, task_summaries))
     return claim_file
 
 
