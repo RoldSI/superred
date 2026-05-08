@@ -64,7 +64,7 @@ For each (scope, llm_config) combination:
    - **Run loop** (until optimizer signals done or `max_runs_per_task`):
      - Create `Trajectory(filtered_scope=scope)`. Access `trajectory.filtered` for optimizer's view.
      - Send `RunStartEvent(filtered_trajectory)` through channel — optimizer gets filtered view.
-     - `target.run(emit, send_event)` — target emits `LogEvent` instances via `emit(event)`; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records all events and responses directly to the trajectory.
+     - `target.run(emit, send_event)` — target emits `ObservableEvent` instances via `emit(event)`; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records all events and responses directly to the trajectory.
      - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores).
      - Send `RunEndEvent(evaluation=filtered_eval, security_domain=<scope_tag>)` through channel — `RunEndEvent` is persisted to the trajectory. When `include_feedback=True` (default), `evaluation` carries the filtered result; when `False`, `evaluation` is `None`. Check `RunEndResponse.done`.
      - Close the trajectory.
@@ -112,7 +112,7 @@ There is no separate event log. The `trajectory_recorder` middleware records all
 
 - **Controllable events** — `ControllablePreCallEvent`, `ControllablePostCallEvent`.
 - **Controllable responses** — `ControllableInjection`, `ControllableNoInjection`.
-- **Log events** — `LogEvent` emitted by the target (model requests, model responses, etc.).
+- **Observable events** — `ObservableEvent` emitted by the target (model requests, model responses, etc.).
 - **RunEndEvent** — persisted to the trajectory by the controller after evaluation. Carries `evaluation: EvaluationResult | None` and has `security_domain` set from the scope.
 
 The trajectory IS the event log. `RunStartEvent` is NOT persisted to the trajectory — it carries no additional information and always appears at a fixed position. `RunEndEvent` IS persisted because it carries the evaluation result. To inspect events and responses for a run, query the trajectory items by type.

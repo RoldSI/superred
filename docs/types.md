@@ -2,12 +2,11 @@
 
 ## Design Principles
 
-- **Frozen dataclasses** for immutable value types (specs, scores, tags, events, goals).
-- **Mutable dataclasses** for stateful types that accumulate data (Controllable).
+- **Frozen dataclasses** for immutable value types (specs, scores, tags, events, goals, controllables, observables).
 - **Runtime-defined over enums**: SecurityDomainTag is a frozen dataclass, not an enum. Target systems define their own instances at runtime.
 - **Required fields over defaults**: Fields that are semantically required have no defaults. This prevents accidental construction of incomplete objects.
 - **`kw_only=True`** on all event dataclasses to avoid Python's dataclass inheritance ordering problem.
-- **No `Any` in public fields** where avoidable. `LogEvent.content` is `Any` because it carries arbitrary target-side data.
+- **No `Any` in public fields** where avoidable. `ObservableEvent.content` is `Any` because it carries arbitrary target-side data.
 
 ---
 
@@ -35,19 +34,9 @@ A parameter for a QuerySpec: `name`, `description`.
 
 ## Controllable (`controllable.py`)
 
-### ControllableSpec (frozen)
+### Controllable (frozen)
 
-Declares an injection point: `name`, `security_domain: SecurityDomainTag`, `description`, `value_type` (default `"text"`).
-
-### Controllable (mutable)
-
-A `ControllableSpec` plus a running `history: list[RequestAnswerPair]`. Mutable because history grows during runs. Passed to the optimizer at initialization and referenced by events during runs.
-
-**Design decision**: Controllable is mutable despite being stored in frozen Event dataclasses. Frozen dataclasses prevent field reassignment, not mutation of contained objects. The Controllable's identity is stable; its history grows.
-
-### RequestAnswerPair (frozen)
-
-A single request-answer interaction: `request: str`, `answer: str`.
+Declares an injection point: `name`, `security_domain: SecurityDomainTag` (must not be `None`), `description`, `value_type` (default `"text"`). Frozen and identity-stable; per-call request/answer data lives on `ControllablePreCallEvent` / `ControllablePostCallEvent` rather than on the `Controllable` itself.
 
 ## Observable (`observable.py`)
 
@@ -89,9 +78,9 @@ The optimizer's injection for a controllable. Fields: `value: str`, `controllabl
 
 Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Fields: `controllable: Controllable`, plus the inherited `event`.
 
-### LogEvent (extends Event)
+### ObservableEvent (extends Event)
 
-One-way logging event emitted by the target to record information in the trajectory. Fields: `content: Any`, `label: str = ""`. Used instead of the former `TrajectoryEntry` for target-side logging (e.g. model requests, model responses). The target sets the `security_domain` on the event directly.
+One-way observation event emitted by the target to record information in the trajectory. Fields: `observable: Observable`, `content: Any`. Used for target-side logging (e.g. model requests, model responses). `security_domain` auto-derives from the observable via `__post_init__` if not set explicitly.
 
 ### RunStartEvent (extends Event)
 
@@ -194,9 +183,11 @@ No `emit()` or `close()` — read-only. Uses `__slots__` to prevent `__dict__`.
 
 `ReadableTrajectory = Trajectory | FilteredTrajectory` — used in event types and optimizer annotations where either a full or filtered trajectory is accepted.
 
-### EmitFn (type alias)
+### EventHandler / EventResponseHandler (type aliases)
 
-`EmitFn = Callable[..., None]` — the callback type for emitting events to the trajectory. Passed to `target.run()` instead of the full Trajectory object. The target emits `LogEvent` instances (e.g. `emit(LogEvent(content=..., label="model_request", security_domain=tag))`). This restricts the target to only emitting, without access to reading or closing the trajectory.
+Defined in `event.py`:
+- `EventHandler = Callable[[Event], None]` — fire-and-forget callback for one-way events. Passed to `target.run(emit, ...)`; the target calls `emit(ObservableEvent(observable=..., content=...))`. This restricts the target to only emitting, without access to reading or closing the trajectory.
+- `EventResponseHandler = Callable[[Event], Awaitable[EventResponse]]` — two-way callback at controllable points. Passed to `target.run(..., send_event)`; the target awaits `send_event(ControllablePreCallEvent(...))` and uses the response.
 
 ## Evaluation (`evaluation.py`)
 
