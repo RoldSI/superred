@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from superred.core.controller import RunResult, TaskResult, ThreatModelResult
+from superred.core.controller import (
+    ControllerConfig,
+    RunResult,
+    TaskResult,
+    ThreatModelResult,
+)
 from superred.core.persistence import (
     SCHEMA_VERSION,
     _sanitize_segment,
@@ -257,6 +262,7 @@ def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult
     return ThreatModelResult(
         scope=scope,
         llm_config=LLMConfig(model="m", api_base="x", api_key="SECRET"),
+        controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
         task_results=[task_result],
         skipped_tasks=[],
     )
@@ -269,6 +275,7 @@ def test_serialize_threat_model_result_shape() -> None:
     datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
     assert payload["scope"] == ["external"]
     assert payload["llm_config"] == {"model": "m", "max_cost": None}
+    assert payload["controller_config"] == {"max_runs_per_task": 100, "include_feedback": True}
     assert len(payload["task_results"]) == 1
     tr = payload["task_results"][0]
     assert tr["task"]["goal"] == "Test goal"
@@ -332,7 +339,12 @@ def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
         llm_usage=LLMUsage(),
         stop_reason="max_runs",
     )
-    tmr = ThreatModelResult(scope=frozenset({EXTERNAL_TAG}), llm_config=None, task_results=[tr])
+    tmr = ThreatModelResult(
+        scope=frozenset({EXTERNAL_TAG}),
+        llm_config=None,
+        controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
+        task_results=[tr],
+    )
     written = write_threat_model_result(tmr, tmp_path)
     parsed = json.loads(written.read_text())
     content = parsed["task_results"][0]["runs"][0]["trajectory"][0]["content"]
@@ -362,6 +374,7 @@ def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
         llm_config=None,
+        controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
         task_results=[tr],
     )
     written = write_threat_model_result(tmr, tmp_path)

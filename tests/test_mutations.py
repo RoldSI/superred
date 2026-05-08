@@ -625,11 +625,12 @@ class TestControllerDefaultValues:
     def test_threat_model_result_skipped_defaults_empty(self) -> None:
         """Kills mutant 8: `skipped_tasks = field(default_factory=list)` → `None`.
         Verifies ThreatModelResult can be constructed without skipped_tasks."""
-        from superred.core.controller import ThreatModelResult
+        from superred.core.controller import ControllerConfig, ThreatModelResult
 
         result = ThreatModelResult(
             scope=EXTERNAL_SCOPE,
             llm_config=None,
+            controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
             task_results=[],
         )
         assert result.skipped_tasks == []
@@ -806,11 +807,12 @@ class TestResultFrozenness:
 
     def test_threat_model_result_is_frozen(self) -> None:
         """Kills mutant 6: `frozen=True` -> `frozen=False` on ThreatModelResult."""
-        from superred.core.controller import ThreatModelResult
+        from superred.core.controller import ControllerConfig, ThreatModelResult
 
         tmr = ThreatModelResult(
             scope=EXTERNAL_SCOPE,
             llm_config=None,
+            controller_config=ControllerConfig(max_runs_per_task=100, include_feedback=True),
             task_results=[],
         )
         with pytest.raises(AttributeError):

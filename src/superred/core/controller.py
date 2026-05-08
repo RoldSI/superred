@@ -98,6 +98,19 @@ class TaskResult:
 
 
 @dataclass(frozen=True)
+class ControllerConfig:
+    """Controller-level settings captured per threat model for reproducibility.
+
+    Attributes:
+        max_runs_per_task: Safety cap on runs per task that was in effect.
+        include_feedback: Whether ``RunEndEvent.evaluation`` was populated.
+    """
+
+    max_runs_per_task: int
+    include_feedback: bool
+
+
+@dataclass(frozen=True)
 class ThreatModelResult:
     """Results for a single threat model (scope + LLM config combination).
 
@@ -105,12 +118,15 @@ class ThreatModelResult:
         scope: The security domain scope tested.
         llm_config: The LLM configuration used, or ``None`` when no LLM
             configs were provided.
+        controller_config: Controller settings used for this run (cap and
+            feedback flag), captured so the result file is self-describing.
         task_results: Results for each evaluated task.
         skipped_tasks: Tasks that raised NotApplicable during configure.
     """
 
     scope: Scope
     llm_config: LLMConfig | None
+    controller_config: ControllerConfig
     task_results: list[TaskResult]
     skipped_tasks: list[Task[Target]] = field(default_factory=list)
 
@@ -315,6 +331,10 @@ class Controller:
         return ThreatModelResult(
             scope=scope,
             llm_config=llm_config,
+            controller_config=ControllerConfig(
+                max_runs_per_task=self._max_runs_per_task,
+                include_feedback=self._include_feedback,
+            ),
             task_results=task_results,
             skipped_tasks=skipped_tasks,
         )

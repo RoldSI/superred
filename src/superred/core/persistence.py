@@ -38,7 +38,12 @@ from superred.core.types.security_domain import Scope, SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
 if TYPE_CHECKING:
-    from superred.core.controller import RunResult, TaskResult, ThreatModelResult
+    from superred.core.controller import (
+        ControllerConfig,
+        RunResult,
+        TaskResult,
+        ThreatModelResult,
+    )
 
 
 SCHEMA_VERSION = 1
@@ -116,6 +121,10 @@ def _serialize_llm_config(cfg: LLMConfig | None) -> dict[str, Any] | None:
 
 def _serialize_llm_usage(u: LLMUsage) -> dict[str, Any]:
     return {"calls": u.calls, "cost": u.cost}
+
+
+def _serialize_controller_config(cc: ControllerConfig) -> dict[str, Any]:
+    return {"max_runs_per_task": cc.max_runs_per_task, "include_feedback": cc.include_feedback}
 
 
 def _event_base(event: Event) -> dict[str, Any]:
@@ -196,6 +205,7 @@ def serialize_threat_model_result(tmr: ThreatModelResult) -> dict[str, Any]:
         "completed_at": datetime.now(UTC).isoformat(),
         "scope": sorted(t.name for t in tmr.scope),
         "llm_config": _serialize_llm_config(tmr.llm_config),
+        "controller_config": _serialize_controller_config(tmr.controller_config),
         "task_results": [_serialize_task_result(t) for t in tmr.task_results],
         "skipped_tasks": [{"goal": t.goal.description} for t in tmr.skipped_tasks],
     }
