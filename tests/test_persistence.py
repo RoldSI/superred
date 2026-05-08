@@ -252,6 +252,7 @@ def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult
         best_evaluation=eval_result,
         success=True,
         llm_usage=LLMUsage(calls=2, cost=0.01),
+        stop_reason="done",
     )
     return ThreatModelResult(
         scope=scope,
@@ -272,6 +273,7 @@ def test_serialize_threat_model_result_shape() -> None:
     tr = payload["task_results"][0]
     assert tr["task"]["goal"] == "Test goal"
     assert tr["success"] is True
+    assert tr["stop_reason"] == "done"
     assert tr["runs"][0]["run_number"] == 1
     assert tr["runs"][0]["llm_usage"] == {"calls": 2, "cost": 0.01}
     assert payload["skipped_tasks"] == []
@@ -328,6 +330,7 @@ def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
         best_evaluation=ev,
         success=False,
         llm_usage=LLMUsage(),
+        stop_reason="max_runs",
     )
     tmr = ThreatModelResult(scope=frozenset({EXTERNAL_TAG}), llm_config=None, task_results=[tr])
     written = write_threat_model_result(tmr, tmp_path)
@@ -354,6 +357,7 @@ def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
         best_evaluation=ev,
         success=False,
         llm_usage=LLMUsage(),
+        stop_reason="max_runs",
     )
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),

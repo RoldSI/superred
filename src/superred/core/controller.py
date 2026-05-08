@@ -25,6 +25,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from superred.core.channel import EventChannel
 from superred.core.interfaces.optimizer import Optimizer
@@ -44,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 # Type alias for optimizer factories.
 OptimizerFactory = Callable[[], Optimizer]
+
+# Reason a task's run loop ended.
+StopReason = Literal["done", "max_runs", "budget_exhausted"]
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +81,11 @@ class TaskResult:
         best_evaluation: The EvaluationResult that produced the best score.
         success: Whether any run achieved the adversarial goal.
         llm_usage: Total optimizer LLM usage across all runs.
+        stop_reason: Why the run loop ended.  ``"done"`` means the optimizer
+            returned ``RunEndResponse(done=True)``.  ``"max_runs"`` means
+            the safety cap ``max_runs_per_task`` was reached.
+            ``"budget_exhausted"`` means a :class:`BudgetExhaustedError`
+            was raised by the LLM client.
     """
 
     task: Task[Target]
@@ -85,6 +94,7 @@ class TaskResult:
     best_evaluation: EvaluationResult
     success: bool
     llm_usage: LLMUsage
+    stop_reason: StopReason
 
 
 @dataclass(frozen=True)
@@ -364,6 +374,9 @@ class Controller:
         best_score: Score | None = None
         best_evaluation: EvaluationResult | None = None
         success = False
+        # Default reason: if the for-loop exits without an explicit break,
+        # the safety cap was reached.
+        stop_reason: StopReason = "max_runs"
 
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
@@ -380,6 +393,7 @@ class Controller:
                         task.goal.description,
                         run_number,
                     )
+                    stop_reason = "budget_exhausted"
                     break
 
                 run_usage = llm_client.usage if llm_client else LLMUsage()
@@ -402,6 +416,7 @@ class Controller:
                 await self._target.cleanup()
 
                 if done:
+                    stop_reason = "done"
                     break
 
         finally:
@@ -432,6 +447,7 @@ class Controller:
             best_evaluation=best_evaluation,
             success=success,
             llm_usage=task_usage,
+            stop_reason=stop_reason,
         )
 
     async def _run_single(

@@ -184,6 +184,7 @@ def _serialize_task_result(tr: TaskResult) -> dict[str, Any]:
         "best_score": _serialize_score(tr.best_score),
         "best_evaluation": _serialize_evaluation(tr.best_evaluation),
         "llm_usage": _serialize_llm_usage(tr.llm_usage),
+        "stop_reason": tr.stop_reason,
         "runs": [_serialize_run_result(r, i + 1) for i, r in enumerate(tr.runs)],
     }
 
