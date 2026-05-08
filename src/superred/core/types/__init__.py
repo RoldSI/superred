@@ -13,7 +13,6 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-
     ObservableEvent,
     RunEndEvent,
     RunEndResponse,
