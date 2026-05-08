@@ -135,6 +135,7 @@ All runs for one task:
 - `best_evaluation: EvaluationResult` — the evaluation that produced the best score.
 - `success: bool` — whether any run achieved the adversarial goal.
 - `llm_usage: LLMUsage` — total optimizer LLM usage across all runs.
+- `stop_reason: Literal["done", "max_runs", "budget_exhausted"]` — why the run loop ended: optimizer signaled `RunEndResponse(done=True)`, hit `max_runs_per_task`, or `BudgetExhaustedError` was raised.
 
 ### ThreatModelResult (frozen)
 
