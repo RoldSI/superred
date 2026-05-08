@@ -37,7 +37,7 @@ Config and query are **intentionally distinct**:
 
 ## Execution
 
-- `run(emit, send_event)` — execute one run. Emit entries via `emit(entry)` (an `EmitFn`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object — only the emit function.
+- `run(emit, send_event)` — execute one run. Emit events via `emit(event)` (an `EventHandler = Callable[[Event], None]`, typically `emit(ObservableEvent(observable=..., content=...))`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object — only the emit function.
 - `cleanup()` — reset state after a run and its evaluation (clear databases, reset containers, etc.). Called by the controller after each evaluation, before the next run. Must be implemented even if a no-op.
 - `teardown()` — release resources when all evaluation is done.
 

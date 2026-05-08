@@ -799,6 +799,7 @@ class TestResultFrozenness:
             best_evaluation=EvaluationResult(success=False, primary_score=Score(0.0)),
             success=False,
             llm_usage=LLMUsage(),
+            stop_reason="done",
         )
         with pytest.raises(AttributeError):
             tr.success = True  # type: ignore[misc]

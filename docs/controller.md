@@ -26,6 +26,7 @@ controller = Controller(
     llm_configs=[llm_config],       # optional — omit for non-LLM optimizers
     max_runs_per_task=100,          # safety limit, default 100
     include_feedback=True,          # populate RunEndEvent.evaluation (default True)
+    results_dir="results/run-1",    # optional — persist one JSON per threat model
 )
 
 # Run with explicit scopes
@@ -63,7 +64,7 @@ For each (scope, llm_config) combination:
    - **Run loop** (until optimizer signals done or `max_runs_per_task`):
      - Create `Trajectory(filtered_scope=scope)`. Access `trajectory.filtered` for optimizer's view.
      - Send `RunStartEvent(filtered_trajectory)` through channel — optimizer gets filtered view.
-     - `target.run(emit, send_event)` — target emits `LogEvent` instances via `emit(event)`; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records all events and responses directly to the trajectory.
+     - `target.run(emit, send_event)` — target emits `ObservableEvent` instances via `emit(event)`; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records all events and responses directly to the trajectory.
      - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores).
      - Send `RunEndEvent(evaluation=filtered_eval, security_domain=<scope_tag>)` through channel — `RunEndEvent` is persisted to the trajectory. When `include_feedback=True` (default), `evaluation` carries the filtered result; when `False`, `evaluation` is `None`. Check `RunEndResponse.done`.
      - Close the trajectory.
@@ -111,7 +112,7 @@ There is no separate event log. The `trajectory_recorder` middleware records all
 
 - **Controllable events** — `ControllablePreCallEvent`, `ControllablePostCallEvent`.
 - **Controllable responses** — `ControllableInjection`, `ControllableNoInjection`.
-- **Log events** — `LogEvent` emitted by the target (model requests, model responses, etc.).
+- **Observable events** — `ObservableEvent` emitted by the target (model requests, model responses, etc.).
 - **RunEndEvent** — persisted to the trajectory by the controller after evaluation. Carries `evaluation: EvaluationResult | None` and has `security_domain` set from the scope.
 
 The trajectory IS the event log. `RunStartEvent` is NOT persisted to the trajectory — it carries no additional information and always appears at a fixed position. `RunEndEvent` IS persisted because it carries the evaluation result. To inspect events and responses for a run, query the trajectory items by type.
@@ -134,6 +135,7 @@ All runs for one task:
 - `best_evaluation: EvaluationResult` — the evaluation that produced the best score.
 - `success: bool` — whether any run achieved the adversarial goal.
 - `llm_usage: LLMUsage` — total optimizer LLM usage across all runs.
+- `stop_reason: Literal["done", "max_runs", "budget_exhausted"]` — why the run loop ended: optimizer signaled `RunEndResponse(done=True)`, hit `max_runs_per_task`, or `BudgetExhaustedError` was raised.
 
 ### ThreatModelResult (frozen)
 
@@ -175,3 +177,31 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 - **LLM access as threat model parameter**: The model and budget are experiment-level settings, not optimizer choices. The controller creates a constrained `LLMClient` per task and the optimizer cannot escape the configured model/credentials. Budget limits are a fairness measure for comparing optimizer strategies.
 - **Per-task LLM budget**: Each task gets a fresh `LLMClient` with reset counters. This ensures budget fairness when evaluating across multiple tasks and enables per-task budget analysis.
 - **Cumulative usage snapshots**: `RunResult.llm_usage` is cumulative (includes all prior runs) rather than per-run delta. This is more useful for budget-vs-performance curves — each point shows (total_budget_spent, score_at_that_point).
+
+## Persistence (`results_dir`)
+
+When `results_dir` is provided, the controller writes a two-level layout per completed threat model:
+
+```
+results_dir/
+├── {scope}__{model}.json            ← claim-level summary (one per threat model)
+├── {scope}__{model}/
+│   ├── 00001__{goal}.json            ← per-task detail (one per task)
+│   └── ...
+├── {other_scope}__{model}.json
+└── {other_scope}__{model}/
+    └── ...
+```
+
+- **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_configs` is empty, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
+- **When**: immediately after each `_iterate_tasks` returns and before the next threat model begins. If a later threat model raises, the already-completed ones are intact on disk.
+- **Crash-safety unit is the threat model, not the task**: the per-threat-model write happens once, after every task in that threat model has finished. An exception escaping mid-threat-model (e.g. inside `target.run` for one of its tasks) skips persistence entirely for that threat model, so all task progress for it is lost. Earlier threat models that already wrote remain intact.
+- **Atomicity**: each individual file is written via temp file + `rename`. Per-task detail files are written first; the claim-level file lands last and acts as a completion marker for the threat model.
+- **Claim-level file**: `version`, `completed_at`, `scope`, `llm_config` (model + max_cost only), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
+- **Per-task detail file**: self-contained — repeats `version`, `scope`, `llm_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`).
+- **Aggregates**: `mean_primary_score` excludes `NotApplicable` tasks (they are reported separately as `n_skipped`). When the claim has no evaluable tasks, `mean_primary_score` and `max_primary_score` are `null`.
+- **`stop_reason` per task**: one of `"done"` (optimizer signaled `RunEndResponse(done=True)`), `"max_runs"` (hit the safety cap), or `"budget_exhausted"` (`BudgetExhaustedError` was raised).
+- **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded from both claim and detail files. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed — keep credentials out of log/observable payloads.
+- **Collisions**: if either the claim-level file or the task subfolder already exists, the writer raises `FileExistsError` rather than overwriting. Pass a per-run subdirectory if you re-run into the same parent.
+
+When `results_dir` is `None` (the default), nothing is written and behavior is unchanged.

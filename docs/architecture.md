@@ -77,7 +77,7 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
           i.   Create Trajectory (full) and FilteredTrajectory (optimizer's view)
                channel.send(RunStartEvent(filtered_trajectory))
           ii.  target.run(emit, send_event)
-               → target emits LogEvent instances via emit(event); send_event bridges to channel with filtering
+               → target emits ObservableEvent instances via emit(event); send_event bridges to channel with filtering
                → trajectory_recorder middleware records events/responses directly to trajectory
           iii. task.evaluate(trajectory, target) → EvaluationResult
                → controller filters sub_scores by scope
@@ -149,6 +149,8 @@ src/superred/core/
   llm.py               -- LLMClient (constrained LLM proxy for optimizers)
   middleware.py         -- Middleware type, compose(), security_domain_filter(),
                           trajectory_recorder()
+  persistence.py       -- per-threat-model JSON serialization (used when the
+                          Controller is given a results_dir; module-private)
   interfaces/
     optimizer.py       -- Optimizer ABC (actor model: run, on_event, _dispatch)
     target.py          -- Target ABC, EventHandler type alias
@@ -158,14 +160,16 @@ src/superred/core/
     goal.py            -- Goal
     llm.py             -- LLMConfig, LLMUsage, BudgetExhaustedError
     state.py           -- ConfigSpec, QuerySpec, QueryParam
-    controllable.py    -- ControllableSpec, Controllable, RequestAnswerPair
+    controllable.py    -- Controllable
     observable.py      -- Observable, ObservableValue
-    event.py           -- Event, EventResponse, ControllablePreCallEvent,
-                          ControllablePostCallEvent, ControllableInjection,
-                          ControllableNoInjection, LogEvent,
-                          RunStartEvent, RunEndEvent, RunEndResponse
+    event.py           -- Event, EventResponse base classes,
+                          EventHandler / EventResponseHandler aliases
+    events.py          -- ControllablePreCallEvent, ControllablePostCallEvent,
+                          ControllableInjection, ControllableNoInjection,
+                          ObservableEvent, RunStartEvent, RunEndEvent,
+                          RunEndResponse
     trajectory.py      -- Trajectory, FilteredTrajectory, ReadableTrajectory,
-                          EmitFn, get_domain
+                          TrajectoryItem, get_domain
     evaluation.py      -- Score, EvaluationResult
     security_domain.py -- SecurityDomainTag, SecurityDomain, Scope, scope_includes
 ```

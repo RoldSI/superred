@@ -227,6 +227,57 @@ class TestControllerRun:
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         assert len(_first_tmr(result).task_results[0].runs) == 3
 
+    async def test_stop_reason_done(self) -> None:
+        """Optimizer signals done=True -> stop_reason='done'."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].stop_reason == "done"
+
+    async def test_stop_reason_max_runs(self) -> None:
+        """Loop exhausts max_runs_per_task -> stop_reason='max_runs'."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=False),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=2,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].stop_reason == "max_runs"
+
+    async def test_stop_reason_budget_exhausted(self) -> None:
+        """BudgetExhaustedError mid-run -> stop_reason='budget_exhausted'."""
+        from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+        run_count = 0
+
+        class BudgetBlowingTarget(StubTarget):
+            async def run(
+                self,
+                emit: EventHandler,
+                send_event: EventResponseHandler,
+            ) -> None:
+                nonlocal run_count
+                run_count += 1
+                if run_count >= 2:
+                    raise BudgetExhaustedError("Budget gone", usage=LLMUsage(calls=10, cost=1.0))
+                await super().run(emit, send_event)
+
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=False),
+            target=BudgetBlowingTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=10,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _first_tmr(result).task_results[0].stop_reason == "budget_exhausted"
+
     async def test_skipped_not_applicable_task(self) -> None:
         na_task = NotApplicableTask()
         controller = Controller(

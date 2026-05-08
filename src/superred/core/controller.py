@@ -24,6 +24,8 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
 
 from superred.core.channel import EventChannel
 from superred.core.interfaces.optimizer import Optimizer
@@ -32,6 +34,7 @@ from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.llm import LLMClient
 from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
+from superred.core.persistence import write_threat_model_result
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
@@ -42,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 # Type alias for optimizer factories.
 OptimizerFactory = Callable[[], Optimizer]
+
+# Reason a task's run loop ended.
+StopReason = Literal["done", "max_runs", "budget_exhausted"]
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +81,11 @@ class TaskResult:
         best_evaluation: The EvaluationResult that produced the best score.
         success: Whether any run achieved the adversarial goal.
         llm_usage: Total optimizer LLM usage across all runs.
+        stop_reason: Why the run loop ended.  ``"done"`` means the optimizer
+            returned ``RunEndResponse(done=True)``.  ``"max_runs"`` means
+            the safety cap ``max_runs_per_task`` was reached.
+            ``"budget_exhausted"`` means a :class:`BudgetExhaustedError`
+            was raised by the LLM client.
     """
 
     task: Task[Target]
@@ -83,6 +94,7 @@ class TaskResult:
     best_evaluation: EvaluationResult
     success: bool
     llm_usage: LLMUsage
+    stop_reason: StopReason
 
 
 @dataclass(frozen=True)
@@ -137,6 +149,14 @@ class Controller:
             config represents a different attacker model to test.  Optional
             — pass an empty list or omit for non-LLM optimizers.
         max_runs_per_task: Safety limit on runs per task.
+        results_dir: Optional directory for persisted artifacts. When set,
+            each completed threat model is written atomically to
+            ``{results_dir}/{scope}__{model}.json`` immediately after it
+            finishes — so a later threat model that crashes does not lose
+            already-completed ones. Trajectories, evaluations, and
+            cumulative LLM usage per run are included; ``LLMConfig.api_key``
+            and ``api_base`` are not. Trajectory contents are not scrubbed
+            for secrets.
     """
 
     def __init__(
@@ -147,6 +167,7 @@ class Controller:
         llm_configs: Sequence[LLMConfig] | None = None,
         max_runs_per_task: int = 100,
         include_feedback: bool = True,
+        results_dir: str | Path | None = None,
     ) -> None:
         if max_runs_per_task < 1:
             raise ValueError("max_runs_per_task must be at least 1")
@@ -156,6 +177,7 @@ class Controller:
         self._llm_configs: list[LLMConfig] = list(llm_configs) if llm_configs else []
         self._max_runs_per_task = max_runs_per_task
         self._include_feedback = include_feedback
+        self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -247,19 +269,22 @@ class Controller:
         scopes: list[Scope],
         llm_configs: list[LLMConfig],
     ) -> list[ThreatModelResult]:
-        """Iterate all (scope, llm_config) combinations."""
-        results: list[ThreatModelResult] = []
+        """Iterate all (scope, llm_config) combinations.
 
-        if llm_configs:
-            for scope in scopes:
-                for llm_config in llm_configs:
-                    result = await self._iterate_tasks(scope, llm_config)
-                    results.append(result)
-        else:
-            # No LLM configs — iterate scopes only
-            for scope in scopes:
-                result = await self._iterate_tasks(scope, None)
+        After each completed threat model, the result is persisted to
+        ``self._results_dir`` (when configured) before the next one
+        begins. This keeps already-finished threat models safe if a
+        later iteration raises.
+        """
+        results: list[ThreatModelResult] = []
+        config_axis: list[LLMConfig | None] = list(llm_configs) if llm_configs else [None]
+
+        for scope in scopes:
+            for llm_config in config_axis:
+                result = await self._iterate_tasks(scope, llm_config)
                 results.append(result)
+                if self._results_dir is not None:
+                    write_threat_model_result(result, self._results_dir)
 
         return results
 
@@ -349,6 +374,9 @@ class Controller:
         best_score: Score | None = None
         best_evaluation: EvaluationResult | None = None
         success = False
+        # Default reason: if the for-loop exits without an explicit break,
+        # the safety cap was reached.
+        stop_reason: StopReason = "max_runs"
 
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
@@ -365,6 +393,7 @@ class Controller:
                         task.goal.description,
                         run_number,
                     )
+                    stop_reason = "budget_exhausted"
                     break
 
                 run_usage = llm_client.usage if llm_client else LLMUsage()
@@ -387,6 +416,7 @@ class Controller:
                 await self._target.cleanup()
 
                 if done:
+                    stop_reason = "done"
                     break
 
         finally:
@@ -417,6 +447,7 @@ class Controller:
             best_evaluation=best_evaluation,
             success=success,
             llm_usage=task_usage,
+            stop_reason=stop_reason,
         )
 
     async def _run_single(
