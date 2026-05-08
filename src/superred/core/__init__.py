@@ -34,7 +34,6 @@ from superred.core.types import (
     EventHandler,
     EventResponse,
     EventResponseHandler,
-
     FilteredTrajectory,
     Goal,
     Observable,

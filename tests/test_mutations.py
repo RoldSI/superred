@@ -909,13 +909,16 @@ class TestBudgetExhaustedStopsTask:
 
         class BudgetBlowingTarget(StubTarget):
             async def run(
-                self, emit: EventHandler, send_event: EventResponseHandler,
+                self,
+                emit: EventHandler,
+                send_event: EventResponseHandler,
             ) -> None:
                 nonlocal run_count
                 run_count += 1
                 if run_count >= 2:
                     raise BudgetExhaustedError(
-                        "Budget gone", usage=LLMUsage(calls=10, cost=1.0),
+                        "Budget gone",
+                        usage=LLMUsage(calls=10, cost=1.0),
                     )
                 await super().run(emit, send_event)
 
