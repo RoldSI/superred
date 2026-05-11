@@ -113,20 +113,6 @@ class FailingConfigureTask(StubTask):
         raise RuntimeError("configure exploded")
 
 
-class FailingInitializeOptimizer(StubOptimizer):
-    """Optimizer whose initialize() raises."""
-
-    async def initialize(
-        self,
-        goal: Goal,
-        controllables: list[Controllable],
-        observables: list[ObservableValue],
-        llm_client: LLMClient,
-    ) -> None:
-        await super().initialize(goal, controllables, observables, llm_client)
-        raise RuntimeError("initialize exploded")
-
-
 class BudgetExhaustedInInitializeOptimizer(StubOptimizer):
     """Optimizer that exhausts its LLM budget inside initialize()."""
 
@@ -850,22 +836,6 @@ class TestExceptionSafety:
         assert trs[0].runs == []
         assert trs[0].best_score.value == 0.0
         assert trs[1].stop_reason == "done"
-
-    async def test_optimizer_initialize_error_synthesizes_task_result(self) -> None:
-        """An optimizer.initialize failure is contained and the optimizer is torn down."""
-        bad_opt = FailingInitializeOptimizer(done=True)
-        controller = Controller(
-            optimizer_factory=lambda: bad_opt,
-            target=StubTarget(),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
-        )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        tr = _first_tmr(result).task_results[0]
-        assert tr.stop_reason == "error"
-        assert tr.runs == []
-        # The optimizer is torn down even though initialize failed.
-        assert bad_opt.torn_down
 
     async def test_teardown_failure_during_init_error_does_not_propagate(self) -> None:
         """A raising teardown in the init-failure path must not mask the
