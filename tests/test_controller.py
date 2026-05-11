@@ -92,6 +92,84 @@ class FailingEvalTask(StubTask):
         raise RuntimeError("evaluation exploded")
 
 
+class FailAfterNRunsTarget(StubTarget):
+    """Target that runs normally for the first N runs, then raises."""
+
+    def __init__(self, succeed_for: int) -> None:
+        super().__init__()
+        self._succeed_for = succeed_for
+
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
+        if self.run_count >= self._succeed_for:
+            self.run_count += 1
+            raise RuntimeError("target exploded mid-task")
+        await super().run(emit, send_event)
+
+
+class FailingConfigureTask(StubTask):
+    """Task whose configure_target() raises (non-NotApplicable) RuntimeError."""
+
+    async def configure_target(self, target: Target) -> None:
+        raise RuntimeError("configure exploded")
+
+
+class BudgetExhaustedInInitializeOptimizer(StubOptimizer):
+    """Optimizer that exhausts its LLM budget inside initialize()."""
+
+    async def initialize(
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+        llm_client: LLMClient,
+    ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
+        # Simulate a warmup LLM call that exhausts the configured budget.
+        from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+        raise BudgetExhaustedError(
+            "Budget gone during init", usage=LLMUsage(calls=1, cost=0.01),
+        )
+
+
+class FailingInitAndTeardownOptimizer(StubOptimizer):
+    """Optimizer whose initialize() and teardown() both raise.
+
+    Used to verify that a failing teardown does not mask the original
+    initialize exception or cause the controller to crash.
+    """
+
+    async def initialize(
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+        llm_client: LLMClient,
+    ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
+        raise RuntimeError("initialize exploded")
+
+    async def teardown(self) -> None:
+        # Mark the call so tests can confirm teardown was attempted, then raise.
+        await super().teardown()
+        raise RuntimeError("teardown exploded")
+
+
+class RaisingTeardownOptimizer(StubOptimizer):
+    """Otherwise-normal optimizer whose teardown() always raises."""
+
+    async def teardown(self) -> None:
+        await super().teardown()
+        raise RuntimeError("teardown exploded")
+
+
+class FailingCleanupTarget(StubTarget):
+    """Target whose cleanup() raises after the first run finishes."""
+
+    async def cleanup(self) -> None:
+        await super().cleanup()
+        raise RuntimeError("cleanup exploded")
+
+
 class AlternatingSuccessTask(StubTask):
     """Task that succeeds on run 1, fails on run 2."""
 
@@ -278,6 +356,24 @@ class TestControllerRun:
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         assert _first_tmr(result).task_results[0].stop_reason == "budget_exhausted"
 
+    async def test_stop_reason_budget_exhausted_in_initialize(self) -> None:
+        """BudgetExhaustedError raised inside optimizer.initialize must be
+        classified as stop_reason='budget_exhausted', not 'error'."""
+        opt = BudgetExhaustedInInitializeOptimizer()
+        controller = Controller(
+            optimizer_factory=lambda: opt,
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "budget_exhausted"
+        assert tr.runs == []
+        assert tr.success is False
+        # Teardown still happened despite the early return.
+        assert opt.torn_down
+
     async def test_skipped_not_applicable_task(self) -> None:
         na_task = NotApplicableTask()
         controller = Controller(
@@ -314,7 +410,9 @@ class TestControllerRun:
             max_runs_per_task=3,
         )
         await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert target.cleanup_count == 3
+        # 3 inner cleanups (one after each run's evaluation) + 1 post-task
+        # cleanup invoked from the finally block.
+        assert target.cleanup_count == 4
 
     async def test_best_score_tracks_highest(self) -> None:
         controller = Controller(
@@ -634,8 +732,8 @@ class TestEventsOnTrajectory:
 
 
 class TestExceptionSafety:
-    @pytest.mark.regression  # Fix: Controller.run() teardown wrapped in try/finally
-    async def test_target_run_raises_propagates_and_cleans_up(self) -> None:
+    @pytest.mark.regression  # Per-task error containment: target.run failure
+    async def test_target_run_raises_is_contained_per_task(self) -> None:
         optimizer = StubOptimizer(done=True)
         target = FailingRunTarget()
         controller = Controller(
@@ -644,13 +742,16 @@ class TestExceptionSafety:
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
-        with pytest.raises(RuntimeError, match="target exploded"):
-            await controller.run(scopes=[EXTERNAL_SCOPE])
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        assert tr.success is False
+        assert tr.runs == []
         assert optimizer.torn_down
         assert target.torn_down
 
-    @pytest.mark.regression  # Fix: Controller.run() teardown wrapped in try/finally
-    async def test_task_evaluate_raises_propagates_and_cleans_up(self) -> None:
+    @pytest.mark.regression  # Per-task error containment: task.evaluate failure
+    async def test_task_evaluate_raises_is_contained_per_task(self) -> None:
         optimizer = StubOptimizer(done=True)
         target = StubTarget()
         controller = Controller(
@@ -659,13 +760,15 @@ class TestExceptionSafety:
             security_claim=SecurityClaim.from_tasks([FailingEvalTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
-        with pytest.raises(RuntimeError, match="evaluation exploded"):
-            await controller.run(scopes=[EXTERNAL_SCOPE])
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        assert tr.success is False
         assert optimizer.torn_down
         assert target.torn_down
 
-    @pytest.mark.regression  # Fix: Optimizer._dispatch + run() exception safety
-    async def test_optimizer_on_event_raises_propagates(self) -> None:
+    @pytest.mark.regression  # Per-task error containment: optimizer.on_event failure
+    async def test_optimizer_on_event_raises_is_contained_per_task(self) -> None:
         optimizer = FailingOnEventOptimizer()
         target = StubTarget()
         controller = Controller(
@@ -674,9 +777,134 @@ class TestExceptionSafety:
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
-        with pytest.raises(RuntimeError, match="optimizer exploded"):
-            await controller.run(scopes=[EXTERNAL_SCOPE])
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        assert tr.success is False
         assert optimizer.torn_down
+        assert target.torn_down
+
+    async def test_partial_runs_preserved_when_task_errors_mid_loop(self) -> None:
+        """A task that succeeds run 1 and fails run 2 keeps run 1 in its TaskResult."""
+        target = FailAfterNRunsTarget(succeed_for=1)
+        controller = Controller(
+            optimizer_factory=lambda: CountingOptimizer(stop_after=10),
+            target=target,
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=5,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        # The successful first run is preserved.
+        assert len(tr.runs) == 1
+        # success latched from the first run.
+        assert tr.success is True
+        assert target.torn_down
+
+    async def test_sibling_tasks_unaffected_by_task_error(self) -> None:
+        """One failing task does not stop the rest of the threat model."""
+        failing = FailingEvalTask()
+        ok = StubTask(goal_text="Good task")
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([failing, ok]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        trs = _first_tmr(result).task_results
+        assert len(trs) == 2
+        assert trs[0].stop_reason == "error"
+        assert trs[0].success is False
+        assert trs[1].stop_reason == "done"
+        assert trs[1].success is True
+
+    async def test_configure_target_error_synthesizes_task_result(self) -> None:
+        """A non-NotApplicable error in configure_target produces a synthetic error TaskResult."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([FailingConfigureTask(), StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        trs = _first_tmr(result).task_results
+        assert len(trs) == 2
+        assert trs[0].stop_reason == "error"
+        assert trs[0].runs == []
+        assert trs[0].best_score.value == 0.0
+        assert trs[1].stop_reason == "done"
+
+    async def test_teardown_failure_during_init_error_does_not_propagate(self) -> None:
+        """A raising teardown in the init-failure path must not mask the
+        original initialize exception or crash the controller."""
+        bad_opt = FailingInitAndTeardownOptimizer(done=True)
+        controller = Controller(
+            optimizer_factory=lambda: bad_opt,
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        # Teardown was still attempted.
+        assert bad_opt.torn_down
+
+    async def test_teardown_failure_in_finally_does_not_propagate(self) -> None:
+        """A raising teardown in the post-run finally must not propagate
+        over a normally-completed task."""
+        opt = RaisingTeardownOptimizer(done=True)
+        controller = Controller(
+            optimizer_factory=lambda: opt,
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        # The task completed normally; the swallowed teardown failure does
+        # not flip the stop_reason or strip the run.
+        assert tr.stop_reason == "done"
+        assert len(tr.runs) == 1
+        assert opt.torn_down
+
+    async def test_target_cleanup_invoked_in_finally_after_failed_run(self) -> None:
+        """A failed task still calls target.cleanup in the finally block so
+        the next task starts against a clean target."""
+        target = FailingRunTarget()  # raises on every target.run
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=target,
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=3,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        # The inner-loop cleanup-after-success never ran (every run failed),
+        # so the only cleanup attempt comes from the outer finally.
+        assert target.cleanup_count == 1
+        assert target.torn_down
+
+    async def test_target_cleanup_error_treated_as_error(self) -> None:
+        """target.cleanup raising after a run is treated like any other error."""
+        target = FailingCleanupTarget()
+        controller = Controller(
+            optimizer_factory=lambda: CountingOptimizer(stop_after=10),
+            target=target,
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=5,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        # The run before cleanup succeeded — preserved.
+        assert len(tr.runs) == 1
         assert target.torn_down
 
     async def test_all_tasks_not_applicable(self) -> None:

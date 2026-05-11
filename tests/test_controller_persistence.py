@@ -11,8 +11,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from superred.core.controller import Controller
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.types.controllable import Controllable
@@ -194,8 +192,15 @@ async def test_two_scopes_produce_two_layouts(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_later_failure_keeps_earlier_threat_model_persisted(tmp_path: Path) -> None:
-    """Scope 1 completes, scope 2 raises mid-flight: scope 1's file is intact."""
+async def test_target_run_error_persists_both_threat_models_with_error_task(
+    tmp_path: Path,
+) -> None:
+    """A target.run() failure no longer aborts the run.
+
+    Scope 1's run() succeeds; scope 2's run() raises. Both threat models
+    are still persisted; the failing scope records its task with
+    ``stop_reason="error"``.
+    """
     from .conftest import ROOT_TAG
 
     target = FailOnNthRunTarget(fail_on_call=2, tag=EXTERNAL_TAG)
@@ -207,20 +212,48 @@ async def test_later_failure_keeps_earlier_threat_model_persisted(tmp_path: Path
         results_dir=tmp_path,
         max_runs_per_task=1,
     )
-    # Both EXTERNAL_SCOPE and the root scope cover EXTERNAL_TAG, so the
-    # target's controllable is in scope for both. Distinct scopes give
-    # distinct filenames. The second target.run() call raises.
     root_scope: Scope = frozenset({ROOT_TAG})
-    with pytest.raises(RuntimeError, match="target failed on call #2"):
-        await controller.run(scopes=[EXTERNAL_SCOPE, root_scope])
+    await controller.run(scopes=[EXTERNAL_SCOPE, root_scope])
 
-    # The first (external) scope completed and was persisted before the
-    # second (root) scope started. The second produced no file.
     files = sorted(p.name for p in tmp_path.glob("*.json"))
-    assert files == ["external__test-model.json"]
-    parsed = json.loads((tmp_path / "external__test-model.json").read_text())
-    assert parsed["scope"] == ["external"]
-    assert len(parsed["task_results"]) == 1
+    assert files == ["external__test-model.json", "root__test-model.json"]
+
+    ext = json.loads((tmp_path / "external__test-model.json").read_text())
+    root = json.loads((tmp_path / "root__test-model.json").read_text())
+    assert ext["scope"] == ["external"]
+    assert ext["task_results"][0]["stop_reason"] == "done"
+    assert root["scope"] == ["root"]
+    assert root["task_results"][0]["stop_reason"] == "error"
+
+
+async def test_failed_task_persisted_with_error_stop_reason(tmp_path: Path) -> None:
+    """A failing task lands in the threat model's JSON with stop_reason='error'."""
+    from superred.core.interfaces.target import Target
+    from superred.core.types.evaluation import EvaluationResult
+    from superred.core.types.trajectory import Trajectory
+
+    class _FailingEvalTask(StubTask):
+        async def evaluate(
+            self, trajectory: Trajectory, target: Target,
+        ) -> EvaluationResult:
+            raise RuntimeError("evaluation exploded")
+
+    controller = Controller(
+        optimizer_factory=lambda: StubOptimizer(done=True),
+        target=StubTarget(),
+        security_claim=SecurityClaim.from_tasks(
+            [_FailingEvalTask(goal_text="bad"), StubTask(goal_text="good")],
+        ),
+        llm_configs=[STUB_LLM_CONFIG],
+        results_dir=tmp_path,
+    )
+    await controller.run(scopes=[EXTERNAL_SCOPE])
+
+    claim = json.loads((tmp_path / "external__test-model.json").read_text())
+    stop_reasons = [tr["stop_reason"] for tr in claim["task_results"]]
+    assert stop_reasons == ["error", "done"]
+    assert claim["summary"]["n_tasks"] == 2
+    assert claim["summary"]["n_success"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 OptimizerFactory = Callable[[], Optimizer]
 
 # Reason a task's run loop ended.
-StopReason = Literal["done", "max_runs", "budget_exhausted"]
+StopReason = Literal["done", "max_runs", "budget_exhausted", "error"]
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,10 @@ class TaskResult:
             returned ``RunEndResponse(done=True)``.  ``"max_runs"`` means
             the safety cap ``max_runs_per_task`` was reached.
             ``"budget_exhausted"`` means a :class:`BudgetExhaustedError`
-            was raised by the LLM client.
+            was raised by the LLM client.  ``"error"`` means an unexpected
+            exception escaped the optimizer, target, or evaluator and the
+            task was abandoned; any runs already completed before the
+            failure are preserved in ``runs``.
     """
 
     task: Task[Target]
@@ -124,6 +127,73 @@ class ControllerResult:
     """
 
     threat_model_results: list[ThreatModelResult]
+
+
+def _synthesize_error_task_result(task: Task[Target]) -> TaskResult:
+    """Build a placeholder TaskResult for a task that failed before its run loop."""
+    zero = Score(value=0.0, name="primary")
+    return TaskResult(
+        task=task,
+        runs=[],
+        best_score=zero,
+        best_evaluation=EvaluationResult(
+            success=False,
+            primary_score=zero,
+            sub_scores={},
+            rationale="Unexpected error before run loop started.",
+        ),
+        success=False,
+        llm_usage=LLMUsage(),
+        stop_reason="error",
+    )
+
+
+def _synthesize_budget_exhausted_task_result(
+    task: Task[Target], usage: LLMUsage,
+) -> TaskResult:
+    """Build a placeholder TaskResult for a task whose optimizer ran out of
+    LLM budget before any run completed (e.g. inside ``optimizer.initialize``)."""
+    zero = Score(value=0.0, name="primary")
+    return TaskResult(
+        task=task,
+        runs=[],
+        best_score=zero,
+        best_evaluation=EvaluationResult(
+            success=False,
+            primary_score=zero,
+            sub_scores={},
+            rationale="LLM budget exhausted before first run completed.",
+        ),
+        success=False,
+        llm_usage=usage,
+        stop_reason="budget_exhausted",
+    )
+
+
+async def _safe_teardown(optimizer: Optimizer, context: str) -> None:
+    """Call ``optimizer.teardown()`` swallowing and logging any exception.
+
+    Used in error-handling paths where a failing teardown must not mask
+    the original exception (or, in the ``finally`` block, must not
+    propagate over an exception that is already in flight).
+    """
+    try:
+        await optimizer.teardown()
+    except Exception:
+        logger.exception("optimizer.teardown failed during %s", context)
+
+
+async def _safe_cleanup(target: Target, context: str) -> None:
+    """Call ``target.cleanup()`` swallowing and logging any exception.
+
+    Used in the post-task ``finally`` block so a failing task always
+    leaves the target in a reset state for the next task, even when
+    the inner-loop cleanup-after-success was skipped due to an error.
+    """
+    try:
+        await target.cleanup()
+    except Exception:
+        logger.exception("target.cleanup failed during %s", context)
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +367,16 @@ class Controller:
         scope: Scope,
         llm_config: LLMConfig | None,
     ) -> ThreatModelResult:
-        """Iterate all tasks for a single threat model."""
+        """Iterate all tasks for a single threat model.
+
+        Per-task error containment: errors raised during a task's run loop
+        are caught inside ``_run_task`` and reflected via
+        ``stop_reason="error"`` on the returned :class:`TaskResult`. Errors
+        raised *outside* the run loop (e.g. inside ``configure_target`` or
+        ``optimizer.initialize``) are caught here as a backstop, recorded
+        as a synthetic error :class:`TaskResult`, and do not abort the
+        threat model.
+        """
         task_results: list[TaskResult] = []
         skipped_tasks: list[Task[Target]] = []
 
@@ -311,6 +390,12 @@ class Controller:
                     "Task %r not applicable, skipping",
                     task.goal.description,
                 )
+            except Exception:
+                logger.exception(
+                    "Task %r: unexpected error before run loop, recording as error",
+                    task.goal.description,
+                )
+                task_results.append(_synthesize_error_task_result(task))
 
         return ThreatModelResult(
             scope=scope,
@@ -351,12 +436,34 @@ class Controller:
             for o in self._target.get_observables()
             if scope_includes(scope, o.observable.security_domain)
         ]
-        await optimizer.initialize(
-            task.goal,
-            controllables,
-            observables,
-            llm_client if llm_client is not None else LLMClient._make_noop(),
-        )
+        try:
+            await optimizer.initialize(
+                task.goal,
+                controllables,
+                observables,
+                llm_client if llm_client is not None else LLMClient._make_noop(),
+            )
+        except BudgetExhaustedError:
+            # Optimizer exhausted its LLM budget inside initialize (e.g. a
+            # warmup call). Tear down and return a budget_exhausted result
+            # directly so it isn't misclassified as a generic error by
+            # _iterate_tasks.
+            await _safe_teardown(optimizer, "init budget-exhausted cleanup")
+            logger.info(
+                "Task %r: LLM budget exhausted during optimizer.initialize, stopping task",
+                task.goal.description,
+            )
+            return _synthesize_budget_exhausted_task_result(
+                task,
+                llm_client.usage if llm_client else LLMUsage(),
+            )
+        except Exception:
+            # Initialize failed: tear down before re-raising so the optimizer
+            # doesn't leak. _iterate_tasks catches and records the error.
+            # _safe_teardown ensures a failing teardown does not mask the
+            # initialize exception we're about to re-raise.
+            await _safe_teardown(optimizer, "init error cleanup")
+            raise
 
         # Create channel and launch optimizer as concurrent task.
         channel = EventChannel()
@@ -387,6 +494,29 @@ class Controller:
                         scope,
                         run_number,
                     )
+
+                    run_usage = llm_client.usage if llm_client else LLMUsage()
+                    runs.append(
+                        RunResult(
+                            trajectory=trajectory,
+                            evaluation=evaluation,
+                            llm_usage=run_usage,
+                        )
+                    )
+
+                    # Track best score
+                    if best_score is None or evaluation.primary_score.value > best_score.value:
+                        best_score = evaluation.primary_score
+                        best_evaluation = evaluation
+                    if evaluation.success:
+                        success = True
+
+                    # Cleanup target state for next run
+                    await self._target.cleanup()
+
+                    if done:
+                        stop_reason = "done"
+                        break
                 except BudgetExhaustedError:
                     logger.info(
                         "Task %r: LLM budget exhausted during run %d, stopping task",
@@ -395,28 +525,17 @@ class Controller:
                     )
                     stop_reason = "budget_exhausted"
                     break
-
-                run_usage = llm_client.usage if llm_client else LLMUsage()
-                runs.append(
-                    RunResult(
-                        trajectory=trajectory,
-                        evaluation=evaluation,
-                        llm_usage=run_usage,
+                except Exception:
+                    # Any other exception escaping the optimizer, target, or
+                    # evaluator stops just this task — the threat model is
+                    # still persisted with the surviving tasks. Runs already
+                    # appended above are preserved.
+                    logger.exception(
+                        "Task %r: unexpected error during run %d, stopping task",
+                        task.goal.description,
+                        run_number,
                     )
-                )
-
-                # Track best score
-                if best_score is None or evaluation.primary_score.value > best_score.value:
-                    best_score = evaluation.primary_score
-                    best_evaluation = evaluation
-                if evaluation.success:
-                    success = True
-
-                # Cleanup target state for next run
-                await self._target.cleanup()
-
-                if done:
-                    stop_reason = "done"
+                    stop_reason = "error"
                     break
 
         finally:
@@ -425,17 +544,32 @@ class Controller:
                 await optimizer_task
             except Exception:
                 pass
-            await optimizer.teardown()
+            # _safe_teardown so a failing teardown in the finally path
+            # cannot propagate over an exception already in flight from
+            # the try-body.
+            await _safe_teardown(optimizer, "post-run cleanup")
+            # Final target.cleanup so the next task starts against a clean
+            # target even if the inner-loop cleanup-after-success was
+            # skipped due to an error. Wrapped because cleanup itself may
+            # fail (e.g. cascading from the same fault that broke the run);
+            # we log and continue rather than mask the in-flight exception
+            # or block the next task.
+            await _safe_cleanup(self._target, "post-task cleanup")
 
-        # If budget exhausted before the first run completed, synthesize
-        # a zero-score result so the task still appears in results.
+        # If the loop ended before any run completed (budget exhausted or
+        # error on run 1), synthesize a zero-score result so the task still
+        # appears in results.
         if best_score is None:
             best_score = Score(value=0.0, name="primary")
+            if stop_reason == "error":
+                rationale = "Unexpected error before first run completed."
+            else:
+                rationale = "LLM budget exhausted before first run completed."
             best_evaluation = EvaluationResult(
                 success=False,
                 primary_score=best_score,
                 sub_scores={},
-                rationale="LLM budget exhausted before first run completed.",
+                rationale=rationale,
             )
         assert best_evaluation is not None
 
