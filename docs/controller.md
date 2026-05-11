@@ -135,7 +135,7 @@ All runs for one task:
 - `best_evaluation: EvaluationResult` — the evaluation that produced the best score.
 - `success: bool` — whether any run achieved the adversarial goal.
 - `llm_usage: LLMUsage` — total optimizer LLM usage across all runs.
-- `stop_reason: Literal["done", "max_runs", "budget_exhausted"]` — why the run loop ended: optimizer signaled `RunEndResponse(done=True)`, hit `max_runs_per_task`, or `BudgetExhaustedError` was raised.
+- `stop_reason: Literal["done", "max_runs", "budget_exhausted", "error"]` — why the run loop ended: optimizer signaled `RunEndResponse(done=True)`, hit `max_runs_per_task`, `BudgetExhaustedError` was raised, or an unexpected exception escaped the optimizer/target/evaluator and the task was abandoned.
 
 ### ThreatModelResult (frozen)
 
@@ -172,6 +172,7 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 - **Cleanup after each run**: `target.cleanup()` is called after each evaluation to reset state.
 - **Exception-safe teardown**: `optimizer.teardown()` is called per task in a `finally` block. `target.teardown()` is called once in the outer `finally` block.
 - **Exception-safe channel shutdown**: If `target.run()` or `task.evaluate()` raises, the `finally` block in `_run_task` closes the channel and awaits the optimizer task, preventing deadlock.
+- **Per-task error containment**: An unexpected exception escaping `optimizer.on_event`, `target.run`, `task.evaluate`, or `target.cleanup` is caught inside the run loop. The task ends with `stop_reason="error"` and any runs already completed before the failure are preserved in `TaskResult.runs`. Errors raised outside the run loop (e.g. `task.configure_target` non-`NotApplicable`, `optimizer.initialize`) are caught at the `_iterate_tasks` level as a backstop and recorded as a synthetic error `TaskResult` with `runs=[]`. The rest of the threat model — and every later threat model — still runs and is persisted. `BudgetExhaustedError` and `NotApplicable` continue to be handled distinctly (`stop_reason="budget_exhausted"` / `skipped_tasks` respectively).
 - **Unified trajectory**: Events and responses are recorded directly to the trajectory via the `trajectory_recorder` middleware. No separate event log — the trajectory is the single source of truth.
 - **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ControllerResult` provides structured output for programmatic use.
 - **LLM access as threat model parameter**: The model and budget are experiment-level settings, not optimizer choices. The controller creates a constrained `LLMClient` per task and the optimizer cannot escape the configured model/credentials. Budget limits are a fairness measure for comparing optimizer strategies.
@@ -194,13 +195,13 @@ results_dir/
 ```
 
 - **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_configs` is empty, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
-- **When**: immediately after each `_iterate_tasks` returns and before the next threat model begins. If a later threat model raises, the already-completed ones are intact on disk.
-- **Crash-safety unit is the threat model, not the task**: the per-threat-model write happens once, after every task in that threat model has finished. An exception escaping mid-threat-model (e.g. inside `target.run` for one of its tasks) skips persistence entirely for that threat model, so all task progress for it is lost. Earlier threat models that already wrote remain intact.
+- **When**: immediately after each `_iterate_tasks` returns and before the next threat model begins.
+- **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"` and an empty or partial `runs` list; sibling tasks and later threat models persist normally.
 - **Atomicity**: each individual file is written via temp file + `rename`. Per-task detail files are written first; the claim-level file lands last and acts as a completion marker for the threat model.
 - **Claim-level file**: `version`, `completed_at`, `scope`, `llm_config` (model + max_cost only), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
 - **Per-task detail file**: self-contained — repeats `version`, `scope`, `llm_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`).
 - **Aggregates**: `mean_primary_score` excludes `NotApplicable` tasks (they are reported separately as `n_skipped`). When the claim has no evaluable tasks, `mean_primary_score` and `max_primary_score` are `null`.
-- **`stop_reason` per task**: one of `"done"` (optimizer signaled `RunEndResponse(done=True)`), `"max_runs"` (hit the safety cap), or `"budget_exhausted"` (`BudgetExhaustedError` was raised).
+- **`stop_reason` per task**: one of `"done"` (optimizer signaled `RunEndResponse(done=True)`), `"max_runs"` (hit the safety cap), `"budget_exhausted"` (`BudgetExhaustedError` was raised), or `"error"` (unexpected exception in optimizer/target/evaluator; the task was abandoned).
 - **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded from both claim and detail files. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed — keep credentials out of log/observable payloads.
 - **Collisions**: if either the claim-level file or the task subfolder already exists, the writer raises `FileExistsError` rather than overwriting. Pass a per-run subdirectory if you re-run into the same parent.
 
