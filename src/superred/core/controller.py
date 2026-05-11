@@ -218,7 +218,9 @@ class Controller:
         llm_configs: LLM access configurations for the optimizer.  Each
             config represents a different attacker model to test.  Optional
             — pass an empty list or omit for non-LLM optimizers.
-        max_runs_per_task: Safety limit on runs per task.
+        max_runs_per_task: Safety limit on runs per task. ``None`` (default)
+            uses the built-in cap of 100; pass an explicit positive int to
+            override.
         results_dir: Optional directory for persisted artifacts. When set,
             each completed threat model is written atomically to
             ``{results_dir}/{scope}__{model}.json`` immediately after it
@@ -229,23 +231,28 @@ class Controller:
             for secrets.
     """
 
+    DEFAULT_MAX_RUNS_PER_TASK = 100
+
     def __init__(
         self,
         optimizer_factory: OptimizerFactory,
         target: Target,
         security_claim: SecurityClaim[Target],
         llm_configs: Sequence[LLMConfig] | None = None,
-        max_runs_per_task: int = 100,
+        max_runs_per_task: int | None = None,
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
     ) -> None:
-        if max_runs_per_task < 1:
+        resolved_max_runs = (
+            self.DEFAULT_MAX_RUNS_PER_TASK if max_runs_per_task is None else max_runs_per_task
+        )
+        if resolved_max_runs < 1:
             raise ValueError("max_runs_per_task must be at least 1")
         self._optimizer_factory = optimizer_factory
         self._target = target
         self._security_claim = security_claim
         self._llm_configs: list[LLMConfig] = list(llm_configs) if llm_configs else []
-        self._max_runs_per_task = max_runs_per_task
+        self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
 
