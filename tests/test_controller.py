@@ -127,6 +127,24 @@ class FailingInitializeOptimizer(StubOptimizer):
         raise RuntimeError("initialize exploded")
 
 
+class BudgetExhaustedInInitializeOptimizer(StubOptimizer):
+    """Optimizer that exhausts its LLM budget inside initialize()."""
+
+    async def initialize(
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+        llm_client: LLMClient,
+    ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
+        # Simulate a warmup LLM call that exhausts the configured budget.
+        from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+        raise BudgetExhaustedError(
+            "Budget gone during init", usage=LLMUsage(calls=1, cost=0.01),
+        )
+
+
 class FailingCleanupTarget(StubTarget):
     """Target whose cleanup() raises after the first run finishes."""
 
@@ -320,6 +338,24 @@ class TestControllerRun:
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         assert _first_tmr(result).task_results[0].stop_reason == "budget_exhausted"
+
+    async def test_stop_reason_budget_exhausted_in_initialize(self) -> None:
+        """BudgetExhaustedError raised inside optimizer.initialize must be
+        classified as stop_reason='budget_exhausted', not 'error'."""
+        opt = BudgetExhaustedInInitializeOptimizer()
+        controller = Controller(
+            optimizer_factory=lambda: opt,
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "budget_exhausted"
+        assert tr.runs == []
+        assert tr.success is False
+        # Teardown still happened despite the early return.
+        assert opt.torn_down
 
     async def test_skipped_not_applicable_task(self) -> None:
         na_task = NotApplicableTask()

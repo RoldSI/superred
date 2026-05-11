@@ -148,6 +148,28 @@ def _synthesize_error_task_result(task: Task[Target]) -> TaskResult:
     )
 
 
+def _synthesize_budget_exhausted_task_result(
+    task: Task[Target], usage: LLMUsage,
+) -> TaskResult:
+    """Build a placeholder TaskResult for a task whose optimizer ran out of
+    LLM budget before any run completed (e.g. inside ``optimizer.initialize``)."""
+    zero = Score(value=0.0, name="primary")
+    return TaskResult(
+        task=task,
+        runs=[],
+        best_score=zero,
+        best_evaluation=EvaluationResult(
+            success=False,
+            primary_score=zero,
+            sub_scores={},
+            rationale="LLM budget exhausted before first run completed.",
+        ),
+        success=False,
+        llm_usage=usage,
+        stop_reason="budget_exhausted",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Controller
 # ---------------------------------------------------------------------------
@@ -394,6 +416,20 @@ class Controller:
                 controllables,
                 observables,
                 llm_client if llm_client is not None else LLMClient._make_noop(),
+            )
+        except BudgetExhaustedError:
+            # Optimizer exhausted its LLM budget inside initialize (e.g. a
+            # warmup call). Tear down and return a budget_exhausted result
+            # directly so it isn't misclassified as a generic error by
+            # _iterate_tasks.
+            await optimizer.teardown()
+            logger.info(
+                "Task %r: LLM budget exhausted during optimizer.initialize, stopping task",
+                task.goal.description,
+            )
+            return _synthesize_budget_exhausted_task_result(
+                task,
+                llm_client.usage if llm_client else LLMUsage(),
             )
         except Exception:
             # Initialize failed: tear down before re-raising so the optimizer
