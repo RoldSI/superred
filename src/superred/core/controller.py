@@ -170,6 +170,19 @@ def _synthesize_budget_exhausted_task_result(
     )
 
 
+async def _safe_teardown(optimizer: Optimizer, context: str) -> None:
+    """Call ``optimizer.teardown()`` swallowing and logging any exception.
+
+    Used in error-handling paths where a failing teardown must not mask
+    the original exception (or, in the ``finally`` block, must not
+    propagate over an exception that is already in flight).
+    """
+    try:
+        await optimizer.teardown()
+    except Exception:
+        logger.exception("optimizer.teardown failed during %s", context)
+
+
 # ---------------------------------------------------------------------------
 # Controller
 # ---------------------------------------------------------------------------
@@ -422,7 +435,7 @@ class Controller:
             # warmup call). Tear down and return a budget_exhausted result
             # directly so it isn't misclassified as a generic error by
             # _iterate_tasks.
-            await optimizer.teardown()
+            await _safe_teardown(optimizer, "init budget-exhausted cleanup")
             logger.info(
                 "Task %r: LLM budget exhausted during optimizer.initialize, stopping task",
                 task.goal.description,
@@ -434,7 +447,9 @@ class Controller:
         except Exception:
             # Initialize failed: tear down before re-raising so the optimizer
             # doesn't leak. _iterate_tasks catches and records the error.
-            await optimizer.teardown()
+            # _safe_teardown ensures a failing teardown does not mask the
+            # initialize exception we're about to re-raise.
+            await _safe_teardown(optimizer, "init error cleanup")
             raise
 
         # Create channel and launch optimizer as concurrent task.
@@ -516,7 +531,10 @@ class Controller:
                 await optimizer_task
             except Exception:
                 pass
-            await optimizer.teardown()
+            # _safe_teardown so a failing teardown in the finally path
+            # cannot propagate over an exception already in flight from
+            # the try-body.
+            await _safe_teardown(optimizer, "post-run cleanup")
 
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still

@@ -145,6 +145,37 @@ class BudgetExhaustedInInitializeOptimizer(StubOptimizer):
         )
 
 
+class FailingInitAndTeardownOptimizer(StubOptimizer):
+    """Optimizer whose initialize() and teardown() both raise.
+
+    Used to verify that a failing teardown does not mask the original
+    initialize exception or cause the controller to crash.
+    """
+
+    async def initialize(
+        self,
+        goal: Goal,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+        llm_client: LLMClient,
+    ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
+        raise RuntimeError("initialize exploded")
+
+    async def teardown(self) -> None:
+        # Mark the call so tests can confirm teardown was attempted, then raise.
+        await super().teardown()
+        raise RuntimeError("teardown exploded")
+
+
+class RaisingTeardownOptimizer(StubOptimizer):
+    """Otherwise-normal optimizer whose teardown() always raises."""
+
+    async def teardown(self) -> None:
+        await super().teardown()
+        raise RuntimeError("teardown exploded")
+
+
 class FailingCleanupTarget(StubTarget):
     """Target whose cleanup() raises after the first run finishes."""
 
@@ -833,6 +864,40 @@ class TestExceptionSafety:
         assert tr.runs == []
         # The optimizer is torn down even though initialize failed.
         assert bad_opt.torn_down
+
+    async def test_teardown_failure_during_init_error_does_not_propagate(self) -> None:
+        """A raising teardown in the init-failure path must not mask the
+        original initialize exception or crash the controller."""
+        bad_opt = FailingInitAndTeardownOptimizer(done=True)
+        controller = Controller(
+            optimizer_factory=lambda: bad_opt,
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        # Teardown was still attempted.
+        assert bad_opt.torn_down
+
+    async def test_teardown_failure_in_finally_does_not_propagate(self) -> None:
+        """A raising teardown in the post-run finally must not propagate
+        over a normally-completed task."""
+        opt = RaisingTeardownOptimizer(done=True)
+        controller = Controller(
+            optimizer_factory=lambda: opt,
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        # The task completed normally; the swallowed teardown failure does
+        # not flip the stop_reason or strip the run.
+        assert tr.stop_reason == "done"
+        assert len(tr.runs) == 1
+        assert opt.torn_down
 
     async def test_target_cleanup_error_treated_as_error(self) -> None:
         """target.cleanup raising after a run is treated like any other error."""
