@@ -183,6 +183,19 @@ async def _safe_teardown(optimizer: Optimizer, context: str) -> None:
         logger.exception("optimizer.teardown failed during %s", context)
 
 
+async def _safe_cleanup(target: Target, context: str) -> None:
+    """Call ``target.cleanup()`` swallowing and logging any exception.
+
+    Used in the post-task ``finally`` block so a failing task always
+    leaves the target in a reset state for the next task, even when
+    the inner-loop cleanup-after-success was skipped due to an error.
+    """
+    try:
+        await target.cleanup()
+    except Exception:
+        logger.exception("target.cleanup failed during %s", context)
+
+
 # ---------------------------------------------------------------------------
 # Controller
 # ---------------------------------------------------------------------------
@@ -535,6 +548,13 @@ class Controller:
             # cannot propagate over an exception already in flight from
             # the try-body.
             await _safe_teardown(optimizer, "post-run cleanup")
+            # Final target.cleanup so the next task starts against a clean
+            # target even if the inner-loop cleanup-after-success was
+            # skipped due to an error. Wrapped because cleanup itself may
+            # fail (e.g. cascading from the same fault that broke the run);
+            # we log and continue rather than mask the in-flight exception
+            # or block the next task.
+            await _safe_cleanup(self._target, "post-task cleanup")
 
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still

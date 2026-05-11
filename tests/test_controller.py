@@ -424,7 +424,9 @@ class TestControllerRun:
             max_runs_per_task=3,
         )
         await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert target.cleanup_count == 3
+        # 3 inner cleanups (one after each run's evaluation) + 1 post-task
+        # cleanup invoked from the finally block.
+        assert target.cleanup_count == 4
 
     async def test_best_score_tracks_highest(self) -> None:
         controller = Controller(
@@ -898,6 +900,25 @@ class TestExceptionSafety:
         assert tr.stop_reason == "done"
         assert len(tr.runs) == 1
         assert opt.torn_down
+
+    async def test_target_cleanup_invoked_in_finally_after_failed_run(self) -> None:
+        """A failed task still calls target.cleanup in the finally block so
+        the next task starts against a clean target."""
+        target = FailingRunTarget()  # raises on every target.run
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target=target,
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=3,
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        tr = _first_tmr(result).task_results[0]
+        assert tr.stop_reason == "error"
+        # The inner-loop cleanup-after-success never ran (every run failed),
+        # so the only cleanup attempt comes from the outer finally.
+        assert target.cleanup_count == 1
+        assert target.torn_down
 
     async def test_target_cleanup_error_treated_as_error(self) -> None:
         """target.cleanup raising after a run is treated like any other error."""
