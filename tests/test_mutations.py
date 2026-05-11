@@ -612,15 +612,30 @@ class TestBestScoreMCDC:
 
 class TestControllerDefaultValues:
     def test_max_runs_per_task_default_is_100(self) -> None:
-        """Kills mutant 9: `max_runs_per_task: int = 100` → `101`.
-        Verifies the default value is exactly 100."""
+        """Omitting ``max_runs_per_task`` resolves to 100 (the class default).
+        Pins ``DEFAULT_MAX_RUNS_PER_TASK`` and the ``None``-normalisation
+        branch in ``Controller.__init__``."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
             target=StubTarget(),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
+        assert Controller.DEFAULT_MAX_RUNS_PER_TASK == 100
         assert controller._max_runs_per_task == 100
+
+    def test_max_runs_per_task_none_resolves_to_default(self) -> None:
+        """Explicit ``max_runs_per_task=None`` also resolves to the default;
+        callers can pass ``None`` to defer to the framework instead of
+        hardcoding 100 themselves."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(),
+            target=StubTarget(),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+            max_runs_per_task=None,
+        )
+        assert controller._max_runs_per_task == Controller.DEFAULT_MAX_RUNS_PER_TASK
 
     def test_threat_model_result_skipped_defaults_empty(self) -> None:
         """Kills mutant 8: `skipped_tasks = field(default_factory=list)` → `None`.
