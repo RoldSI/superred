@@ -2,6 +2,78 @@
 
 ## v0.2.0 (unreleased)
 
+### Controller is now one threat model: `target_factory`, single `scope`, single `llm_config`
+
+The controller was previously a fan-out: it iterated the Cartesian
+product of `scopes` × `llm_configs` and returned a `ControllerResult`
+wrapping a list of `ThreatModelResult`.  It now models exactly one
+threat model — a single `(scope, llm_config)` combination — and
+returns a `ThreatModelResult` directly.  Sweeping multiple threat
+models is the caller's job.
+
+The same change replaces `target: Target` with `target_factory: TargetFactory`
+so each task in the claim gets its own target instance and tasks run
+concurrently up to `target_factory.concurrency`.
+
+```python
+# Before
+controller = Controller(
+    optimizer_factory=lambda: MyOptimizer(),
+    target=MyTarget(api_key="sk-..."),
+    security_claim=claim,
+    llm_configs=[cfg_a, cfg_b],          # list, optional
+)
+result = await controller.run(scopes=[scope_a, scope_b])   # Cartesian product
+task_results = result.threat_model_results[0].task_results  # one ThreatModelResult per (scope, cfg)
+
+# After
+from superred.core.controller import Controller, TargetFactory
+
+target_factory = TargetFactory(
+    create=lambda: MyTarget(api_key="sk-..."),
+    concurrency=8,                       # default 1 (sequential, old per-task behavior)
+)
+controller = Controller(
+    optimizer_factory=lambda: MyOptimizer(),
+    target_factory=target_factory,
+    security_claim=claim,
+    scope=scope_a,                       # required, single Scope
+    llm_config=cfg_a,                    # optional, single LLMConfig
+)
+tmr = await controller.run()             # -> ThreatModelResult (not ControllerResult)
+task_results = tmr.task_results
+
+# Multiple threat models = multiple controllers at the caller:
+import asyncio, itertools
+results = await asyncio.gather(*(
+    Controller(
+        scope=s, llm_config=c,
+        optimizer_factory=..., target_factory=target_factory,
+        security_claim=claim,
+    ).run()
+    for s, c in itertools.product([scope_a, scope_b], [cfg_a, cfg_b])
+))
+```
+
+What changed:
+
+- **`target` → `target_factory`**: each task gets its own `Target` from `target_factory.create()`. Concurrent tasks never share mutable target state.
+- **Parallel tasks within a threat model**: bounded by `target_factory.concurrency` via `asyncio.Semaphore` + `asyncio.gather`. Default `concurrency=1` preserves sequential behavior.
+- **`target.teardown()` is per-task** and runs in the inner finally before the next task acquires its semaphore slot.
+- **`llm_configs: Sequence[LLMConfig]` → `llm_config: LLMConfig | None`**: one config per controller, no list.
+- **`scope: Scope`** is now a required constructor arg; `run()` no longer takes `scopes=` or `models=`.
+- **`ControllerResult` is removed**; `controller.run()` returns a `ThreatModelResult` directly.
+- **No default-scope behavior**: experiments that want `target.security_domain.distinct_combinations()` build it themselves before constructing controllers.
+- **Partial trajectory + exception on failure**: when a run raises mid-execution, the trajectory accumulated up to the crash is preserved as the final `RunResult` with a zero-score evaluation, and `TaskResult.error` carries the formatted traceback. Both fields land in the persisted JSON.
+
+Migration:
+
+1. Wrap target construction: `target=MyTarget(...)` → `target_factory=TargetFactory(create=lambda: MyTarget(...))`. For tests, use `TargetFactory.singleton(my_target)` (concurrency=1).
+2. Move scope/llm_config into the constructor: drop `run(scopes=[s])`, add `scope=s` and `llm_config=cfg` to `Controller(...)`.
+3. Replace `result.threat_model_results[0]` with the direct return.
+4. For sweeps, build one Controller per (scope, llm_config) combination and gather them at the experiment level.
+5. For real targets that can serve parallel requests (chatbots wrapping API calls), bump `concurrency=` to match the deployed rate limit.
+
 ### Optimizer.initialize() signature change
 
 The `llm_client` parameter on `Optimizer.initialize()` is now required (`LLMClient`, not `LLMClient | None`). The base class stores the client — subclasses must call `super().initialize(...)` for `self.llm` to work.
@@ -62,9 +134,11 @@ The `superred` package now depends on `litellm>=1.0`. This is pulled in automati
 
 **Migration**: Replace `max_calls=N` / `max_input_tokens=N` / `max_output_tokens=N` with `max_cost=X.XX` (USD amount). Remove any references to `input_tokens` or `output_tokens` on `LLMUsage`.
 
-### Controller now takes optimizer_factory and iterates threat models
+### Controller takes optimizer_factory instead of optimizer
 
-The `Controller` constructor signature has changed significantly:
+A fresh `Optimizer` is now built per task via `optimizer_factory`,
+which replaces the old `optimizer: Optimizer` constructor arg.  Combined
+with the threat-model collapse above, the migration is:
 
 ```python
 # Before
@@ -75,32 +149,16 @@ controller = Controller(
     security_domain_tag=external_tag,
     llm_config=llm_config,
 )
-result = await controller.run()
-task_results = result.task_results
 
-# After
+# After (see also the target_factory / scope / llm_config section above)
 controller = Controller(
-    optimizer_factory=lambda: MyOptimizer(),   # factory, not instance
-    target=target,
+    optimizer_factory=lambda: MyOptimizer(),
+    target_factory=TargetFactory(create=lambda: MyTarget(...)),
     security_claim=claim,
-    llm_configs=[llm_config],                  # list, optional
+    scope=frozenset({external_tag}),
+    llm_config=llm_config,
 )
-result = await controller.run(scopes=[frozenset({external_tag})])
-task_results = result.threat_model_results[0].task_results
 ```
-
-Key changes:
-- **`optimizer` → `optimizer_factory`**: A callable that returns a fresh `Optimizer`. A new optimizer is created for each (task, scope, llm_config) combination.
-- **`security_domain_tag` removed**: Scopes are passed to `run(scopes=...)`. Each scope is a `frozenset[SecurityDomainTag]` (the `Scope` type alias). Default scopes come from `target.security_domain.distinct_combinations()`.
-- **`llm_config` → `llm_configs`**: Now an optional list. Omit for non-LLM optimizers. Each config is tested with each scope (Cartesian product).
-- **`ControllerResult.task_results` → `ControllerResult.threat_model_results`**: Results are nested under `ThreatModelResult`, one per (scope, llm_config) combination. Each `ThreatModelResult` has `task_results` and `skipped_tasks`.
-- **`run()` accepts `scopes` and `models` arguments**: `scopes` is a list of `Scope` values. `models` filters `llm_configs` by model name.
-
-**Migration**:
-1. Wrap optimizer construction in a lambda/function: `optimizer=X` → `optimizer_factory=lambda: X`
-2. Change `llm_config=cfg` to `llm_configs=[cfg]` (or omit for non-LLM)
-3. Move scope to run: `security_domain_tag=tag` → `run(scopes=[frozenset({tag})])`
-4. Access results via `result.threat_model_results[0].task_results` instead of `result.task_results`
 
 ### New types: Scope, scope_includes, ThreatModelResult, OptimizerFactory
 

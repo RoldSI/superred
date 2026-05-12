@@ -1,28 +1,39 @@
-"""Controller: the main orchestrator for red-teaming evaluations.
+"""Controller: orchestrates one red-teaming threat model.
 
-The controller iterates **threat models** — combinations of a security
-domain scope (:data:`Scope`) and an optional LLM configuration — and for
-each threat model evaluates every task in the security claim.
+One ``Controller`` instance evaluates one security claim against one
+``(scope, llm_config)`` threat model.  Each task in the claim runs
+against a fresh :class:`Target` from the configured
+:class:`TargetFactory`; tasks run concurrently up to
+``target_factory.concurrency`` at a time, with each task's events,
+responses, and trajectory entries recorded on its own trajectory — the
+single source of truth per run.
 
-All events, responses, and target entries are recorded on the
-trajectory — the single source of truth for each run.
+To sweep multiple scopes or attacker models, instantiate one
+``Controller`` per threat model at the experiment level and run them
+sequentially or via ``asyncio.gather``.
 
 Usage::
 
+    target_factory = TargetFactory(
+        create=lambda: MyTarget(...),
+        concurrency=8,
+    )
     controller = Controller(
         optimizer_factory=lambda: MyOptimizer(),
-        target=my_target,
+        target_factory=target_factory,
         security_claim=claim,
-        llm_configs=[my_llm_config],  # optional
+        scope=my_scope,
+        llm_config=my_llm_config,  # or omit for non-LLM optimizers
     )
-    result = await controller.run()
+    result = await controller.run()  # -> ThreatModelResult
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+import traceback
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -34,7 +45,12 @@ from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.llm import LLMClient
 from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
-from superred.core.persistence import write_threat_model_result
+from superred.core.persistence import (
+    prepare_results_dir,
+    task_detail_filename,
+    write_claim_summary,
+    write_task_detail,
+)
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
@@ -48,6 +64,58 @@ OptimizerFactory = Callable[[], Optimizer]
 
 # Reason a task's run loop ended.
 StopReason = Literal["done", "max_runs", "budget_exhausted", "error"]
+
+
+# ---------------------------------------------------------------------------
+# Target factory
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TargetFactory:
+    """Produces fresh :class:`Target` instances and declares parallel capacity.
+
+    The controller calls :attr:`create` once per task and runs up to
+    :attr:`concurrency` tasks in parallel within a threat model.  Each
+    task owns its target's full lifecycle: ``configure_target`` →
+    ``run``/``cleanup`` loop → ``teardown``.
+
+    Attributes:
+        create: Zero-arg callable that returns a new :class:`Target`.
+            The controller calls this once per task; the instance is
+            discarded after ``teardown``.
+        concurrency: Maximum tasks that may run in parallel against
+            independent target instances from this factory.  Defaults to
+            ``1`` (sequential).  Target authors choose this based on
+            external rate limits or resource cost — a cheap, stateless
+            target (a chatbot wrapping an API) can comfortably use ``8``
+            or more; a target that boots a sandbox should usually stay
+            at ``1`` unless it pools internally.
+    """
+
+    create: Callable[[], Target]
+    concurrency: int = 1
+
+    def __post_init__(self) -> None:
+        if self.concurrency < 1:
+            raise ValueError("TargetFactory.concurrency must be at least 1")
+
+    @classmethod
+    def singleton(cls, target: Target) -> TargetFactory:
+        """Wrap a single target instance so the factory always returns it.
+
+        Concurrency is locked to ``1`` because a shared instance cannot
+        safely serve parallel tasks — mutable target state would race.
+
+        Intended for tests and small migrations.  Note that the controller
+        still calls ``target.teardown()`` once per task in the security
+        claim, so a singleton-wrapped target needs an idempotent
+        ``teardown()`` (or a no-op one) if the claim has more than one
+        task.  For real targets that hold expensive resources, prefer a
+        non-singleton factory whose ``create()`` returns a fresh instance
+        each call.
+        """
+        return cls(create=lambda: target, concurrency=1)
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +144,10 @@ class TaskResult:
 
     Attributes:
         task: The task that was evaluated.
-        runs: All run results, in order.
+        runs: All run results, in order.  When the task ended with
+            ``stop_reason="error"`` due to a failure inside a run, the
+            run-in-progress is appended with the partial trajectory it
+            had accumulated and a zero-score :class:`EvaluationResult`.
         best_score: Highest primary score achieved across all runs.
         best_evaluation: The EvaluationResult that produced the best score.
         success: Whether any run achieved the adversarial goal.
@@ -87,8 +158,10 @@ class TaskResult:
             ``"budget_exhausted"`` means a :class:`BudgetExhaustedError`
             was raised by the LLM client.  ``"error"`` means an unexpected
             exception escaped the optimizer, target, or evaluator and the
-            task was abandoned; any runs already completed before the
-            failure are preserved in ``runs``.
+            task was abandoned.
+        error: Formatted exception (type + message + traceback) when the
+            task ended with ``stop_reason="error"``; ``None`` otherwise.
+            Lands in the persisted JSON for offline debugging.
     """
 
     task: Task[Target]
@@ -98,6 +171,7 @@ class TaskResult:
     success: bool
     llm_usage: LLMUsage
     stop_reason: StopReason
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,41 +192,26 @@ class ThreatModelResult:
     skipped_tasks: list[Task[Target]] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class ControllerResult:
-    """Result of a complete controller evaluation.
-
-    Attributes:
-        threat_model_results: Results for each threat model evaluated.
-    """
-
-    threat_model_results: list[ThreatModelResult]
+def _format_exception(exc: BaseException) -> str:
+    """Format an exception with type, message, and traceback for the JSON log."""
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
-def _synthesize_error_task_result(task: Task[Target]) -> TaskResult:
-    """Build a placeholder TaskResult for a task that failed before its run loop."""
-    zero = Score(value=0.0, name="primary")
-    return TaskResult(
-        task=task,
-        runs=[],
-        best_score=zero,
-        best_evaluation=EvaluationResult(
-            success=False,
-            primary_score=zero,
-            sub_scores={},
-            rationale="Unexpected error before run loop started.",
-        ),
-        success=False,
-        llm_usage=LLMUsage(),
-        stop_reason="error",
-    )
-
-
-def _synthesize_budget_exhausted_task_result(
-    task: Task[Target], usage: LLMUsage,
+def _synthesize_empty_task_result(
+    task: Task[Target],
+    *,
+    stop_reason: StopReason,
+    rationale: str,
+    usage: LLMUsage = LLMUsage(),
+    exc: BaseException | None = None,
 ) -> TaskResult:
-    """Build a placeholder TaskResult for a task whose optimizer ran out of
-    LLM budget before any run completed (e.g. inside ``optimizer.initialize``)."""
+    """Build a zero-score TaskResult for a task whose run loop never produced a run.
+
+    Used by the error and budget-exhausted paths that abandon a task before
+    any run completes. When *exc* is provided its formatted traceback is
+    stored on ``TaskResult.error`` so the failure is recoverable from the
+    persisted detail file.
+    """
     zero = Score(value=0.0, name="primary")
     return TaskResult(
         task=task,
@@ -162,38 +221,25 @@ def _synthesize_budget_exhausted_task_result(
             success=False,
             primary_score=zero,
             sub_scores={},
-            rationale="LLM budget exhausted before first run completed.",
+            rationale=rationale,
         ),
         success=False,
         llm_usage=usage,
-        stop_reason="budget_exhausted",
+        stop_reason=stop_reason,
+        error=_format_exception(exc) if exc is not None else None,
     )
 
 
-async def _safe_teardown(optimizer: Optimizer, context: str) -> None:
-    """Call ``optimizer.teardown()`` swallowing and logging any exception.
+async def _swallow(coro: Awaitable[None], description: str) -> None:
+    """Await *coro*, logging and swallowing any Exception.
 
-    Used in error-handling paths where a failing teardown must not mask
-    the original exception (or, in the ``finally`` block, must not
-    propagate over an exception that is already in flight).
+    Used in error paths and ``finally`` blocks where a failing cleanup
+    must not mask an in-flight exception or block the next task.
     """
     try:
-        await optimizer.teardown()
+        await coro
     except Exception:
-        logger.exception("optimizer.teardown failed during %s", context)
-
-
-async def _safe_cleanup(target: Target, context: str) -> None:
-    """Call ``target.cleanup()`` swallowing and logging any exception.
-
-    Used in the post-task ``finally`` block so a failing task always
-    leaves the target in a reset state for the next task, even when
-    the inner-loop cleanup-after-success was skipped due to an error.
-    """
-    try:
-        await target.cleanup()
-    except Exception:
-        logger.exception("target.cleanup failed during %s", context)
+        logger.exception("%s failed", description)
 
 
 # ---------------------------------------------------------------------------
@@ -202,33 +248,40 @@ async def _safe_cleanup(target: Target, context: str) -> None:
 
 
 class Controller:
-    """Orchestrates red-teaming evaluations across threat models.
+    """Orchestrates one threat model: a single security claim evaluated
+    against a single ``(scope, llm_config)`` combination.
 
-    The controller iterates all relevant threat models — combinations of
-    a security domain scope and an LLM configuration — and for each one
-    evaluates every task in the security claim with a freshly instantiated
-    optimizer.
+    One ``Controller`` instance is one threat model.  To sweep multiple
+    scopes or attacker models, construct one ``Controller`` per
+    combination at the experiment level and ``asyncio.gather`` them (or
+    iterate sequentially).
+
+    Within the threat model, tasks run concurrently up to
+    ``target_factory.concurrency`` at a time.  Each task owns its
+    target's full lifecycle so concurrent tasks never share mutable
+    target state.
 
     Args:
         optimizer_factory: A callable that returns a new :class:`Optimizer`
-            instance.  A fresh optimizer is created for each
-            (task, scope, llm_config) combination.
-        target: The AI system under test.
+            instance.  A fresh optimizer is created for each task.
+        target_factory: Produces fresh :class:`Target` instances and
+            declares how many tasks may run in parallel against
+            independent instances (see :class:`TargetFactory`).
         security_claim: The collection of tasks to evaluate.
-        llm_configs: LLM access configurations for the optimizer.  Each
-            config represents a different attacker model to test.  Optional
-            — pass an empty list or omit for non-LLM optimizers.
+        scope: The security domain scope under test.  Must be a non-empty
+            ``frozenset[SecurityDomainTag]``.
+        llm_config: LLM access configuration for the optimizer, or
+            ``None`` for non-LLM optimizers (in which case the optimizer
+            receives a noop client that raises on any call).
         max_runs_per_task: Safety limit on runs per task. ``None`` (default)
             uses the built-in cap of 100; pass an explicit positive int to
             override.
         results_dir: Optional directory for persisted artifacts. When set,
-            each completed threat model is written atomically to
-            ``{results_dir}/{scope}__{model}.json`` immediately after it
-            finishes — so a later threat model that crashes does not lose
-            already-completed ones. Trajectories, evaluations, and
-            cumulative LLM usage per run are included; ``LLMConfig.api_key``
-            and ``api_base`` are not. Trajectory contents are not scrubbed
-            for secrets.
+            the completed threat model is written atomically to
+            ``{results_dir}/{scope}__{model}.json`` (plus a sibling
+            subfolder with per-task detail files) when ``run()`` finishes.
+            ``LLMConfig.api_key`` and ``api_base`` are excluded;
+            trajectory contents are not scrubbed for secrets.
     """
 
     DEFAULT_MAX_RUNS_PER_TASK = 100
@@ -236,22 +289,26 @@ class Controller:
     def __init__(
         self,
         optimizer_factory: OptimizerFactory,
-        target: Target,
+        target_factory: TargetFactory,
         security_claim: SecurityClaim[Target],
-        llm_configs: Sequence[LLMConfig] | None = None,
+        scope: Scope,
+        llm_config: LLMConfig | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
     ) -> None:
+        if not scope:
+            raise ValueError("scope must be non-empty")
         resolved_max_runs = (
             self.DEFAULT_MAX_RUNS_PER_TASK if max_runs_per_task is None else max_runs_per_task
         )
         if resolved_max_runs < 1:
             raise ValueError("max_runs_per_task must be at least 1")
         self._optimizer_factory = optimizer_factory
-        self._target = target
+        self._target_factory = target_factory
         self._security_claim = security_claim
-        self._llm_configs: list[LLMConfig] = list(llm_configs) if llm_configs else []
+        self._scope: Scope = scope
+        self._llm_config: LLMConfig | None = llm_config
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
@@ -260,110 +317,21 @@ class Controller:
     # Main entry point
     # ------------------------------------------------------------------
 
-    async def run(
-        self,
-        *,
-        scopes: Sequence[Scope] | None = None,
-        models: Sequence[str] | None = None,
-    ) -> ControllerResult:
-        """Run the full evaluation across threat models.
-
-        Args:
-            scopes: Security domain scopes to test.  Each scope is a
-                ``frozenset[SecurityDomainTag]``.  If ``None``, uses all
-                non-empty combinations from the target's
-                :meth:`~SecurityDomain.distinct_combinations`.
-            models: Model names to test (must match an ``LLMConfig.model``
-                in *llm_configs*).  If ``None``, uses all configured
-                ``llm_configs``.  Ignored when ``llm_configs`` is empty.
+    async def run(self) -> ThreatModelResult:
+        """Evaluate the security claim under this controller's threat model.
 
         Returns:
-            A :class:`ControllerResult` with results for each threat model.
+            A :class:`ThreatModelResult` for the configured
+            ``(scope, llm_config)``.  When ``results_dir`` is set,
+            per-task detail files are written incrementally as each
+            task completes, and the claim-level summary lands at the
+            end as a completion marker.
         """
-        # Resolve scopes
-        effective_scopes = self._resolve_scopes(scopes)
-
-        # Resolve LLM configs
-        effective_configs = self._resolve_llm_configs(models)
-
-        try:
-            results = await self._iterate_threat_models(
-                effective_scopes,
-                effective_configs,
-            )
-        finally:
-            await self._target.teardown()
-
-        controller_result = ControllerResult(threat_model_results=results)
-        self._print_summary(controller_result)
-        return controller_result
-
-    # ------------------------------------------------------------------
-    # Resolution helpers
-    # ------------------------------------------------------------------
-
-    def _resolve_scopes(
-        self,
-        scopes: Sequence[Scope] | None,
-    ) -> list[Scope]:
-        """Resolve scopes to test.
-
-        Every scope must be non-empty — an empty scope covers nothing
-        and cannot provide a security domain for trajectory events.
-
-        Raises:
-            ValueError: If any scope is empty.
-        """
-        if scopes is not None:
-            resolved = list(scopes)
-        else:
-            # Default: all non-empty combinations from the target's domain
-            all_combos = self._target.security_domain.distinct_combinations()
-            resolved = [c for c in all_combos if c]
-        for s in resolved:
-            if not s:
-                raise ValueError("Scope must not be empty")
-        return resolved
-
-    def _resolve_llm_configs(
-        self,
-        models: Sequence[str] | None,
-    ) -> list[LLMConfig]:
-        """Resolve LLM configs to test."""
-        if not self._llm_configs:
-            return []
-        if models is None:
-            return list(self._llm_configs)
-        model_set = set(models)
-        return [c for c in self._llm_configs if c.model in model_set]
-
-    # ------------------------------------------------------------------
-    # Threat model iteration
-    # ------------------------------------------------------------------
-
-    async def _iterate_threat_models(
-        self,
-        scopes: list[Scope],
-        llm_configs: list[LLMConfig],
-    ) -> list[ThreatModelResult]:
-        """Iterate all (scope, llm_config) combinations.
-
-        After each completed threat model, the result is persisted to
-        ``self._results_dir`` (when configured) before the next one
-        begins. This keeps already-finished threat models safe if a
-        later iteration raises.
-        """
-        results: list[ThreatModelResult] = []
-        config_axis: list[LLMConfig | None] = list(llm_configs) if llm_configs else [None]
-
-        for scope in scopes:
-            for llm_config in config_axis:
-                result = await self._iterate_tasks(scope, llm_config)
-                results.append(result)
-                if self._results_dir is not None:
-                    write_threat_model_result(result, self._results_dir)
-
-        return results
+        result, task_file_basenames = await self._iterate_tasks(self._scope, self._llm_config)
+        if self._results_dir is not None:
+            write_claim_summary(self._results_dir, result, task_file_basenames)
+        self._print_summary(result)
+        return result
 
     # ------------------------------------------------------------------
     # Task iteration (one threat model)
@@ -373,43 +341,134 @@ class Controller:
         self,
         scope: Scope,
         llm_config: LLMConfig | None,
-    ) -> ThreatModelResult:
+    ) -> tuple[ThreatModelResult, list[str]]:
         """Iterate all tasks for a single threat model.
+
+        Tasks run concurrently bounded by ``target_factory.concurrency``.
+        Each in-flight task owns a fresh :class:`Target` produced by the
+        factory; the controller never shares a target across concurrent
+        tasks.  Results are collected in input order so the per-threat-
+        model output is deterministic across re-runs (modulo timing
+        non-determinism inside individual tasks).
 
         Per-task error containment: errors raised during a task's run loop
         are caught inside ``_run_task`` and reflected via
         ``stop_reason="error"`` on the returned :class:`TaskResult`. Errors
-        raised *outside* the run loop (e.g. inside ``configure_target`` or
-        ``optimizer.initialize``) are caught here as a backstop, recorded
-        as a synthetic error :class:`TaskResult`, and do not abort the
-        threat model.
+        raised *outside* the run loop — inside ``target_factory.create()``,
+        ``task.configure_target``, or ``optimizer.initialize`` — are caught
+        here as a backstop, recorded as a synthetic error
+        :class:`TaskResult`, and do not abort the threat model.
+
+        Incremental persistence: when ``results_dir`` is set, each
+        task's detail file is written as soon as its
+        :class:`TaskResult` is built — so an aborted run still leaves
+        every completed task on disk.  Returns the per-task file
+        basenames in the same order as ``task_results`` so the caller
+        can stitch them into the claim-level summary.
         """
+        sem = asyncio.Semaphore(self._target_factory.concurrency)
+
+        subfolder: Path | None = None
+        if self._results_dir is not None:
+            # Up-front so FileExistsError fires before any task runs.
+            subfolder = prepare_results_dir(self._results_dir, scope, llm_config)
+
+        async def run_one(
+            index: int,
+            task: Task[Target],
+        ) -> tuple[TaskResult | Task[Target], str | None]:
+            """Return ``(outcome, detail_basename)``.
+
+            *outcome* is a ``TaskResult`` when the task ran (success or
+            error) or the ``Task`` itself when it raised
+            ``NotApplicable``.  *detail_basename* is the filename of the
+            per-task JSON written into *subfolder* (``None`` when
+            persistence is disabled or the task was skipped).
+            """
+            async with sem:
+                # ``factory.create()`` may itself raise (e.g. a target whose
+                # __init__ does network setup).  Contain it here so one
+                # bad task can't take down the rest of the threat model
+                # via ``asyncio.gather``'s first-exception behavior.
+                outcome: TaskResult | Task[Target]
+                try:
+                    target = self._target_factory.create()
+                except Exception as exc:
+                    logger.exception(
+                        "Task %r: target_factory.create() failed, recording as error",
+                        task.goal.description,
+                    )
+                    outcome = _synthesize_empty_task_result(
+                        task,
+                        stop_reason="error",
+                        rationale="Unexpected error before run loop started.",
+                        exc=exc,
+                    )
+                else:
+                    try:
+                        try:
+                            outcome = await self._run_task(task, scope, llm_config, target)
+                        except NotApplicable:
+                            logger.info(
+                                "Task %r not applicable, skipping",
+                                task.goal.description,
+                            )
+                            outcome = task
+                        except Exception as exc:
+                            logger.exception(
+                                "Task %r: unexpected error before run loop, recording as error",
+                                task.goal.description,
+                            )
+                            outcome = _synthesize_empty_task_result(
+                                task,
+                                stop_reason="error",
+                                rationale="Unexpected error before run loop started.",
+                                exc=exc,
+                            )
+                    finally:
+                        # Released before the next task's semaphore slot opens.
+                        await _swallow(target.teardown(), "target.teardown post-task")
+
+                # Incremental write. Basename is computed up front so the
+                # summary can record the intended path even if the write
+                # itself raises; skipped tasks have no detail file.
+                detail_basename: str | None = None
+                if subfolder is not None and isinstance(outcome, TaskResult):
+                    detail_basename = task_detail_filename(index, outcome.task.goal.description)
+                    try:
+                        write_task_detail(subfolder, detail_basename, outcome, scope, llm_config)
+                    except Exception:
+                        logger.exception(
+                            "Task %r: failed to write per-task detail file (continuing)",
+                            task.goal.description,
+                        )
+                return outcome, detail_basename
+
+        outcomes = await asyncio.gather(
+            *(run_one(i, t) for i, t in enumerate(self._security_claim, start=1)),
+        )
+
         task_results: list[TaskResult] = []
         skipped_tasks: list[Task[Target]] = []
+        task_file_basenames: list[str] = []
+        for outcome, basename in outcomes:
+            if isinstance(outcome, TaskResult):
+                task_results.append(outcome)
+                if subfolder is not None:
+                    # run_one always sets basename when persistence is on
+                    # (computed before the write attempt).
+                    assert basename is not None
+                    task_file_basenames.append(basename)
+            else:
+                skipped_tasks.append(outcome)
 
-        for task in self._security_claim:
-            try:
-                result = await self._run_task(task, scope, llm_config)
-                task_results.append(result)
-            except NotApplicable:
-                skipped_tasks.append(task)
-                logger.info(
-                    "Task %r not applicable, skipping",
-                    task.goal.description,
-                )
-            except Exception:
-                logger.exception(
-                    "Task %r: unexpected error before run loop, recording as error",
-                    task.goal.description,
-                )
-                task_results.append(_synthesize_error_task_result(task))
-
-        return ThreatModelResult(
+        result = ThreatModelResult(
             scope=scope,
             llm_config=llm_config,
             task_results=task_results,
             skipped_tasks=skipped_tasks,
         )
+        return result, task_file_basenames
 
     # ------------------------------------------------------------------
     # Per-task run
@@ -420,13 +479,16 @@ class Controller:
         task: Task[Target],
         scope: Scope,
         llm_config: LLMConfig | None,
+        target: Target,
     ) -> TaskResult:
         """Run the optimizer loop for a single task + threat model.
 
-        A fresh optimizer and :class:`LLMClient` are created for each call.
+        A fresh optimizer and :class:`LLMClient` are created for each call;
+        the caller (``_iterate_tasks``) supplies a fresh target and owns
+        its teardown after this returns.
         """
         # Configure target (NotApplicable propagates to caller)
-        await task.configure_target(self._target)
+        await task.configure_target(target)
 
         # Create a fresh LLM client if we have a config
         llm_client: LLMClient | None = LLMClient(llm_config) if llm_config else None
@@ -436,11 +498,11 @@ class Controller:
 
         # Initialize optimizer with filtered surfaces (only in-scope items)
         controllables = [
-            c for c in self._target.get_controllables() if scope_includes(scope, c.security_domain)
+            c for c in target.get_controllables() if scope_includes(scope, c.security_domain)
         ]
         observables = [
             o
-            for o in self._target.get_observables()
+            for o in target.get_observables()
             if scope_includes(scope, o.observable.security_domain)
         ]
         try:
@@ -452,24 +514,23 @@ class Controller:
             )
         except BudgetExhaustedError:
             # Optimizer exhausted its LLM budget inside initialize (e.g. a
-            # warmup call). Tear down and return a budget_exhausted result
-            # directly so it isn't misclassified as a generic error by
-            # _iterate_tasks.
-            await _safe_teardown(optimizer, "init budget-exhausted cleanup")
+            # warmup call). Return a budget_exhausted result directly so it
+            # isn't misclassified as a generic error by _iterate_tasks.
+            await _swallow(optimizer.teardown(), "optimizer.teardown after init-budget-exhausted")
             logger.info(
                 "Task %r: LLM budget exhausted during optimizer.initialize, stopping task",
                 task.goal.description,
             )
-            return _synthesize_budget_exhausted_task_result(
+            return _synthesize_empty_task_result(
                 task,
-                llm_client.usage if llm_client else LLMUsage(),
+                stop_reason="budget_exhausted",
+                rationale="LLM budget exhausted before first run completed.",
+                usage=llm_client.usage if llm_client else LLMUsage(),
             )
         except Exception:
-            # Initialize failed: tear down before re-raising so the optimizer
-            # doesn't leak. _iterate_tasks catches and records the error.
-            # _safe_teardown ensures a failing teardown does not mask the
-            # initialize exception we're about to re-raise.
-            await _safe_teardown(optimizer, "init error cleanup")
+            # Tear down before re-raising so the optimizer doesn't leak;
+            # _iterate_tasks catches and records the error.
+            await _swallow(optimizer.teardown(), "optimizer.teardown after init-error")
             raise
 
         # Create channel and launch optimizer as concurrent task.
@@ -491,39 +552,22 @@ class Controller:
         # Default reason: if the for-loop exits without an explicit break,
         # the safety cap was reached.
         stop_reason: StopReason = "max_runs"
+        error_text: str | None = None
 
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
+                # Trajectory is owned by _run_task (not _run_single) so the
+                # partial trajectory survives any exception inside the run.
+                trajectory = Trajectory(filtered_scope=scope)
                 try:
-                    trajectory, evaluation, done = await self._run_single(
+                    evaluation, done = await self._run_single(
                         task,
+                        target,
                         channel,
                         scope,
                         run_number,
+                        trajectory,
                     )
-
-                    run_usage = llm_client.usage if llm_client else LLMUsage()
-                    runs.append(
-                        RunResult(
-                            trajectory=trajectory,
-                            evaluation=evaluation,
-                            llm_usage=run_usage,
-                        )
-                    )
-
-                    # Track best score
-                    if best_score is None or evaluation.primary_score.value > best_score.value:
-                        best_score = evaluation.primary_score
-                        best_evaluation = evaluation
-                    if evaluation.success:
-                        success = True
-
-                    # Cleanup target state for next run
-                    await self._target.cleanup()
-
-                    if done:
-                        stop_reason = "done"
-                        break
                 except BudgetExhaustedError:
                     logger.info(
                         "Task %r: LLM budget exhausted during run %d, stopping task",
@@ -532,36 +576,90 @@ class Controller:
                     )
                     stop_reason = "budget_exhausted"
                     break
-                except Exception:
-                    # Any other exception escaping the optimizer, target, or
-                    # evaluator stops just this task — the threat model is
-                    # still persisted with the surviving tasks. Runs already
-                    # appended above are preserved.
+                except Exception as exc:
+                    # _run_single failed mid-run — preserve the partial
+                    # trajectory it accumulated, attach a zero-score
+                    # evaluation, and store the formatted exception on
+                    # ``TaskResult.error`` so the failure is recoverable
+                    # from the persisted JSON.
                     logger.exception(
                         "Task %r: unexpected error during run %d, stopping task",
                         task.goal.description,
                         run_number,
                     )
+                    error_text = _format_exception(exc)
+                    error_eval = EvaluationResult(
+                        success=False,
+                        primary_score=Score(value=0.0, name="primary"),
+                        sub_scores={},
+                        rationale=f"Run {run_number} failed: {type(exc).__name__}: {exc}",
+                    )
+                    run_usage = llm_client.usage if llm_client else LLMUsage()
+                    runs.append(
+                        RunResult(
+                            trajectory=trajectory,
+                            evaluation=error_eval,
+                            llm_usage=run_usage,
+                        )
+                    )
                     stop_reason = "error"
+                    break
+
+                # _run_single succeeded — record the run.
+                run_usage = llm_client.usage if llm_client else LLMUsage()
+                runs.append(
+                    RunResult(
+                        trajectory=trajectory,
+                        evaluation=evaluation,
+                        llm_usage=run_usage,
+                    )
+                )
+                if best_score is None or evaluation.primary_score.value > best_score.value:
+                    best_score = evaluation.primary_score
+                    best_evaluation = evaluation
+                if evaluation.success:
+                    success = True
+
+                # Cleanup target state for next run within this task.  If
+                # cleanup raises, the successful run we just appended stays
+                # — only the task is abandoned, with the cleanup exception
+                # captured on ``error``.
+                try:
+                    await target.cleanup()
+                except Exception as exc:
+                    logger.exception(
+                        "Task %r: target.cleanup() failed after run %d, stopping task",
+                        task.goal.description,
+                        run_number,
+                    )
+                    error_text = _format_exception(exc)
+                    stop_reason = "error"
+                    break
+
+                if done:
+                    stop_reason = "done"
                     break
 
         finally:
             channel.close()
             try:
                 await optimizer_task
-            except Exception:
-                pass
-            # _safe_teardown so a failing teardown in the finally path
-            # cannot propagate over an exception already in flight from
-            # the try-body.
-            await _safe_teardown(optimizer, "post-run cleanup")
-            # Final target.cleanup so the next task starts against a clean
-            # target even if the inner-loop cleanup-after-success was
-            # skipped due to an error. Wrapped because cleanup itself may
-            # fail (e.g. cascading from the same fault that broke the run);
-            # we log and continue rather than mask the in-flight exception
-            # or block the next task.
-            await _safe_cleanup(self._target, "post-task cleanup")
+            except Exception as exc:
+                # Optimizer raised outside any in-flight channel.send
+                # (background work, or its own teardown after the run loop
+                # exited). Captured as a diagnostic without changing
+                # stop_reason — the run loop's classification is authoritative.
+                logger.exception(
+                    "Task %r: optimizer task raised during teardown",
+                    task.goal.description,
+                )
+                if error_text is None:
+                    error_text = _format_exception(exc)
+            await _swallow(optimizer.teardown(), "optimizer.teardown post-run")
+            # Final cleanup so the target ends in a reset state even when the
+            # inner-loop cleanup-after-success was skipped. Target teardown
+            # itself happens in the caller before the next semaphore slot opens.
+            await _swallow(target.cleanup(), "target.cleanup post-task")
 
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still
@@ -589,28 +687,33 @@ class Controller:
             success=success,
             llm_usage=task_usage,
             stop_reason=stop_reason,
+            error=error_text,
         )
 
     async def _run_single(
         self,
         task: Task[Target],
+        target: Target,
         channel: EventChannel,
         scope: Scope,
         run_number: int,
-    ) -> tuple[Trajectory, EvaluationResult, bool]:
+        trajectory: Trajectory,
+    ) -> tuple[EvaluationResult, bool]:
         """Execute a single optimizer iteration (one target run + evaluation).
 
         Order: target.run → evaluate → RunEndEvent (persisted) → close.
         The optimizer reads the evaluation from RunEndEvent.evaluation
         (when ``include_feedback=True``) or from the trajectory.
 
+        The trajectory is constructed by the caller (``_run_task``) so that
+        a failure mid-run still leaves a partial trajectory accessible for
+        persistence and debugging.
+
         Returns:
-            A tuple of (trajectory, evaluation, done) where done is True
-            if the optimizer wants to stop.
+            A tuple of (evaluation, done) where done is True if the
+            optimizer wants to stop.
         """
         assert scope, "scope must contain at least one tag"
-
-        trajectory = Trajectory(filtered_scope=scope)
 
         # Signal run start — optimizer gets filtered view
         await channel.send(RunStartEvent(trajectory=trajectory.filtered))
@@ -622,10 +725,10 @@ class Controller:
         )(channel.send)
 
         # Target runs — events go through the pipeline
-        await self._target.run(trajectory.emit, send_event)
+        await target.run(trajectory.emit, send_event)
 
         # -- Evaluate --
-        evaluation = await task.evaluate(trajectory, self._target)
+        evaluation = await task.evaluate(trajectory, target)
 
         # Filter sub_scores to only include in-scope scores.
         # primary_score, success, and rationale are always included
@@ -665,43 +768,39 @@ class Controller:
             done,
         )
 
-        return trajectory, evaluation, done
+        return evaluation, done
 
     # ------------------------------------------------------------------
     # CLI output
     # ------------------------------------------------------------------
 
-    def _print_summary(self, result: ControllerResult) -> None:
-        """Print a human-readable summary of the evaluation."""
+    def _print_summary(self, tmr: ThreatModelResult) -> None:
+        """Print a human-readable summary of one threat model."""
+        scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(empty)"
+        model_name = tmr.llm_config.model if tmr.llm_config else "(no LLM)"
         print("\n" + "=" * 60)
-        print("Evaluation Summary")
+        print(f"Threat model: scope=[{scope_names}] model={model_name}")
         print("=" * 60)
 
-        for tmr in result.threat_model_results:
-            scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(empty)"
-            model_name = tmr.llm_config.model if tmr.llm_config else "(no LLM)"
-            print(f"\n  Threat model: scope=[{scope_names}] model={model_name}")
-
-            for tr in tmr.task_results:
-                status = "SUCCEEDED" if tr.success else "FAILED"
-                print(
-                    f"\n    [{status}] {tr.task.goal.description}"
-                    f"\n      Best score: {tr.best_score.value:.4f}"
-                    f"\n      Runs: {len(tr.runs)}"
-                    f"\n      LLM usage: {tr.llm_usage.calls} calls,"
-                    f" ${tr.llm_usage.cost:.6f}"
-                )
-
-            if tmr.skipped_tasks:
-                print(f"\n    Skipped: {len(tmr.skipped_tasks)} task(s) (NotApplicable)")
-
-        all_task_results = [tr for tmr in result.threat_model_results for tr in tmr.task_results]
-        if all_task_results:
-            best = max(tr.best_score.value for tr in all_task_results)
-            total_success = sum(1 for tr in all_task_results if tr.success)
+        for tr in tmr.task_results:
+            status = "SUCCEEDED" if tr.success else "FAILED"
             print(
-                f"\n  Overall: {total_success}/{len(all_task_results)} task evaluations"
-                f" succeeded\n  Highest score: {best:.4f}"
+                f"\n  [{status}] {tr.task.goal.description}"
+                f"\n    Best score: {tr.best_score.value:.4f}"
+                f"\n    Runs: {len(tr.runs)}"
+                f"\n    LLM usage: {tr.llm_usage.calls} calls,"
+                f" ${tr.llm_usage.cost:.6f}"
+            )
+
+        if tmr.skipped_tasks:
+            print(f"\n  Skipped: {len(tmr.skipped_tasks)} task(s) (NotApplicable)")
+
+        if tmr.task_results:
+            best = max(tr.best_score.value for tr in tmr.task_results)
+            total_success = sum(1 for tr in tmr.task_results if tr.success)
+            print(
+                f"\n  Overall: {total_success}/{len(tmr.task_results)} tasks succeeded"
+                f"\n  Highest score: {best:.4f}"
             )
 
         print("=" * 60 + "\n")
