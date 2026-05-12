@@ -2,6 +2,50 @@
 
 ## v0.2.0 (unreleased)
 
+### Controller now takes target_factory; tasks run in parallel per threat model
+
+`Controller` no longer accepts a single `target: Target` instance. Pass a
+`TargetFactory` instead — it produces a fresh `Target` per task and
+declares how many tasks the controller may run in parallel within a
+threat model.
+
+```python
+# Before
+controller = Controller(
+    optimizer_factory=lambda: MyOptimizer(),
+    target=MyTarget(api_key="sk-..."),
+    security_claim=claim,
+    llm_configs=[cfg],
+)
+
+# After
+from superred.core.controller import Controller, TargetFactory
+
+target_factory = TargetFactory(
+    create=lambda: MyTarget(api_key="sk-..."),
+    concurrency=8,  # default is 1 (sequential, old behavior)
+)
+controller = Controller(
+    optimizer_factory=lambda: MyOptimizer(),
+    target_factory=target_factory,
+    security_claim=claim,
+    llm_configs=[cfg],
+)
+```
+
+What changed:
+
+- **Per-task target lifecycle**: each task gets its own `Target` instance from `target_factory.create()`. Concurrent tasks never share mutable target state. There is no controller-level long-lived target.
+- **Parallel task execution**: within one threat model, tasks run concurrently bounded by `target_factory.concurrency` via `asyncio.Semaphore` + `asyncio.gather`. Results are returned in input order. Default `concurrency=1` preserves sequential behavior.
+- **`target.teardown()` is per-task**, called in `_iterate_tasks`'s per-task `finally` before the semaphore slot is released. The outer controller-level teardown is gone.
+- **Probe target for default scopes**: when `run()` is called without explicit `scopes=`, the controller builds one short-lived target via the factory, reads `security_domain.distinct_combinations()`, and tears it down immediately.
+
+Migration:
+
+1. Wrap target construction in a factory: `target=MyTarget(...)` → `target_factory=TargetFactory(create=lambda: MyTarget(...))`.
+2. For single-instance migration (tests, expensive-to-construct resources), use `target_factory=TargetFactory.singleton(my_target)` — concurrency is locked to 1.
+3. For real targets that can serve parallel requests (chatbots wrapping API calls, etc.), bump `concurrency=` on the factory to match the deployed rate limit.
+
 ### Optimizer.initialize() signature change
 
 The `llm_client` parameter on `Optimizer.initialize()` is now required (`LLMClient`, not `LLMClient | None`). The base class stores the client — subclasses must call `super().initialize(...)` for `self.llm` to work.

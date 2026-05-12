@@ -250,7 +250,7 @@ class TestControllerLLMIntegration:
 
     async def test_optimizer_receives_llm_client(self) -> None:
         """The optimizer can access self.llm after controller sets it."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.security_domain import Scope
 
@@ -273,7 +273,7 @@ class TestControllerLLMIntegration:
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: CapturingOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config],
         )
@@ -284,7 +284,7 @@ class TestControllerLLMIntegration:
 
     async def test_result_always_has_llm_usage(self) -> None:
         """RunResult and TaskResult always have LLMUsage (zero calls when unused)."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.security_domain import Scope
 
@@ -293,7 +293,7 @@ class TestControllerLLMIntegration:
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -312,7 +312,7 @@ class TestControllerLLMIntegration:
         _mock_cost: MagicMock,
     ) -> None:
         """RunResult and TaskResult track LLM usage."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.security_domain import Scope
 
@@ -353,7 +353,7 @@ class TestControllerLLMIntegration:
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: LLMUsingOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config],
         )
@@ -383,7 +383,7 @@ class TestBudgetExhaustionGraceful:
         _mock_cost: MagicMock,
     ) -> None:
         """When budget runs out mid-task, that task stops but results are returned."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.event import EventResponse
         from superred.core.types.security_domain import Scope
@@ -429,7 +429,7 @@ class TestBudgetExhaustionGraceful:
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: LLMEveryRunOptimizer(done=False),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config],
             max_runs_per_task=10,
@@ -454,7 +454,7 @@ class TestBudgetExhaustionGraceful:
         _mock_cost: MagicMock,
     ) -> None:
         """Budget exhaustion on the very first run still produces a TaskResult."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.event import EventResponse
         from superred.core.types.security_domain import Scope
@@ -497,7 +497,7 @@ class TestBudgetExhaustionGraceful:
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: DoubleCallOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config],
         )
@@ -521,7 +521,7 @@ class TestBudgetExhaustionGraceful:
         _mock_cost: MagicMock,
     ) -> None:
         """After budget exhaustion on one task, the next task still runs."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.event import EventResponse
         from superred.core.types.security_domain import Scope
@@ -567,7 +567,7 @@ class TestBudgetExhaustionGraceful:
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: LLMOnceOptimizer(done=False),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([task_a, task_b]),
             llm_configs=[config],
         )
@@ -608,7 +608,7 @@ class TestLLMClientNoop:
 
     async def test_noop_controller_no_llm_configs(self) -> None:
         """Controller without llm_configs passes noop client to optimizer."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.security_domain import Scope
 
@@ -625,7 +625,7 @@ class TestLLMClientNoop:
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: CapturingOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             # No llm_configs
         )

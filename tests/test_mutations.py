@@ -18,7 +18,7 @@ import asyncio
 import pytest
 
 from superred.core.channel import EventChannel, EventEnvelope
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.middleware import compose, security_domain_filter
 from superred.core.types.controllable import Controllable
@@ -344,7 +344,7 @@ class TestControllerRunMutations:
         """Kills: `if done: break` removed or negated."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=10,
@@ -356,7 +356,7 @@ class TestControllerRunMutations:
         """Kills: `done=True` default or `max_runs_per_task` off-by-one."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=False),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=3,
@@ -369,7 +369,7 @@ class TestControllerRunMutations:
         `success` initialized to True."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=False),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=2,
@@ -405,7 +405,7 @@ class TestControllerRunMutations:
 
         controller = Controller(
             optimizer_factory=lambda: ScoreOptimizer(done=False),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([ScoredTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -442,7 +442,7 @@ class TestControllerRunMutations:
 
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=2),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([TiedTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -453,7 +453,7 @@ class TestControllerRunMutations:
         """Kills: `trajectory.close()` removed from _run_single."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -468,7 +468,7 @@ class TestControllerRunMutations:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -480,7 +480,7 @@ class TestControllerRunMutations:
         with pytest.raises(ValueError):
             Controller(
                 optimizer_factory=lambda: StubOptimizer(),
-                target=StubTarget(),
+                target_factory=TargetFactory.singleton(StubTarget()),
                 security_claim=SecurityClaim.from_tasks([StubTask()]),
                 llm_configs=[STUB_LLM_CONFIG],
                 max_runs_per_task=0,
@@ -508,7 +508,7 @@ class TestControllerRunMutations:
         optimizer = CapturingOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -539,7 +539,7 @@ class TestBestScoreMCDC:
         On first run, best_score is None, so the score is always accepted."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.1)]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -565,7 +565,7 @@ class TestBestScoreMCDC:
 
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=2),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([S()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -591,7 +591,7 @@ class TestBestScoreMCDC:
 
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=2),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([S()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -617,7 +617,7 @@ class TestControllerDefaultValues:
         branch in ``Controller.__init__``."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -630,7 +630,7 @@ class TestControllerDefaultValues:
         hardcoding 100 themselves."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=None,
@@ -940,7 +940,7 @@ class TestBudgetExhaustedStopsTask:
 
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=False),
-            target=BudgetBlowingTarget(),
+            target_factory=TargetFactory.singleton(BudgetBlowingTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=10,

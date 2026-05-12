@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventHandler, EventResponseHandler
@@ -90,7 +90,7 @@ async def test_no_results_dir_writes_nothing(tmp_path: Path) -> None:
     """
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=StubTarget(),
+        target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
         llm_configs=[STUB_LLM_CONFIG],
     )
@@ -106,7 +106,7 @@ async def test_no_results_dir_writes_nothing(tmp_path: Path) -> None:
 async def test_single_threat_model_creates_claim_and_subfolder(tmp_path: Path) -> None:
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=StubTarget(),
+        target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask(score=0.8, success=True)]),
         llm_configs=[STUB_LLM_CONFIG],
         results_dir=tmp_path,
@@ -154,7 +154,7 @@ async def test_results_dir_str_is_accepted(tmp_path: Path) -> None:
     """Both Path and str should work for the ctor arg."""
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=StubTarget(),
+        target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
         llm_configs=[STUB_LLM_CONFIG],
         results_dir=str(tmp_path / "out"),
@@ -172,7 +172,7 @@ async def test_results_dir_str_is_accepted(tmp_path: Path) -> None:
 async def test_two_scopes_produce_two_layouts(tmp_path: Path) -> None:
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=TwoTagTarget(),
+        target_factory=TargetFactory.singleton(TwoTagTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
         llm_configs=[STUB_LLM_CONFIG],
         results_dir=tmp_path,
@@ -206,7 +206,7 @@ async def test_target_run_error_persists_both_threat_models_with_error_task(
     target = FailOnNthRunTarget(fail_on_call=2, tag=EXTERNAL_TAG)
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=target,
+        target_factory=TargetFactory.singleton(target),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
         llm_configs=[STUB_LLM_CONFIG],
         results_dir=tmp_path,
@@ -234,13 +234,15 @@ async def test_failed_task_persisted_with_error_stop_reason(tmp_path: Path) -> N
 
     class _FailingEvalTask(StubTask):
         async def evaluate(
-            self, trajectory: Trajectory, target: Target,
+            self,
+            trajectory: Trajectory,
+            target: Target,
         ) -> EvaluationResult:
             raise RuntimeError("evaluation exploded")
 
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=StubTarget(),
+        target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks(
             [_FailingEvalTask(goal_text="bad"), StubTask(goal_text="good")],
         ),
@@ -264,7 +266,7 @@ async def test_failed_task_persisted_with_error_stop_reason(tmp_path: Path) -> N
 async def test_no_tmp_leftover_after_successful_run(tmp_path: Path) -> None:
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=StubTarget(),
+        target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
         llm_configs=[STUB_LLM_CONFIG],
         results_dir=tmp_path,
@@ -283,7 +285,7 @@ async def test_include_feedback_false_persists_run_end_with_null_eval(
 ) -> None:
     controller = Controller(
         optimizer_factory=lambda: StubOptimizer(done=True),
-        target=StubTarget(),
+        target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask(score=0.5, success=False)]),
         llm_configs=[STUB_LLM_CONFIG],
         results_dir=tmp_path,

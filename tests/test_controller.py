@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from superred.core.controller import Controller, ControllerResult, ThreatModelResult
+from superred.core.controller import Controller, ControllerResult, TargetFactory, ThreatModelResult
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.llm import LLMClient
@@ -126,8 +126,10 @@ class BudgetExhaustedInInitializeOptimizer(StubOptimizer):
         await super().initialize(goal, controllables, observables, llm_client)
         # Simulate a warmup LLM call that exhausts the configured budget.
         from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
         raise BudgetExhaustedError(
-            "Budget gone during init", usage=LLMUsage(calls=1, cost=0.01),
+            "Budget gone during init",
+            usage=LLMUsage(calls=1, cost=0.01),
         )
 
 
@@ -193,6 +195,48 @@ class AlternatingSuccessTask(StubTask):
 
 
 # ---------------------------------------------------------------------------
+# TargetFactory
+# ---------------------------------------------------------------------------
+
+
+class TestTargetFactory:
+    def test_default_concurrency_is_one(self) -> None:
+        factory = TargetFactory(create=StubTarget)
+        assert factory.concurrency == 1
+
+    def test_explicit_concurrency(self) -> None:
+        factory = TargetFactory(create=StubTarget, concurrency=8)
+        assert factory.concurrency == 8
+
+    def test_concurrency_must_be_at_least_one(self) -> None:
+        with pytest.raises(ValueError, match="at least 1"):
+            TargetFactory(create=StubTarget, concurrency=0)
+        with pytest.raises(ValueError, match="at least 1"):
+            TargetFactory(create=StubTarget, concurrency=-3)
+
+    def test_create_returns_fresh_instances(self) -> None:
+        factory = TargetFactory(create=StubTarget)
+        a, b = factory.create(), factory.create()
+        assert a is not b
+
+    def test_singleton_returns_same_instance(self) -> None:
+        target = StubTarget()
+        factory = TargetFactory.singleton(target)
+        assert factory.create() is target
+        assert factory.create() is target
+
+    def test_singleton_locks_concurrency_to_one(self) -> None:
+        target = StubTarget()
+        factory = TargetFactory.singleton(target)
+        assert factory.concurrency == 1
+
+    def test_frozen(self) -> None:
+        factory = TargetFactory(create=StubTarget)
+        with pytest.raises(AttributeError):
+            factory.concurrency = 4  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
 # Controller init
 # ---------------------------------------------------------------------------
 
@@ -201,10 +245,55 @@ class TestControllerInit:
     def test_construction_stores_params(self) -> None:
         Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
+
+    async def test_factory_called_once_per_task(self) -> None:
+        """A non-singleton factory is invoked once per task in the claim.
+
+        Passing explicit scopes skips the probe-target construction in
+        ``_resolve_scopes``, so the only ``create()`` calls come from the
+        per-task lifecycle.
+        """
+        calls = {"n": 0}
+
+        def make_target() -> StubTarget:
+            calls["n"] += 1
+            return StubTarget()
+
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=make_target),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="a"), StubTask(goal_text="b"), StubTask(goal_text="c")]
+            ),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert calls["n"] == 3
+
+    async def test_probe_target_used_when_scopes_default(self) -> None:
+        """When scopes default to None, the factory is called once extra
+        to build a probe for ``distinct_combinations()``."""
+        calls = {"n": 0}
+
+        def make_target() -> StubTarget:
+            calls["n"] += 1
+            return StubTarget()
+
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=make_target),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        # No scopes passed — probe is built to enumerate distinct_combinations.
+        result = await controller.run()
+        # 1 probe + N task-bound (where N = task_count × len(scopes)).
+        n_threat_models = len(result.threat_model_results)
+        assert calls["n"] == 1 + n_threat_models
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +305,7 @@ class TestResultTypesFrozen:
     async def test_run_result_frozen(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -228,7 +317,7 @@ class TestResultTypesFrozen:
     async def test_task_result_frozen(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -240,7 +329,7 @@ class TestResultTypesFrozen:
     async def test_controller_result_frozen(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -269,7 +358,7 @@ class TestControllerRun:
         task = StubTask(score=0.75, success=False)
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([task]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -287,7 +376,7 @@ class TestControllerRun:
     async def test_multiple_runs_until_done(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=3),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -297,7 +386,7 @@ class TestControllerRun:
     async def test_max_runs_limit(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=False),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=3,
@@ -309,7 +398,7 @@ class TestControllerRun:
         """Optimizer signals done=True -> stop_reason='done'."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -320,7 +409,7 @@ class TestControllerRun:
         """Loop exhausts max_runs_per_task -> stop_reason='max_runs'."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=False),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=2,
@@ -348,7 +437,7 @@ class TestControllerRun:
 
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=False),
-            target=BudgetBlowingTarget(),
+            target_factory=TargetFactory.singleton(BudgetBlowingTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=10,
@@ -362,7 +451,7 @@ class TestControllerRun:
         opt = BudgetExhaustedInInitializeOptimizer()
         controller = Controller(
             optimizer_factory=lambda: opt,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -378,7 +467,7 @@ class TestControllerRun:
         na_task = NotApplicableTask()
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([na_task, StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -392,7 +481,7 @@ class TestControllerRun:
         target = StubTarget()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -404,7 +493,7 @@ class TestControllerRun:
         target = StubTarget()
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=False),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=3,
@@ -417,7 +506,7 @@ class TestControllerRun:
     async def test_best_score_tracks_highest(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=3),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([VaryingScoreTask(scores=[0.2, 0.8, 0.5])]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -435,7 +524,7 @@ class TestLifecycleEvents:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -449,7 +538,7 @@ class TestLifecycleEvents:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -468,7 +557,7 @@ class TestSecurityDomainFiltering:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(tag=EXTERNAL_TAG),
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -482,7 +571,7 @@ class TestSecurityDomainFiltering:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(tag=INTERNAL_TAG),
+            target_factory=TargetFactory.singleton(StubTarget(tag=INTERNAL_TAG)),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -500,7 +589,7 @@ class TestSecurityDomainFiltering:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(tag=EXTERNAL_TAG),
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -521,7 +610,7 @@ class TestParallelTarget:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=ParallelTarget(),
+            target_factory=TargetFactory.singleton(ParallelTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -542,7 +631,7 @@ class TestFeedbackInTrajectory:
     async def test_run_end_persisted_with_evaluation(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.5)]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -557,7 +646,7 @@ class TestFeedbackInTrajectory:
         """RunEndEvent persisted to trajectory gets security_domain from scope."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -584,7 +673,7 @@ class TestFeedbackInTrajectory:
 
         controller = Controller(
             optimizer_factory=lambda: _InspectingOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -595,7 +684,7 @@ class TestFeedbackInTrajectory:
         """When include_feedback=False, RunEndEvent.evaluation is None."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.9)]),
             llm_configs=[STUB_LLM_CONFIG],
             include_feedback=False,
@@ -610,7 +699,7 @@ class TestFeedbackInTrajectory:
         """RunEndEvent is persisted even when include_feedback=False."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             include_feedback=False,
@@ -630,7 +719,7 @@ class TestEventsOnTrajectory:
     async def test_controllable_event_and_response_on_trajectory(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -646,7 +735,7 @@ class TestEventsOnTrajectory:
         so the optimizer can see its own injection in the filtered trajectory."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(tag=EXTERNAL_TAG),
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -664,7 +753,7 @@ class TestEventsOnTrajectory:
         making it invisible to the optimizer through the filtered trajectory."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(tag=INTERNAL_TAG),
+            target_factory=TargetFactory.singleton(StubTarget(tag=INTERNAL_TAG)),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -693,7 +782,7 @@ class TestEventsOnTrajectory:
 
         controller = Controller(
             optimizer_factory=lambda: _InspectingOptimizer(done=True),
-            target=StubTarget(tag=EXTERNAL_TAG),
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -717,7 +806,7 @@ class TestEventsOnTrajectory:
 
         controller = Controller(
             optimizer_factory=lambda: _InspectingOptimizer(done=True),
-            target=StubTarget(tag=INTERNAL_TAG),
+            target_factory=TargetFactory.singleton(StubTarget(tag=INTERNAL_TAG)),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -738,7 +827,7 @@ class TestExceptionSafety:
         target = FailingRunTarget()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -756,7 +845,7 @@ class TestExceptionSafety:
         target = StubTarget()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([FailingEvalTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -773,7 +862,7 @@ class TestExceptionSafety:
         target = StubTarget()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -789,7 +878,7 @@ class TestExceptionSafety:
         target = FailAfterNRunsTarget(succeed_for=1)
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=10),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=5,
@@ -809,7 +898,7 @@ class TestExceptionSafety:
         ok = StubTask(goal_text="Good task")
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([failing, ok]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -825,7 +914,7 @@ class TestExceptionSafety:
         """A non-NotApplicable error in configure_target produces a synthetic error TaskResult."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([FailingConfigureTask(), StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -843,7 +932,7 @@ class TestExceptionSafety:
         bad_opt = FailingInitAndTeardownOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: bad_opt,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -859,7 +948,7 @@ class TestExceptionSafety:
         opt = RaisingTeardownOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: opt,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -877,7 +966,7 @@ class TestExceptionSafety:
         target = FailingRunTarget()  # raises on every target.run
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=3,
@@ -895,7 +984,7 @@ class TestExceptionSafety:
         target = FailingCleanupTarget()
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=10),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=5,
@@ -910,7 +999,7 @@ class TestExceptionSafety:
     async def test_all_tasks_not_applicable(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([NotApplicableTask(), NotApplicableTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -932,7 +1021,7 @@ class TestControllerValidation:
         with pytest.raises(ValueError, match="at least 1"):
             Controller(
                 optimizer_factory=lambda: StubOptimizer(),
-                target=StubTarget(),
+                target_factory=TargetFactory.singleton(StubTarget()),
                 security_claim=SecurityClaim.from_tasks([StubTask()]),
                 llm_configs=[STUB_LLM_CONFIG],
                 max_runs_per_task=value,
@@ -942,7 +1031,7 @@ class TestControllerValidation:
         """max_runs_per_task=1 is the minimum valid value."""
         Controller(
             optimizer_factory=lambda: StubOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=1,
@@ -958,7 +1047,7 @@ class TestRunLoopEdgeCases:
     async def test_success_latches_true_across_runs(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=2),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([AlternatingSuccessTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -971,7 +1060,7 @@ class TestRunLoopEdgeCases:
     async def test_never_done_runs_to_max(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: NeverDoneOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=3,
@@ -983,7 +1072,7 @@ class TestRunLoopEdgeCases:
         optimizer = StubOptimizer(done=True)
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -993,7 +1082,7 @@ class TestRunLoopEdgeCases:
     async def test_trajectory_closed_after_run(self) -> None:
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1084,7 +1173,7 @@ class TestControllableObservableFiltering:
         optimizer = _CapturingOptimizer()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=_MultiControllableTarget(),
+            target_factory=TargetFactory.singleton(_MultiControllableTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1098,7 +1187,7 @@ class TestControllableObservableFiltering:
         optimizer = _CapturingOptimizer()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=_MultiControllableTarget(),
+            target_factory=TargetFactory.singleton(_MultiControllableTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1112,7 +1201,7 @@ class TestControllableObservableFiltering:
         optimizer = _CapturingOptimizer()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=_MultiControllableTarget(),
+            target_factory=TargetFactory.singleton(_MultiControllableTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1126,7 +1215,7 @@ class TestControllableObservableFiltering:
         multi_scope: Scope = frozenset({EXTERNAL_TAG, INTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=_MultiControllableTarget(),
+            target_factory=TargetFactory.singleton(_MultiControllableTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1150,7 +1239,7 @@ class TestOptimizerReceivesFilteredTrajectory:
         optimizer = _CapturingOptimizer()
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1205,7 +1294,7 @@ class TestOptimizerReceivesFilteredTrajectory:
 
         controller = Controller(
             optimizer_factory=lambda: _SnapshotOptimizer(done=True),
-            target=_TaggingTarget(),
+            target_factory=TargetFactory.singleton(_TaggingTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1252,7 +1341,7 @@ class TestScopedScoreFiltering:
         """Controller filters out-of-scope sub_scores from feedback."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1277,7 +1366,7 @@ class TestScopedScoreFiltering:
         """Root scope includes everything — all sub_scores preserved."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1316,7 +1405,7 @@ class TestScopedScoreFiltering:
 
         controller = Controller(
             optimizer_factory=lambda: _FeedbackReadingOptimizer(),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             llm_configs=[STUB_LLM_CONFIG],
             max_runs_per_task=2,
@@ -1331,7 +1420,7 @@ class TestScopedScoreFiltering:
         is outside the tested scope (optimizer needs the main signal)."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             # EXTERNAL scope, but primary_score has ROOT domain
             llm_configs=[STUB_LLM_CONFIG],
@@ -1364,7 +1453,7 @@ class TestScopedScoreFiltering:
 
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([_AllOutOfScopeTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1394,7 +1483,7 @@ class TestScopedScoreFiltering:
 
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([_RationaleTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1429,7 +1518,7 @@ class TestScopedScoreFiltering:
 
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([_NoneDomainScoreTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1453,7 +1542,7 @@ class TestThreatModelIteration:
         """One scope + one LLM config = one threat model."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1467,7 +1556,7 @@ class TestThreatModelIteration:
         """Multiple scopes produce multiple threat models."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1480,7 +1569,7 @@ class TestThreatModelIteration:
         """Without llm_configs, controller iterates scopes with no LLM."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
         )
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
@@ -1499,7 +1588,7 @@ class TestThreatModelIteration:
 
         controller = Controller(
             optimizer_factory=factory,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(), StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1513,7 +1602,7 @@ class TestThreatModelIteration:
         config_b = LLMConfig(model="model-b", api_base="http://b", api_key="sk-b")
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config_a, config_b],
         )
@@ -1527,7 +1616,7 @@ class TestThreatModelIteration:
         config_b = LLMConfig(model="b", api_base="http://b", api_key="sk-b")
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config_a, config_b],
         )
@@ -1538,7 +1627,7 @@ class TestThreatModelIteration:
         """Without explicit scopes, uses target's distinct_combinations()."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1560,7 +1649,7 @@ class TestThreatModelIteration:
 
         controller = Controller(
             optimizer_factory=lambda: _TrackingOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(), StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1572,7 +1661,7 @@ class TestThreatModelIteration:
         config = LLMConfig(model="model-a", api_base="http://a", api_key="sk-a")
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config],
         )
@@ -1591,7 +1680,7 @@ class TestThreatModelIteration:
         multi_scope: Scope = frozenset({EXTERNAL_TAG, INTERNAL_TAG})
         controller = Controller(
             optimizer_factory=lambda: optimizer,
-            target=_MultiControllableTarget(),
+            target_factory=TargetFactory.singleton(_MultiControllableTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1616,7 +1705,7 @@ class TestThreatModelIteration:
 
         controller = Controller(
             optimizer_factory=factory,
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1631,7 +1720,7 @@ class TestThreatModelIteration:
         config_b = LLMConfig(model="b", api_base="http://b", api_key="sk-b")
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[config_a, config_b],
         )
@@ -1648,7 +1737,7 @@ class TestThreatModelIteration:
         """Each threat model evaluates all tasks independently."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(), StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
@@ -1661,9 +1750,102 @@ class TestThreatModelIteration:
         """_print_summary runs without error on multi-threat-model results."""
         controller = Controller(
             optimizer_factory=lambda: StubOptimizer(done=True),
-            target=StubTarget(),
+            target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[STUB_LLM_CONFIG],
         )
         # Should not raise
         await controller.run(scopes=[EXTERNAL_SCOPE, ROOT_SCOPE])
+
+
+# ---------------------------------------------------------------------------
+# Parallel task execution
+# ---------------------------------------------------------------------------
+
+
+class _SlowTarget(StubTarget):
+    """Target whose run() sleeps so we can observe overlap between tasks."""
+
+    in_flight: int = 0  # class-level so all instances share the same counter
+    peak: int = 0
+
+    def __init__(self, tag: object = EXTERNAL_TAG, sleep_s: float = 0.05) -> None:
+        super().__init__(tag=tag)  # type: ignore[arg-type]
+        self._sleep_s = sleep_s
+
+    @classmethod
+    def reset_counters(cls) -> None:
+        cls.in_flight = 0
+        cls.peak = 0
+
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
+        import asyncio
+
+        type(self).in_flight += 1
+        type(self).peak = max(type(self).peak, type(self).in_flight)
+        try:
+            await asyncio.sleep(self._sleep_s)
+            await super().run(emit, send_event)
+        finally:
+            type(self).in_flight -= 1
+
+
+class TestParallelExecution:
+    """Concurrent task execution within a threat model."""
+
+    async def test_tasks_run_in_parallel_up_to_concurrency(self) -> None:
+        """With concurrency=4, four tasks should be in flight at peak."""
+        _SlowTarget.reset_counters()
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=_SlowTarget, concurrency=4),
+            security_claim=SecurityClaim.from_tasks([StubTask() for _ in range(8)]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        await controller.run(scopes=[EXTERNAL_SCOPE])
+        # Eight tasks, concurrency=4 — peak in-flight should hit the limit.
+        assert _SlowTarget.peak == 4
+
+    async def test_concurrency_one_is_sequential(self) -> None:
+        """With concurrency=1, peak in-flight is exactly 1."""
+        _SlowTarget.reset_counters()
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=_SlowTarget, concurrency=1),
+            security_claim=SecurityClaim.from_tasks([StubTask() for _ in range(4)]),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        await controller.run(scopes=[EXTERNAL_SCOPE])
+        assert _SlowTarget.peak == 1
+
+    async def test_parallel_preserves_input_order(self) -> None:
+        """task_results is in the order tasks appear in the security claim."""
+        # Distinct goals tied to instance identity so reordering is detectable.
+        tasks = [StubTask(goal_text=f"task-{i}") for i in range(6)]
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=_SlowTarget, concurrency=3),
+            security_claim=SecurityClaim.from_tasks(tasks),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        ordered = [tr.task.goal.description for tr in _first_tmr(result).task_results]
+        assert ordered == [f"task-{i}" for i in range(6)]
+
+    async def test_one_task_failure_does_not_block_siblings_parallel(self) -> None:
+        """A failure in one parallel task is contained and siblings still run."""
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=StubTarget, concurrency=4),
+            security_claim=SecurityClaim.from_tasks(
+                [FailingEvalTask(), StubTask(), StubTask(), StubTask()]
+            ),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        trs = _first_tmr(result).task_results
+        assert len(trs) == 4
+        assert trs[0].stop_reason == "error"
+        for tr in trs[1:]:
+            assert tr.stop_reason == "done"
+            assert tr.success is True

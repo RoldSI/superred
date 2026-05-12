@@ -6,6 +6,7 @@ from superred.core.controller import (
     ControllerResult,
     OptimizerFactory,
     RunResult,
+    TargetFactory,
     TaskResult,
     ThreatModelResult,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "ControllerResult",
     "OptimizerFactory",
     "RunResult",
+    "TargetFactory",
     "TaskResult",
     "ThreatModelResult",
     # Middleware

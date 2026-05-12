@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from superred.core.controller import Controller, ControllerResult
+from superred.core.controller import Controller, ControllerResult, TargetFactory
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
@@ -317,7 +317,7 @@ class TestFullControllerWorkflow:
 
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=claim,
             llm_configs=[_LLM_CONFIG],
         )
@@ -347,7 +347,7 @@ class TestSecurityScopeFiltering:
         """When scoped to USER, the db_lookup (INTERNAL) is not controlled."""
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=RAGTarget(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([SecretExtractionTask(secret="HIDDEN")]),
             llm_configs=[_LLM_CONFIG],
             max_runs_per_task=1,
@@ -381,7 +381,7 @@ class TestSecurityScopeFiltering:
         """EXTERNAL scope includes USER (child), so user_query is controlled."""
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=RAGTarget(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([SecretExtractionTask()]),
             llm_configs=[_LLM_CONFIG],
         )
@@ -415,7 +415,7 @@ class TestMultiTaskClaim:
 
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=combined,
             llm_configs=[_LLM_CONFIG],
         )
@@ -442,7 +442,7 @@ class TestFeedbackFlowsToOptimizer:
 
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=claim,
             llm_configs=[_LLM_CONFIG],
             max_runs_per_task=3,
@@ -474,7 +474,7 @@ class TestTrajectoryDataIntegrity:
 
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=claim,
             llm_configs=[_LLM_CONFIG],
             max_runs_per_task=1,
@@ -516,7 +516,7 @@ class TestParallelControllablesIntegration:
         target = RAGTarget()  # uses integration test's domain
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[_LLM_CONFIG],
             max_runs_per_task=1,
@@ -537,7 +537,7 @@ class TestMultiTaskMixedResults:
         fail_task = StubTask(score=0.0, success=False, goal_text="will fail")
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=RAGTarget(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([success_task, fail_task]),
             llm_configs=[_LLM_CONFIG],
             max_runs_per_task=1,
@@ -563,7 +563,7 @@ class TestOptimizerUsesPastTrajectories:
 
         controller = Controller(
             optimizer_factory=lambda: HistoryOptimizer(),
-            target=RAGTarget(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([SecretExtractionTask(secret="test")]),
             llm_configs=[_LLM_CONFIG],
         )
@@ -592,7 +592,7 @@ class TestPostCallEventIntegration:
 
         controller = Controller(
             optimizer_factory=lambda: PostCallOptimizer(done=True),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_configs=[_LLM_CONFIG],
         )
@@ -622,7 +622,7 @@ class TestTargetConfigPerTask:
 
         controller = Controller(
             optimizer_factory=lambda: AdaptiveOptimizer(),
-            target=target,
+            target_factory=TargetFactory.singleton(target),
             security_claim=claim,
             llm_configs=[_LLM_CONFIG],
             max_runs_per_task=1,
@@ -672,7 +672,7 @@ class TestDomainFilteredOptimizerInputs:
 
         controller = Controller(
             optimizer_factory=lambda: InspectingOptimizer(),
-            target=RAGTarget(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks(
                 [SecretExtractionTask(secret="TEST")],
             ),
