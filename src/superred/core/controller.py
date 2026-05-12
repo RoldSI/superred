@@ -98,9 +98,13 @@ class TargetFactory:
         Concurrency is locked to ``1`` because a shared instance cannot
         safely serve parallel tasks — mutable target state would race.
 
-        Useful for tests and for the small number of real cases where a
-        target must be a singleton (e.g. it owns a long-lived resource
-        that cannot be re-created cheaply).
+        Intended for tests and small migrations.  Note that the controller
+        still calls ``target.teardown()`` once per task in the security
+        claim, so a singleton-wrapped target needs an idempotent
+        ``teardown()`` (or a no-op one) if the claim has more than one
+        task.  For real targets that hold expensive resources, prefer a
+        non-singleton factory whose ``create()`` returns a fresh instance
+        each call.
         """
         return cls(create=lambda: target, concurrency=1)
 
@@ -484,16 +488,31 @@ class Controller:
         Per-task error containment: errors raised during a task's run loop
         are caught inside ``_run_task`` and reflected via
         ``stop_reason="error"`` on the returned :class:`TaskResult`. Errors
-        raised *outside* the run loop (e.g. inside ``configure_target`` or
-        ``optimizer.initialize``) are caught here as a backstop, recorded
-        as a synthetic error :class:`TaskResult`, and do not abort the
-        threat model.
+        raised *outside* the run loop — inside ``target_factory.create()``,
+        ``task.configure_target``, or ``optimizer.initialize`` — are caught
+        here as a backstop, recorded as a synthetic error
+        :class:`TaskResult`, and do not abort the threat model.
         """
         sem = asyncio.Semaphore(self._target_factory.concurrency)
 
         async def run_one(task: Task[Target]) -> _TaskOutcome:
             async with sem:
-                target = self._target_factory.create()
+                # ``factory.create()`` may itself raise (e.g. a target whose
+                # __init__ does network setup).  Contain it here so one
+                # bad task can't take down the rest of the threat model
+                # via ``asyncio.gather``'s first-exception behavior.
+                try:
+                    target = self._target_factory.create()
+                except Exception:
+                    logger.exception(
+                        "Task %r: target_factory.create() failed, recording as error",
+                        task.goal.description,
+                    )
+                    return _TaskOutcome(
+                        kind="error",
+                        task=task,
+                        result=_synthesize_error_task_result(task),
+                    )
                 try:
                     try:
                         result = await self._run_task(task, scope, llm_config, target)

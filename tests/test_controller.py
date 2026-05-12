@@ -23,7 +23,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.llm import LLMConfig
 from superred.core.types.observable import Observable, ObservableValue
-from superred.core.types.security_domain import Scope
+from superred.core.types.security_domain import Scope, SecurityDomainTag
 from superred.core.types.trajectory import FilteredTrajectory, Trajectory
 
 from .conftest import (
@@ -1769,8 +1769,8 @@ class _SlowTarget(StubTarget):
     in_flight: int = 0  # class-level so all instances share the same counter
     peak: int = 0
 
-    def __init__(self, tag: object = EXTERNAL_TAG, sleep_s: float = 0.05) -> None:
-        super().__init__(tag=tag)  # type: ignore[arg-type]
+    def __init__(self, tag: SecurityDomainTag = EXTERNAL_TAG, sleep_s: float = 0.05) -> None:
+        super().__init__(tag=tag)
         self._sleep_s = sleep_s
 
     @classmethod
@@ -1846,6 +1846,41 @@ class TestParallelExecution:
         trs = _first_tmr(result).task_results
         assert len(trs) == 4
         assert trs[0].stop_reason == "error"
+        for tr in trs[1:]:
+            assert tr.stop_reason == "done"
+            assert tr.success is True
+
+    async def test_factory_create_raises_is_contained_per_task(self) -> None:
+        """A target_factory.create() failure becomes a per-task error result,
+        not a threat-model-wide crash.
+
+        ``asyncio.gather`` propagates the first exception by default; without
+        explicit containment around ``create()`` one bad target __init__
+        would discard every sibling task's work and crash the controller.
+        """
+        attempts = {"n": 0}
+
+        def flaky_create() -> StubTarget:
+            attempts["n"] += 1
+            # First task's factory raises; others succeed.
+            if attempts["n"] == 1:
+                raise RuntimeError("target __init__ exploded")
+            return StubTarget()
+
+        controller = Controller(
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=flaky_create, concurrency=1),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="a"), StubTask(goal_text="b"), StubTask(goal_text="c")]
+            ),
+            llm_configs=[STUB_LLM_CONFIG],
+        )
+        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        trs = _first_tmr(result).task_results
+        assert len(trs) == 3
+        assert trs[0].stop_reason == "error"
+        assert trs[0].success is False
+        assert trs[0].runs == []
         for tr in trs[1:]:
             assert tr.stop_reason == "done"
             assert tr.success is True
