@@ -257,6 +257,23 @@ async def test_failed_task_persisted_with_error_stop_reason(tmp_path: Path) -> N
     assert claim["summary"]["n_tasks"] == 2
     assert claim["summary"]["n_success"] == 1
 
+    # The formatted exception is persisted both at the claim-level summary
+    # and in the per-task detail file, with a partial trajectory.
+    failing_summary = claim["task_results"][0]
+    assert failing_summary["error"] is not None
+    assert "evaluation exploded" in failing_summary["error"]
+    assert "RuntimeError" in failing_summary["error"]
+    ok_summary = claim["task_results"][1]
+    assert ok_summary["error"] is None
+
+    detail_path = tmp_path / failing_summary["file"]
+    detail = json.loads(detail_path.read_text())
+    assert detail["error"] is not None
+    assert "evaluation exploded" in detail["error"]
+    # Partial trajectory preserved as the only RunResult for the failed task.
+    assert len(detail["runs"]) == 1
+    assert detail["runs"][0]["evaluation"]["primary_score"]["value"] == 0.0
+
 
 # ---------------------------------------------------------------------------
 # No tmp leftover on success

@@ -835,7 +835,13 @@ class TestExceptionSafety:
         tr = _first_tmr(result).task_results[0]
         assert tr.stop_reason == "error"
         assert tr.success is False
-        assert tr.runs == []
+        # Partial trajectory + zero-score evaluation preserved as one RunResult.
+        assert len(tr.runs) == 1
+        assert tr.runs[0].evaluation.primary_score.value == 0.0
+        assert tr.runs[0].evaluation.success is False
+        assert tr.error is not None
+        assert "target exploded" in tr.error
+        assert "RuntimeError" in tr.error
         assert optimizer.torn_down
         assert target.torn_down
 
@@ -874,7 +880,8 @@ class TestExceptionSafety:
         assert target.torn_down
 
     async def test_partial_runs_preserved_when_task_errors_mid_loop(self) -> None:
-        """A task that succeeds run 1 and fails run 2 keeps run 1 in its TaskResult."""
+        """A task that succeeds run 1 and fails run 2 keeps run 1's success
+        plus run 2's partial trajectory + zero-score evaluation."""
         target = FailAfterNRunsTarget(succeed_for=1)
         controller = Controller(
             optimizer_factory=lambda: CountingOptimizer(stop_after=10),
@@ -886,10 +893,17 @@ class TestExceptionSafety:
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         tr = _first_tmr(result).task_results[0]
         assert tr.stop_reason == "error"
-        # The successful first run is preserved.
-        assert len(tr.runs) == 1
-        # success latched from the first run.
+        # Run 1 succeeded, run 2 failed — both preserved.
+        assert len(tr.runs) == 2
+        assert tr.runs[0].evaluation.success is True
+        assert tr.runs[1].evaluation.success is False
+        assert tr.runs[1].evaluation.primary_score.value == 0.0
+        # success latched from the first run; best_score from it too.
         assert tr.success is True
+        assert tr.best_score.value == tr.runs[0].evaluation.primary_score.value
+        # Formatted exception captured for offline debugging.
+        assert tr.error is not None
+        assert "target exploded mid-task" in tr.error
         assert target.torn_down
 
     async def test_sibling_tasks_unaffected_by_task_error(self) -> None:
@@ -992,8 +1006,13 @@ class TestExceptionSafety:
         result = await controller.run(scopes=[EXTERNAL_SCOPE])
         tr = _first_tmr(result).task_results[0]
         assert tr.stop_reason == "error"
-        # The run before cleanup succeeded — preserved.
+        # The run before cleanup succeeded — preserved (one entry, no
+        # duplicate from the cleanup error path).
         assert len(tr.runs) == 1
+        assert tr.runs[0].evaluation.success is True
+        # The cleanup exception is captured on TaskResult.error.
+        assert tr.error is not None
+        assert "cleanup exploded" in tr.error
         assert target.torn_down
 
     async def test_all_tasks_not_applicable(self) -> None:

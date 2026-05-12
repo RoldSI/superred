@@ -255,6 +255,7 @@ def _serialize_task_summary(tr: TaskResult, task_file_relpath: str) -> dict[str,
         "llm_usage": _serialize_llm_usage(tr.llm_usage),
         "stop_reason": tr.stop_reason,
         "n_runs": len(tr.runs),
+        "error": tr.error,
     }
 
 
@@ -263,7 +264,10 @@ def _serialize_full_task(tr: TaskResult, tmr: ThreatModelResult) -> dict[str, An
 
     Includes the threat-model context (scope, llm_config) so a single
     detail file is meaningful in isolation, without needing the
-    claim-level file.
+    claim-level file.  When the task failed, ``error`` holds the
+    formatted exception (type + message + traceback) and the last
+    entry in ``runs`` carries the partial trajectory accumulated
+    before the failure.
     """
     return {
         "version": SCHEMA_VERSION,
@@ -275,6 +279,7 @@ def _serialize_full_task(tr: TaskResult, tmr: ThreatModelResult) -> dict[str, An
         "best_evaluation": _serialize_evaluation(tr.best_evaluation),
         "llm_usage": _serialize_llm_usage(tr.llm_usage),
         "stop_reason": tr.stop_reason,
+        "error": tr.error,
         "runs": [_serialize_run_result(r, i + 1) for i, r in enumerate(tr.runs)],
     }
 

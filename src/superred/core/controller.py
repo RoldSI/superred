@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -135,7 +136,10 @@ class TaskResult:
 
     Attributes:
         task: The task that was evaluated.
-        runs: All run results, in order.
+        runs: All run results, in order.  When the task ended with
+            ``stop_reason="error"`` due to a failure inside a run, the
+            run-in-progress is appended with the partial trajectory it
+            had accumulated and a zero-score :class:`EvaluationResult`.
         best_score: Highest primary score achieved across all runs.
         best_evaluation: The EvaluationResult that produced the best score.
         success: Whether any run achieved the adversarial goal.
@@ -146,8 +150,10 @@ class TaskResult:
             ``"budget_exhausted"`` means a :class:`BudgetExhaustedError`
             was raised by the LLM client.  ``"error"`` means an unexpected
             exception escaped the optimizer, target, or evaluator and the
-            task was abandoned; any runs already completed before the
-            failure are preserved in ``runs``.
+            task was abandoned.
+        error: Formatted exception (type + message + traceback) when the
+            task ended with ``stop_reason="error"``; ``None`` otherwise.
+            Lands in the persisted JSON for offline debugging.
     """
 
     task: Task[Target]
@@ -157,6 +163,7 @@ class TaskResult:
     success: bool
     llm_usage: LLMUsage
     stop_reason: StopReason
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,8 +195,20 @@ class ControllerResult:
     threat_model_results: list[ThreatModelResult]
 
 
-def _synthesize_error_task_result(task: Task[Target]) -> TaskResult:
-    """Build a placeholder TaskResult for a task that failed before its run loop."""
+def _format_exception(exc: BaseException) -> str:
+    """Format an exception with type, message, and traceback for the JSON log."""
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+
+def _synthesize_error_task_result(
+    task: Task[Target],
+    exc: BaseException | None = None,
+) -> TaskResult:
+    """Build a placeholder TaskResult for a task that failed before its run loop.
+
+    When *exc* is provided, its formatted traceback is stored on
+    ``TaskResult.error`` so the failure is recoverable from persisted output.
+    """
     zero = Score(value=0.0, name="primary")
     return TaskResult(
         task=task,
@@ -204,6 +223,7 @@ def _synthesize_error_task_result(task: Task[Target]) -> TaskResult:
         success=False,
         llm_usage=LLMUsage(),
         stop_reason="error",
+        error=_format_exception(exc) if exc is not None else None,
     )
 
 
@@ -268,21 +288,6 @@ async def _safe_teardown_target(target: Target, context: str) -> None:
         await target.teardown()
     except Exception:
         logger.exception("target.teardown failed during %s", context)
-
-
-@dataclass(frozen=True)
-class _TaskOutcome:
-    """Internal carrier for the result of one parallel task run.
-
-    ``kind`` is ``"ok"`` (normal completion, possibly with stop_reason
-    ``"error"``), ``"error"`` (failure before the run loop, synthesized
-    result), or ``"skipped"`` (``NotApplicable``).  ``result`` is None
-    only when ``kind == "skipped"``.
-    """
-
-    kind: Literal["ok", "error", "skipped"]
-    task: Task[Target]
-    result: TaskResult | None
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +500,9 @@ class Controller:
         """
         sem = asyncio.Semaphore(self._target_factory.concurrency)
 
-        async def run_one(task: Task[Target]) -> _TaskOutcome:
+        async def run_one(task: Task[Target]) -> TaskResult | Task[Target]:
+            """Return a ``TaskResult`` for tasks that ran (success or error)
+            and the ``Task`` itself when it raised ``NotApplicable``."""
             async with sem:
                 # ``factory.create()`` may itself raise (e.g. a target whose
                 # __init__ does network setup).  Contain it here so one
@@ -503,36 +510,27 @@ class Controller:
                 # via ``asyncio.gather``'s first-exception behavior.
                 try:
                     target = self._target_factory.create()
-                except Exception:
+                except Exception as exc:
                     logger.exception(
                         "Task %r: target_factory.create() failed, recording as error",
                         task.goal.description,
                     )
-                    return _TaskOutcome(
-                        kind="error",
-                        task=task,
-                        result=_synthesize_error_task_result(task),
-                    )
+                    return _synthesize_error_task_result(task, exc)
                 try:
                     try:
-                        result = await self._run_task(task, scope, llm_config, target)
+                        return await self._run_task(task, scope, llm_config, target)
                     except NotApplicable:
                         logger.info(
                             "Task %r not applicable, skipping",
                             task.goal.description,
                         )
-                        return _TaskOutcome(kind="skipped", task=task, result=None)
-                    except Exception:
+                        return task
+                    except Exception as exc:
                         logger.exception(
                             "Task %r: unexpected error before run loop, recording as error",
                             task.goal.description,
                         )
-                        return _TaskOutcome(
-                            kind="error",
-                            task=task,
-                            result=_synthesize_error_task_result(task),
-                        )
-                    return _TaskOutcome(kind="ok", task=task, result=result)
+                        return _synthesize_error_task_result(task, exc)
                 finally:
                     # Per-task target teardown lives here so a failure
                     # inside _run_task (which has its own finally for
@@ -547,12 +545,10 @@ class Controller:
         task_results: list[TaskResult] = []
         skipped_tasks: list[Task[Target]] = []
         for outcome in outcomes:
-            if outcome.kind == "skipped":
-                skipped_tasks.append(outcome.task)
+            if isinstance(outcome, TaskResult):
+                task_results.append(outcome)
             else:
-                # ok or error — both carry a TaskResult
-                assert outcome.result is not None
-                task_results.append(outcome.result)
+                skipped_tasks.append(outcome)
 
         return ThreatModelResult(
             scope=scope,
@@ -644,40 +640,22 @@ class Controller:
         # Default reason: if the for-loop exits without an explicit break,
         # the safety cap was reached.
         stop_reason: StopReason = "max_runs"
+        error_text: str | None = None
 
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
+                # Trajectory is owned by _run_task (not _run_single) so the
+                # partial trajectory survives any exception inside the run.
+                trajectory = Trajectory(filtered_scope=scope)
                 try:
-                    trajectory, evaluation, done = await self._run_single(
+                    evaluation, done = await self._run_single(
                         task,
                         target,
                         channel,
                         scope,
                         run_number,
+                        trajectory,
                     )
-
-                    run_usage = llm_client.usage if llm_client else LLMUsage()
-                    runs.append(
-                        RunResult(
-                            trajectory=trajectory,
-                            evaluation=evaluation,
-                            llm_usage=run_usage,
-                        )
-                    )
-
-                    # Track best score
-                    if best_score is None or evaluation.primary_score.value > best_score.value:
-                        best_score = evaluation.primary_score
-                        best_evaluation = evaluation
-                    if evaluation.success:
-                        success = True
-
-                    # Cleanup target state for next run within this task.
-                    await target.cleanup()
-
-                    if done:
-                        stop_reason = "done"
-                        break
                 except BudgetExhaustedError:
                     logger.info(
                         "Task %r: LLM budget exhausted during run %d, stopping task",
@@ -686,17 +664,68 @@ class Controller:
                     )
                     stop_reason = "budget_exhausted"
                     break
-                except Exception:
-                    # Any other exception escaping the optimizer, target, or
-                    # evaluator stops just this task — the threat model is
-                    # still persisted with the surviving tasks. Runs already
-                    # appended above are preserved.
+                except Exception as exc:
+                    # _run_single failed mid-run — preserve the partial
+                    # trajectory it accumulated, attach a zero-score
+                    # evaluation, and store the formatted exception on
+                    # ``TaskResult.error`` so the failure is recoverable
+                    # from the persisted JSON.
                     logger.exception(
                         "Task %r: unexpected error during run %d, stopping task",
                         task.goal.description,
                         run_number,
                     )
+                    error_text = _format_exception(exc)
+                    error_eval = EvaluationResult(
+                        success=False,
+                        primary_score=Score(value=0.0, name="primary"),
+                        sub_scores={},
+                        rationale=f"Run {run_number} failed: {type(exc).__name__}: {exc}",
+                    )
+                    run_usage = llm_client.usage if llm_client else LLMUsage()
+                    runs.append(
+                        RunResult(
+                            trajectory=trajectory,
+                            evaluation=error_eval,
+                            llm_usage=run_usage,
+                        )
+                    )
                     stop_reason = "error"
+                    break
+
+                # _run_single succeeded — record the run.
+                run_usage = llm_client.usage if llm_client else LLMUsage()
+                runs.append(
+                    RunResult(
+                        trajectory=trajectory,
+                        evaluation=evaluation,
+                        llm_usage=run_usage,
+                    )
+                )
+                if best_score is None or evaluation.primary_score.value > best_score.value:
+                    best_score = evaluation.primary_score
+                    best_evaluation = evaluation
+                if evaluation.success:
+                    success = True
+
+                # Cleanup target state for next run within this task.  If
+                # cleanup raises, the successful run we just appended stays
+                # — only the task is abandoned, with the cleanup exception
+                # captured on ``error``.
+                try:
+                    await target.cleanup()
+                except Exception as exc:
+                    logger.exception(
+                        "Task %r: target.cleanup() failed after run %d, stopping task",
+                        task.goal.description,
+                        run_number,
+                    )
+                    error_text = _format_exception(exc)
+                    stop_reason = "error"
+                    break
+
+                if done:
+                    stop_reason = "done"
                     break
 
         finally:
@@ -746,6 +775,7 @@ class Controller:
             success=success,
             llm_usage=task_usage,
             stop_reason=stop_reason,
+            error=error_text,
         )
 
     async def _run_single(
@@ -755,20 +785,23 @@ class Controller:
         channel: EventChannel,
         scope: Scope,
         run_number: int,
-    ) -> tuple[Trajectory, EvaluationResult, bool]:
+        trajectory: Trajectory,
+    ) -> tuple[EvaluationResult, bool]:
         """Execute a single optimizer iteration (one target run + evaluation).
 
         Order: target.run → evaluate → RunEndEvent (persisted) → close.
         The optimizer reads the evaluation from RunEndEvent.evaluation
         (when ``include_feedback=True``) or from the trajectory.
 
+        The trajectory is constructed by the caller (``_run_task``) so that
+        a failure mid-run still leaves a partial trajectory accessible for
+        persistence and debugging.
+
         Returns:
-            A tuple of (trajectory, evaluation, done) where done is True
-            if the optimizer wants to stop.
+            A tuple of (evaluation, done) where done is True if the
+            optimizer wants to stop.
         """
         assert scope, "scope must contain at least one tag"
-
-        trajectory = Trajectory(filtered_scope=scope)
 
         # Signal run start — optimizer gets filtered view
         await channel.send(RunStartEvent(trajectory=trajectory.filtered))
@@ -823,7 +856,7 @@ class Controller:
             done,
         )
 
-        return trajectory, evaluation, done
+        return evaluation, done
 
     # ------------------------------------------------------------------
     # CLI output
