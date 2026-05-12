@@ -14,9 +14,13 @@ Layout (per completed threat model):
   usage). Tasks are 1-indexed; the index is zero-padded to 5 digits and
   the suffix is the sanitized goal description (truncated).
 
-All files are written atomically (temp file + ``rename``). Per-task
-detail files are written first; the claim-level file lands last and
-acts as a completion marker for the threat model.
+Incremental writes: each per-task detail file is written as soon as
+that task finishes (success or error), so a controller that aborts
+mid-iteration still leaves every completed task on disk for offline
+inspection. The claim-level summary lands at the very end and acts as
+a completion marker — if it's missing, the run was interrupted.
+
+All files are written atomically (temp file + ``rename``).
 
 ``LLMConfig`` fields ``api_key`` and ``api_base`` are explicitly
 excluded from serialization. Trajectory contents are not scrubbed for
@@ -259,7 +263,11 @@ def _serialize_task_summary(tr: TaskResult, task_file_relpath: str) -> dict[str,
     }
 
 
-def _serialize_full_task(tr: TaskResult, tmr: ThreatModelResult) -> dict[str, Any]:
+def _serialize_full_task(
+    tr: TaskResult,
+    scope: Scope,
+    llm_config: LLMConfig | None,
+) -> dict[str, Any]:
     """Self-contained per-task detail (the file in the subfolder).
 
     Includes the threat-model context (scope, llm_config) so a single
@@ -271,8 +279,8 @@ def _serialize_full_task(tr: TaskResult, tmr: ThreatModelResult) -> dict[str, An
     """
     return {
         "version": SCHEMA_VERSION,
-        "scope": sorted(t.name for t in tmr.scope),
-        "llm_config": _serialize_llm_config(tmr.llm_config),
+        "scope": sorted(t.name for t in scope),
+        "llm_config": _serialize_llm_config(llm_config),
         "task": {"goal": tr.task.goal.description},
         "success": tr.success,
         "best_score": _serialize_score(tr.best_score),
@@ -316,14 +324,15 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path:
-    """Persist *tmr* under *results_dir* using the subfolder layout.
+def prepare_results_dir(
+    results_dir: Path,
+    scope: Scope,
+    llm_config: LLMConfig | None,
+) -> Path:
+    """Create *results_dir* and the per-threat-model subfolder.
 
-    Per-task detail files are written into
-    ``{results_dir}/{subfolder}/`` first; the claim-level file lands
-    last and acts as a completion marker. Each individual file is
-    written via temp file + ``rename`` so a partial write can never
-    leave a malformed JSON behind.
+    Called once at the start of a threat model, before any task runs,
+    so that the layout is ready to receive incremental per-task writes.
 
     Raises:
         FileExistsError: if either the claim-level file or the task
@@ -331,30 +340,93 @@ def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path
             (or per-run subdirectory) to avoid collisions.
 
     Returns:
-        The path to the written claim-level file.
+        The path to the per-task subfolder.
     """
     results_dir.mkdir(parents=True, exist_ok=True)
-    claim_file = results_dir / _filename_for(tmr.scope, tmr.llm_config)
-    subfolder_name = _subfolder_for(tmr.scope, tmr.llm_config)
-    subfolder = results_dir / subfolder_name
-
+    claim_file = results_dir / _filename_for(scope, llm_config)
+    subfolder = results_dir / _subfolder_for(scope, llm_config)
     if claim_file.exists():
         raise FileExistsError(f"Claim-level output already exists: {claim_file}")
     if subfolder.exists():
         raise FileExistsError(f"Task subfolder already exists: {subfolder}")
-
-    # subfolder's parent is results_dir, already created above — no parents=True needed.
     subfolder.mkdir()
+    return subfolder
 
-    task_summaries: list[dict[str, Any]] = []
-    for index, tr in enumerate(tmr.task_results, start=1):
-        fname = _task_filename(index, tr.task.goal.description)
-        detail_path = subfolder / fname
-        _atomic_write_json(detail_path, _serialize_full_task(tr, tmr))
-        rel_path = f"{subfolder_name}/{fname}"
-        task_summaries.append(_serialize_task_summary(tr, rel_path))
 
-    _atomic_write_json(claim_file, _serialize_claim_level(tmr, task_summaries))
+def task_detail_filename(index: int, goal_description: str) -> str:
+    """Deterministic basename for a task's detail JSON file.
+
+    Public so callers can record the intended name in the claim-level
+    summary even when :func:`write_task_detail` fails (the missing
+    file then signals a write error to whoever inspects the summary).
+    """
+    return _task_filename(index, goal_description)
+
+
+def write_task_detail(
+    subfolder: Path,
+    basename: str,
+    tr: TaskResult,
+    scope: Scope,
+    llm_config: LLMConfig | None,
+) -> None:
+    """Write one task's detail file to ``subfolder/basename``.
+
+    Called as soon as the task's :class:`TaskResult` is built (success,
+    error, or budget-exhausted) so a controller that aborts mid-iteration
+    leaves the completed task on disk. *basename* should come from
+    :func:`task_detail_filename` so the controller can record the
+    intended name even when this write raises.
+
+    The file is written via temp file + ``rename`` so a partial write
+    cannot leave malformed JSON behind. When the task failed, the file
+    contains the formatted exception traceback at the top-level
+    ``error`` field and the partial trajectory as the last entry in
+    ``runs`` — both are persisted *outside* the trajectory itself.
+    """
+    _atomic_write_json(subfolder / basename, _serialize_full_task(tr, scope, llm_config))
+
+
+def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path:
+    """One-shot writer: lay out + write all detail files + write summary.
+
+    Equivalent to the three-step incremental flow used by the
+    controller, but executed synchronously for a fully-built
+    :class:`ThreatModelResult`.  Useful for tests, offline conversion
+    scripts, and any caller that already has the complete result in
+    hand.  Returns the path to the claim-level file.
+    """
+    subfolder = prepare_results_dir(results_dir, tmr.scope, tmr.llm_config)
+    basenames: list[str] = []
+    for i, tr in enumerate(tmr.task_results, start=1):
+        basename = task_detail_filename(i, tr.task.goal.description)
+        write_task_detail(subfolder, basename, tr, tmr.scope, tmr.llm_config)
+        basenames.append(basename)
+    return write_claim_summary(results_dir, tmr, basenames)
+
+
+def write_claim_summary(
+    results_dir: Path,
+    tmr: ThreatModelResult,
+    task_file_basenames: list[str],
+) -> Path:
+    """Write the claim-level summary file. Acts as a completion marker.
+
+    Assumes per-task detail files have already been written via
+    :func:`write_task_detail`. If this file is missing for an existing
+    subfolder, the run was interrupted before it could complete and the
+    detail files are still the authoritative record.
+
+    *task_file_basenames* lines up positionally with
+    ``tmr.task_results`` (same length, same order).
+    """
+    claim_file = results_dir / _filename_for(tmr.scope, tmr.llm_config)
+    subfolder_name = _subfolder_for(tmr.scope, tmr.llm_config)
+    summaries = [
+        _serialize_task_summary(tr, f"{subfolder_name}/{fname}")
+        for tr, fname in zip(tmr.task_results, task_file_basenames, strict=True)
+    ]
+    _atomic_write_json(claim_file, _serialize_claim_level(tmr, summaries))
     return claim_file
 
 

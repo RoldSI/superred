@@ -45,7 +45,12 @@ from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.llm import LLMClient
 from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
-from superred.core.persistence import write_threat_model_result
+from superred.core.persistence import (
+    prepare_results_dir,
+    task_detail_filename,
+    write_claim_summary,
+    write_task_detail,
+)
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
@@ -362,12 +367,14 @@ class Controller:
 
         Returns:
             A :class:`ThreatModelResult` for the configured
-            ``(scope, llm_config)``.  When ``results_dir`` is set, the
-            result is also written to disk before this returns.
+            ``(scope, llm_config)``.  When ``results_dir`` is set,
+            per-task detail files are written incrementally as each
+            task completes, and the claim-level summary lands at the
+            end as a completion marker.
         """
-        result = await self._iterate_tasks(self._scope, self._llm_config)
+        result, task_file_basenames = await self._iterate_tasks(self._scope, self._llm_config)
         if self._results_dir is not None:
-            write_threat_model_result(result, self._results_dir)
+            write_claim_summary(self._results_dir, result, task_file_basenames)
         self._print_summary(result)
         return result
 
@@ -379,7 +386,7 @@ class Controller:
         self,
         scope: Scope,
         llm_config: LLMConfig | None,
-    ) -> ThreatModelResult:
+    ) -> tuple[ThreatModelResult, list[str]]:
         """Iterate all tasks for a single threat model.
 
         Tasks run concurrently bounded by ``target_factory.concurrency``.
@@ -396,17 +403,39 @@ class Controller:
         ``task.configure_target``, or ``optimizer.initialize`` — are caught
         here as a backstop, recorded as a synthetic error
         :class:`TaskResult`, and do not abort the threat model.
+
+        Incremental persistence: when ``results_dir`` is set, each
+        task's detail file is written as soon as its
+        :class:`TaskResult` is built — so an aborted run still leaves
+        every completed task on disk.  Returns the per-task file
+        basenames in the same order as ``task_results`` so the caller
+        can stitch them into the claim-level summary.
         """
         sem = asyncio.Semaphore(self._target_factory.concurrency)
 
-        async def run_one(task: Task[Target]) -> TaskResult | Task[Target]:
-            """Return a ``TaskResult`` for tasks that ran (success or error)
-            and the ``Task`` itself when it raised ``NotApplicable``."""
+        subfolder: Path | None = None
+        if self._results_dir is not None:
+            # Up-front so FileExistsError fires before any task runs.
+            subfolder = prepare_results_dir(self._results_dir, scope, llm_config)
+
+        async def run_one(
+            index: int,
+            task: Task[Target],
+        ) -> tuple[TaskResult | Task[Target], str | None]:
+            """Return ``(outcome, detail_basename)``.
+
+            *outcome* is a ``TaskResult`` when the task ran (success or
+            error) or the ``Task`` itself when it raised
+            ``NotApplicable``.  *detail_basename* is the filename of the
+            per-task JSON written into *subfolder* (``None`` when
+            persistence is disabled or the task was skipped).
+            """
             async with sem:
                 # ``factory.create()`` may itself raise (e.g. a target whose
                 # __init__ does network setup).  Contain it here so one
                 # bad task can't take down the rest of the threat model
                 # via ``asyncio.gather``'s first-exception behavior.
+                outcome: TaskResult | Task[Target]
                 try:
                     target = self._target_factory.create()
                 except Exception as exc:
@@ -414,47 +443,81 @@ class Controller:
                         "Task %r: target_factory.create() failed, recording as error",
                         task.goal.description,
                     )
-                    return _synthesize_error_task_result(task, exc)
-                try:
+                    outcome = _synthesize_error_task_result(task, exc)
+                else:
                     try:
-                        return await self._run_task(task, scope, llm_config, target)
-                    except NotApplicable:
-                        logger.info(
-                            "Task %r not applicable, skipping",
-                            task.goal.description,
-                        )
-                        return task
-                    except Exception as exc:
+                        try:
+                            outcome = await self._run_task(task, scope, llm_config, target)
+                        except NotApplicable:
+                            logger.info(
+                                "Task %r not applicable, skipping",
+                                task.goal.description,
+                            )
+                            outcome = task
+                        except Exception as exc:
+                            logger.exception(
+                                "Task %r: unexpected error before run loop, recording as error",
+                                task.goal.description,
+                            )
+                            outcome = _synthesize_error_task_result(task, exc)
+                    finally:
+                        # Per-task target teardown lives here so a failure
+                        # inside _run_task (which has its own finally for
+                        # cleanup) still releases target resources before
+                        # the next task's semaphore slot opens.
+                        await _safe_teardown_target(target, "post-task target teardown")
+
+                # Incremental per-task persistence (skipped tasks have no
+                # detail file — they're recorded in the claim-level
+                # summary's ``skipped_tasks`` array instead).  The
+                # basename is computed up front from the claim-input
+                # ``index`` so the summary can record the intended path
+                # even if the write itself raises; a disk failure on
+                # one task must not abort the whole threat model.
+                detail_basename: str | None = None
+                if subfolder is not None and isinstance(outcome, TaskResult):
+                    detail_basename = task_detail_filename(index, outcome.task.goal.description)
+                    try:
+                        write_task_detail(subfolder, detail_basename, outcome, scope, llm_config)
+                    except Exception:
                         logger.exception(
-                            "Task %r: unexpected error before run loop, recording as error",
+                            "Task %r: failed to write per-task detail file (continuing)",
                             task.goal.description,
                         )
-                        return _synthesize_error_task_result(task, exc)
-                finally:
-                    # Per-task target teardown lives here so a failure
-                    # inside _run_task (which has its own finally for
-                    # cleanup) still releases target resources before
-                    # the next task's semaphore slot opens.
-                    await _safe_teardown_target(target, "post-task target teardown")
+                return outcome, detail_basename
 
         outcomes = await asyncio.gather(
-            *(run_one(t) for t in self._security_claim),
+            *(run_one(i, t) for i, t in enumerate(self._security_claim, start=1)),
         )
 
         task_results: list[TaskResult] = []
         skipped_tasks: list[Task[Target]] = []
-        for outcome in outcomes:
+        task_file_basenames: list[str] = []
+        for outcome, basename in outcomes:
             if isinstance(outcome, TaskResult):
                 task_results.append(outcome)
+                # ``basename`` is None when persistence is off OR when
+                # the per-task write failed.  Skip the basename only
+                # when persistence is off (subfolder is None); when
+                # persistence is on but the basename is missing, derive
+                # the would-be filename so the claim-level summary
+                # still has a pointer (even if the file isn't there).
+                if subfolder is not None:
+                    # basename is always set by run_one when persistence
+                    # is on (the name is computed before the write
+                    # attempt, so it survives a write failure).
+                    assert basename is not None
+                    task_file_basenames.append(basename)
             else:
                 skipped_tasks.append(outcome)
 
-        return ThreatModelResult(
+        result = ThreatModelResult(
             scope=scope,
             llm_config=llm_config,
             task_results=task_results,
             skipped_tasks=skipped_tasks,
         )
+        return result, task_file_basenames
 
     # ------------------------------------------------------------------
     # Per-task run
@@ -631,8 +694,31 @@ class Controller:
             channel.close()
             try:
                 await optimizer_task
-            except Exception:
-                pass
+            except Exception as exc:
+                # Most optimizer failures already surface inside the run
+                # loop via ``channel.set_error`` → ``channel.send`` →
+                # the outer ``except Exception`` above, so ``error_text``
+                # is typically already set.  When it isn't, the
+                # optimizer raised *outside* any in-flight
+                # ``channel.send`` (background work in a parallel
+                # optimizer, or in the optimizer's own teardown after
+                # the run loop already exited) — capture it now so the
+                # per-task detail file carries the diagnostic regardless
+                # of how the task is classified.  ``stop_reason`` only
+                # gets flipped to ``"error"`` when no other signal was
+                # set (the default-unchanged case): the loop's
+                # explicitly-set ``"budget_exhausted"`` / ``"done"`` /
+                # ``"error"`` reasons describe the task lifecycle
+                # correctly and shouldn't be overwritten by a duplicate
+                # exception bubbling up here.
+                logger.exception(
+                    "Task %r: optimizer task raised during teardown",
+                    task.goal.description,
+                )
+                if error_text is None:
+                    error_text = _format_exception(exc)
+                    if stop_reason == "max_runs" and not runs:
+                        stop_reason = "error"
             # _safe_teardown so a failing teardown in the finally path
             # cannot propagate over an exception already in flight from
             # the try-body.

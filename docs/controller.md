@@ -86,7 +86,7 @@ For each task:
    - On exception inside the run: the partial trajectory is preserved as a final `RunResult` with a zero-score evaluation; the formatted exception lands on `TaskResult.error`; `stop_reason = "error"`; loop ends.
 8. Close channel, await optimizer task, `optimizer.teardown()`. Final `target.cleanup()` (in `finally`) followed by `target.teardown()`; the per-task target instance is then discarded.
 
-After all tasks finish, the controller writes the threat-model JSON files (when `results_dir` is set), prints a summary to stdout, and returns the `ThreatModelResult`.
+As each task finishes, its per-task detail JSON is written immediately (when `results_dir` is set), so an interrupted run still leaves every completed task on disk. After all tasks finish, the claim-level summary file is written as a completion marker, the controller prints a summary to stdout, and returns the `ThreatModelResult`.
 
 ### Internal structure
 
@@ -201,9 +201,9 @@ results_dir/
 Multiple controllers pointed at the same `results_dir` (the multi-threat-model sweep pattern) each write their own pair of files, named by their scope and model.
 
 - **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_config` is `None`, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
-- **When**: at the end of `run()`, before it returns.
-- **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"`, the partial trajectory accumulated before the crash, and the formatted exception under the `error` field. Sibling tasks still finish and are persisted.
-- **Atomicity**: each individual file is written via temp file + `rename`. Per-task detail files are written first; the claim-level file lands last and acts as a completion marker for the threat model.
+- **When**: per-task detail files are written **incrementally** — each one lands on disk as soon as its task finishes (success, error, or budget-exhausted). The claim-level summary file is written at the end of `run()` and acts as a completion marker; if a post-mortem sees the subfolder without the matching summary file, the run was interrupted and the detail files are the authoritative record of what completed.
+- **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"`, the partial trajectory accumulated before the crash, and the formatted exception under the `error` field (which lives *outside* the trajectory). Sibling tasks still finish and are persisted.
+- **Atomicity**: each individual file is written via temp file + `rename`. A disk failure on one task's write is logged and contained — the controller continues running the remaining tasks. The summary file will still point at the would-be path (the missing file at that path is the signal).
 - **Claim-level file**: `version`, `completed_at`, `scope`, `llm_config` (model + max_cost only), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
 - **Per-task detail file**: self-contained — repeats `version`, `scope`, `llm_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`).
 - **Aggregates**: `mean_primary_score` excludes `NotApplicable` tasks (they are reported separately as `n_skipped`). When the claim has no evaluable tasks, `mean_primary_score` and `max_primary_score` are `null`.

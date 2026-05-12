@@ -97,7 +97,9 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
         await optimizer_task, optimizer.teardown()
         target.cleanup() (final) and target.teardown() — instance is discarded
 
-   3. If results_dir set: write the threat model's JSON files
+   3. Per-task detail files were written incrementally as each task
+      finished (when results_dir set).  Write the claim-level summary
+      file now as the completion marker.
    4. Print summary to stdout
    5. Return ThreatModelResult
 

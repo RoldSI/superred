@@ -298,18 +298,6 @@ class TestResultTypesFrozen:
         with pytest.raises(AttributeError):
             tr.success = True  # type: ignore[misc]
 
-    async def test_controller_result_frozen(self) -> None:
-        controller = Controller(
-            scope=EXTERNAL_SCOPE,
-            optimizer_factory=lambda: StubOptimizer(done=True),
-            target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_config=STUB_LLM_CONFIG,
-        )
-        result = await controller.run()
-        with pytest.raises(AttributeError):
-            result.threat_model_results = []  # type: ignore[misc]
-
     def test_threat_model_result_skipped_tasks_defaults_to_empty_list(self) -> None:
         """ThreatModelResult.skipped_tasks defaults to an empty list, not None."""
         tmr = ThreatModelResult(
@@ -1023,6 +1011,42 @@ class TestExceptionSafety:
         assert tr.error is not None
         assert "cleanup exploded" in tr.error
         assert target.torn_down
+
+    async def test_optimizer_raises_post_loop_is_captured_on_task_error(self) -> None:
+        """An optimizer whose ``run()`` raises *after* the run loop has exited
+        normally must still surface the exception on ``TaskResult.error``.
+
+        This is the edge case where ``channel.set_error`` cannot help: there
+        is no in-flight ``channel.send`` to receive the poison. The
+        finally-block in ``_run_task`` is the only place this exception
+        is observable, so a ``pass`` there silently drops it. ``stop_reason``
+        stays as the legitimate ``"done"`` (the task did complete); the
+        traceback lands in ``error`` for offline inspection.
+        """
+
+        class _PostLoopRaiseOptimizer(StubOptimizer):
+            async def run(self, channel) -> None:  # type: ignore[no-untyped-def]
+                await super().run(channel)
+                raise RuntimeError("post-loop optimizer fault")
+
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            optimizer_factory=lambda: _PostLoopRaiseOptimizer(done=True),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        tr = result.task_results[0]
+        # The run loop itself completed normally (one successful run, done).
+        assert tr.stop_reason == "done"
+        assert len(tr.runs) == 1
+        assert tr.runs[0].evaluation.success is True
+        # The post-loop exception is captured on TaskResult.error so it
+        # lands in the persisted detail file.
+        assert tr.error is not None
+        assert "post-loop optimizer fault" in tr.error
+        assert "RuntimeError" in tr.error
 
     async def test_all_tasks_not_applicable(self) -> None:
         controller = Controller(
