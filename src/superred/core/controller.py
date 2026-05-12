@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -197,14 +197,20 @@ def _format_exception(exc: BaseException) -> str:
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
 
-def _synthesize_error_task_result(
+def _synthesize_empty_task_result(
     task: Task[Target],
+    *,
+    stop_reason: StopReason,
+    rationale: str,
+    usage: LLMUsage = LLMUsage(),
     exc: BaseException | None = None,
 ) -> TaskResult:
-    """Build a placeholder TaskResult for a task that failed before its run loop.
+    """Build a zero-score TaskResult for a task whose run loop never produced a run.
 
-    When *exc* is provided, its formatted traceback is stored on
-    ``TaskResult.error`` so the failure is recoverable from persisted output.
+    Used by the error and budget-exhausted paths that abandon a task before
+    any run completes. When *exc* is provided its formatted traceback is
+    stored on ``TaskResult.error`` so the failure is recoverable from the
+    persisted detail file.
     """
     zero = Score(value=0.0, name="primary")
     return TaskResult(
@@ -215,76 +221,25 @@ def _synthesize_error_task_result(
             success=False,
             primary_score=zero,
             sub_scores={},
-            rationale="Unexpected error before run loop started.",
+            rationale=rationale,
         ),
         success=False,
-        llm_usage=LLMUsage(),
-        stop_reason="error",
+        llm_usage=usage,
+        stop_reason=stop_reason,
         error=_format_exception(exc) if exc is not None else None,
     )
 
 
-def _synthesize_budget_exhausted_task_result(
-    task: Task[Target],
-    usage: LLMUsage,
-) -> TaskResult:
-    """Build a placeholder TaskResult for a task whose optimizer ran out of
-    LLM budget before any run completed (e.g. inside ``optimizer.initialize``)."""
-    zero = Score(value=0.0, name="primary")
-    return TaskResult(
-        task=task,
-        runs=[],
-        best_score=zero,
-        best_evaluation=EvaluationResult(
-            success=False,
-            primary_score=zero,
-            sub_scores={},
-            rationale="LLM budget exhausted before first run completed.",
-        ),
-        success=False,
-        llm_usage=usage,
-        stop_reason="budget_exhausted",
-    )
+async def _swallow(coro: Awaitable[None], description: str) -> None:
+    """Await *coro*, logging and swallowing any Exception.
 
-
-async def _safe_teardown(optimizer: Optimizer, context: str) -> None:
-    """Call ``optimizer.teardown()`` swallowing and logging any exception.
-
-    Used in error-handling paths where a failing teardown must not mask
-    the original exception (or, in the ``finally`` block, must not
-    propagate over an exception that is already in flight).
+    Used in error paths and ``finally`` blocks where a failing cleanup
+    must not mask an in-flight exception or block the next task.
     """
     try:
-        await optimizer.teardown()
+        await coro
     except Exception:
-        logger.exception("optimizer.teardown failed during %s", context)
-
-
-async def _safe_cleanup(target: Target, context: str) -> None:
-    """Call ``target.cleanup()`` swallowing and logging any exception.
-
-    Used in the post-task ``finally`` block so a failing task always
-    leaves the target in a reset state for the next task, even when
-    the inner-loop cleanup-after-success was skipped due to an error.
-    """
-    try:
-        await target.cleanup()
-    except Exception:
-        logger.exception("target.cleanup failed during %s", context)
-
-
-async def _safe_teardown_target(target: Target, context: str) -> None:
-    """Call ``target.teardown()`` swallowing and logging any exception.
-
-    Per-task target lifecycles can fail at teardown when the failure that
-    ended the task is the same fault that broke the target's resources.
-    Log and continue so a teardown failure cannot mask the in-flight
-    exception or stop the next task from starting.
-    """
-    try:
-        await target.teardown()
-    except Exception:
-        logger.exception("target.teardown failed during %s", context)
+        logger.exception("%s failed", description)
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +398,12 @@ class Controller:
                         "Task %r: target_factory.create() failed, recording as error",
                         task.goal.description,
                     )
-                    outcome = _synthesize_error_task_result(task, exc)
+                    outcome = _synthesize_empty_task_result(
+                        task,
+                        stop_reason="error",
+                        rationale="Unexpected error before run loop started.",
+                        exc=exc,
+                    )
                 else:
                     try:
                         try:
@@ -459,21 +419,19 @@ class Controller:
                                 "Task %r: unexpected error before run loop, recording as error",
                                 task.goal.description,
                             )
-                            outcome = _synthesize_error_task_result(task, exc)
+                            outcome = _synthesize_empty_task_result(
+                                task,
+                                stop_reason="error",
+                                rationale="Unexpected error before run loop started.",
+                                exc=exc,
+                            )
                     finally:
-                        # Per-task target teardown lives here so a failure
-                        # inside _run_task (which has its own finally for
-                        # cleanup) still releases target resources before
-                        # the next task's semaphore slot opens.
-                        await _safe_teardown_target(target, "post-task target teardown")
+                        # Released before the next task's semaphore slot opens.
+                        await _swallow(target.teardown(), "target.teardown post-task")
 
-                # Incremental per-task persistence (skipped tasks have no
-                # detail file — they're recorded in the claim-level
-                # summary's ``skipped_tasks`` array instead).  The
-                # basename is computed up front from the claim-input
-                # ``index`` so the summary can record the intended path
-                # even if the write itself raises; a disk failure on
-                # one task must not abort the whole threat model.
+                # Incremental write. Basename is computed up front so the
+                # summary can record the intended path even if the write
+                # itself raises; skipped tasks have no detail file.
                 detail_basename: str | None = None
                 if subfolder is not None and isinstance(outcome, TaskResult):
                     detail_basename = task_detail_filename(index, outcome.task.goal.description)
@@ -496,16 +454,9 @@ class Controller:
         for outcome, basename in outcomes:
             if isinstance(outcome, TaskResult):
                 task_results.append(outcome)
-                # ``basename`` is None when persistence is off OR when
-                # the per-task write failed.  Skip the basename only
-                # when persistence is off (subfolder is None); when
-                # persistence is on but the basename is missing, derive
-                # the would-be filename so the claim-level summary
-                # still has a pointer (even if the file isn't there).
                 if subfolder is not None:
-                    # basename is always set by run_one when persistence
-                    # is on (the name is computed before the write
-                    # attempt, so it survives a write failure).
+                    # run_one always sets basename when persistence is on
+                    # (computed before the write attempt).
                     assert basename is not None
                     task_file_basenames.append(basename)
             else:
@@ -563,24 +514,23 @@ class Controller:
             )
         except BudgetExhaustedError:
             # Optimizer exhausted its LLM budget inside initialize (e.g. a
-            # warmup call). Tear down and return a budget_exhausted result
-            # directly so it isn't misclassified as a generic error by
-            # _iterate_tasks.
-            await _safe_teardown(optimizer, "init budget-exhausted cleanup")
+            # warmup call). Return a budget_exhausted result directly so it
+            # isn't misclassified as a generic error by _iterate_tasks.
+            await _swallow(optimizer.teardown(), "optimizer.teardown after init-budget-exhausted")
             logger.info(
                 "Task %r: LLM budget exhausted during optimizer.initialize, stopping task",
                 task.goal.description,
             )
-            return _synthesize_budget_exhausted_task_result(
+            return _synthesize_empty_task_result(
                 task,
-                llm_client.usage if llm_client else LLMUsage(),
+                stop_reason="budget_exhausted",
+                rationale="LLM budget exhausted before first run completed.",
+                usage=llm_client.usage if llm_client else LLMUsage(),
             )
         except Exception:
-            # Initialize failed: tear down before re-raising so the optimizer
-            # doesn't leak. _iterate_tasks catches and records the error.
-            # _safe_teardown ensures a failing teardown does not mask the
-            # initialize exception we're about to re-raise.
-            await _safe_teardown(optimizer, "init error cleanup")
+            # Tear down before re-raising so the optimizer doesn't leak;
+            # _iterate_tasks catches and records the error.
+            await _swallow(optimizer.teardown(), "optimizer.teardown after init-error")
             raise
 
         # Create channel and launch optimizer as concurrent task.
@@ -695,44 +645,21 @@ class Controller:
             try:
                 await optimizer_task
             except Exception as exc:
-                # Most optimizer failures already surface inside the run
-                # loop via ``channel.set_error`` → ``channel.send`` →
-                # the outer ``except Exception`` above, so ``error_text``
-                # is typically already set.  When it isn't, the
-                # optimizer raised *outside* any in-flight
-                # ``channel.send`` (background work in a parallel
-                # optimizer, or in the optimizer's own teardown after
-                # the run loop already exited) — capture it now so the
-                # per-task detail file carries the diagnostic regardless
-                # of how the task is classified.  ``stop_reason`` only
-                # gets flipped to ``"error"`` when no other signal was
-                # set (the default-unchanged case): the loop's
-                # explicitly-set ``"budget_exhausted"`` / ``"done"`` /
-                # ``"error"`` reasons describe the task lifecycle
-                # correctly and shouldn't be overwritten by a duplicate
-                # exception bubbling up here.
+                # Optimizer raised outside any in-flight channel.send
+                # (background work, or its own teardown after the run loop
+                # exited). Captured as a diagnostic without changing
+                # stop_reason — the run loop's classification is authoritative.
                 logger.exception(
                     "Task %r: optimizer task raised during teardown",
                     task.goal.description,
                 )
                 if error_text is None:
                     error_text = _format_exception(exc)
-                    if stop_reason == "max_runs" and not runs:
-                        stop_reason = "error"
-            # _safe_teardown so a failing teardown in the finally path
-            # cannot propagate over an exception already in flight from
-            # the try-body.
-            await _safe_teardown(optimizer, "post-run cleanup")
-            # Final target.cleanup so a target whose post-run cleanup is
-            # observable from the outside (e.g. metrics, persisted state)
-            # winds up in a reset state even when the inner-loop
-            # cleanup-after-success was skipped due to an error. Wrapped
-            # because cleanup itself may fail (e.g. cascading from the
-            # same fault that broke the run); we log and continue rather
-            # than mask the in-flight exception.  Target teardown happens
-            # in the caller (_iterate_tasks) so the per-task lifecycle is
-            # fully released before the next task acquires a slot.
-            await _safe_cleanup(target, "post-task cleanup")
+            await _swallow(optimizer.teardown(), "optimizer.teardown post-run")
+            # Final cleanup so the target ends in a reset state even when the
+            # inner-loop cleanup-after-success was skipped. Target teardown
+            # itself happens in the caller before the next semaphore slot opens.
+            await _swallow(target.cleanup(), "target.cleanup post-task")
 
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still
