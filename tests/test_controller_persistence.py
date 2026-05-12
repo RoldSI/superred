@@ -89,12 +89,13 @@ async def test_no_results_dir_writes_nothing(tmp_path: Path) -> None:
     which combined with no ambient I/O in the framework is sufficient.
     """
     controller = Controller(
+        scope=EXTERNAL_SCOPE,
         optimizer_factory=lambda: StubOptimizer(done=True),
         target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
-        llm_configs=[STUB_LLM_CONFIG],
+        llm_config=STUB_LLM_CONFIG,
     )
-    await controller.run(scopes=[EXTERNAL_SCOPE])
+    await controller.run()
     assert list(tmp_path.iterdir()) == []
 
 
@@ -105,13 +106,14 @@ async def test_no_results_dir_writes_nothing(tmp_path: Path) -> None:
 
 async def test_single_threat_model_creates_claim_and_subfolder(tmp_path: Path) -> None:
     controller = Controller(
+        scope=EXTERNAL_SCOPE,
         optimizer_factory=lambda: StubOptimizer(done=True),
         target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask(score=0.8, success=True)]),
-        llm_configs=[STUB_LLM_CONFIG],
+        llm_config=STUB_LLM_CONFIG,
         results_dir=tmp_path,
     )
-    await controller.run(scopes=[EXTERNAL_SCOPE])
+    await controller.run()
 
     claim = tmp_path / "external__test-model.json"
     subfolder = tmp_path / "external__test-model"
@@ -153,31 +155,38 @@ async def test_single_threat_model_creates_claim_and_subfolder(tmp_path: Path) -
 async def test_results_dir_str_is_accepted(tmp_path: Path) -> None:
     """Both Path and str should work for the ctor arg."""
     controller = Controller(
+        scope=EXTERNAL_SCOPE,
         optimizer_factory=lambda: StubOptimizer(done=True),
         target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
-        llm_configs=[STUB_LLM_CONFIG],
+        llm_config=STUB_LLM_CONFIG,
         results_dir=str(tmp_path / "out"),
     )
-    await controller.run(scopes=[EXTERNAL_SCOPE])
+    await controller.run()
     assert (tmp_path / "out" / "external__test-model.json").exists()
     assert (tmp_path / "out" / "external__test-model").is_dir()
 
 
 # ---------------------------------------------------------------------------
-# Multi-threat-model fanout
+# Caller-side fanout: one Controller per scope writes one file each
 # ---------------------------------------------------------------------------
 
 
-async def test_two_scopes_produce_two_layouts(tmp_path: Path) -> None:
-    controller = Controller(
-        optimizer_factory=lambda: StubOptimizer(done=True),
-        target_factory=TargetFactory.singleton(TwoTagTarget()),
-        security_claim=SecurityClaim.from_tasks([StubTask()]),
-        llm_configs=[STUB_LLM_CONFIG],
-        results_dir=tmp_path,
-    )
-    await controller.run(scopes=[EXTERNAL_SCOPE, INTERNAL_SCOPE])
+async def test_two_scopes_via_two_controllers_produce_two_layouts(tmp_path: Path) -> None:
+    """Sweeping multiple scopes is the caller's job — two Controllers
+    sharing a ``results_dir`` lay out one file/subfolder each."""
+    target_factory = TargetFactory.singleton(TwoTagTarget())
+    for scope in (EXTERNAL_SCOPE, INTERNAL_SCOPE):
+        controller = Controller(
+            scope=scope,
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=target_factory,
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+            results_dir=tmp_path,
+        )
+        await controller.run()
+
     files = sorted(p.name for p in tmp_path.glob("*.json"))
     assert files == [
         "external__test-model.json",
@@ -185,45 +194,6 @@ async def test_two_scopes_produce_two_layouts(tmp_path: Path) -> None:
     ]
     assert (tmp_path / "external__test-model").is_dir()
     assert (tmp_path / "internal__test-model").is_dir()
-
-
-# ---------------------------------------------------------------------------
-# Crash safety: later threat model fails -> earlier one is on disk
-# ---------------------------------------------------------------------------
-
-
-async def test_target_run_error_persists_both_threat_models_with_error_task(
-    tmp_path: Path,
-) -> None:
-    """A target.run() failure no longer aborts the run.
-
-    Scope 1's run() succeeds; scope 2's run() raises. Both threat models
-    are still persisted; the failing scope records its task with
-    ``stop_reason="error"``.
-    """
-    from .conftest import ROOT_TAG
-
-    target = FailOnNthRunTarget(fail_on_call=2, tag=EXTERNAL_TAG)
-    controller = Controller(
-        optimizer_factory=lambda: StubOptimizer(done=True),
-        target_factory=TargetFactory.singleton(target),
-        security_claim=SecurityClaim.from_tasks([StubTask()]),
-        llm_configs=[STUB_LLM_CONFIG],
-        results_dir=tmp_path,
-        max_runs_per_task=1,
-    )
-    root_scope: Scope = frozenset({ROOT_TAG})
-    await controller.run(scopes=[EXTERNAL_SCOPE, root_scope])
-
-    files = sorted(p.name for p in tmp_path.glob("*.json"))
-    assert files == ["external__test-model.json", "root__test-model.json"]
-
-    ext = json.loads((tmp_path / "external__test-model.json").read_text())
-    root = json.loads((tmp_path / "root__test-model.json").read_text())
-    assert ext["scope"] == ["external"]
-    assert ext["task_results"][0]["stop_reason"] == "done"
-    assert root["scope"] == ["root"]
-    assert root["task_results"][0]["stop_reason"] == "error"
 
 
 async def test_failed_task_persisted_with_error_stop_reason(tmp_path: Path) -> None:
@@ -241,15 +211,16 @@ async def test_failed_task_persisted_with_error_stop_reason(tmp_path: Path) -> N
             raise RuntimeError("evaluation exploded")
 
     controller = Controller(
+        scope=EXTERNAL_SCOPE,
         optimizer_factory=lambda: StubOptimizer(done=True),
         target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks(
             [_FailingEvalTask(goal_text="bad"), StubTask(goal_text="good")],
         ),
-        llm_configs=[STUB_LLM_CONFIG],
+        llm_config=STUB_LLM_CONFIG,
         results_dir=tmp_path,
     )
-    await controller.run(scopes=[EXTERNAL_SCOPE])
+    await controller.run()
 
     claim = json.loads((tmp_path / "external__test-model.json").read_text())
     stop_reasons = [tr["stop_reason"] for tr in claim["task_results"]]
@@ -282,13 +253,14 @@ async def test_failed_task_persisted_with_error_stop_reason(tmp_path: Path) -> N
 
 async def test_no_tmp_leftover_after_successful_run(tmp_path: Path) -> None:
     controller = Controller(
+        scope=EXTERNAL_SCOPE,
         optimizer_factory=lambda: StubOptimizer(done=True),
         target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask()]),
-        llm_configs=[STUB_LLM_CONFIG],
+        llm_config=STUB_LLM_CONFIG,
         results_dir=tmp_path,
     )
-    await controller.run(scopes=[EXTERNAL_SCOPE])
+    await controller.run()
     assert not list(tmp_path.rglob("*.tmp"))
 
 
@@ -301,14 +273,15 @@ async def test_include_feedback_false_persists_run_end_with_null_eval(
     tmp_path: Path,
 ) -> None:
     controller = Controller(
+        scope=EXTERNAL_SCOPE,
         optimizer_factory=lambda: StubOptimizer(done=True),
         target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask(score=0.5, success=False)]),
-        llm_configs=[STUB_LLM_CONFIG],
+        llm_config=STUB_LLM_CONFIG,
         results_dir=tmp_path,
         include_feedback=False,
     )
-    await controller.run(scopes=[EXTERNAL_SCOPE])
+    await controller.run()
     detail_files = list((tmp_path / "external__test-model").glob("*.json"))
     assert len(detail_files) == 1
     detail = json.loads(detail_files[0].read_text())

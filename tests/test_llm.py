@@ -272,12 +272,13 @@ class TestControllerLLMIntegration:
         )
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
+            scope=scope,
             optimizer_factory=lambda: CapturingOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[config],
+            llm_config=config,
         )
-        await controller.run(scopes=[scope])
+        await controller.run()
 
         assert captured_client is not None
         assert isinstance(captured_client, LLMClient)
@@ -292,14 +293,15 @@ class TestControllerLLMIntegration:
 
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
+            scope=scope,
             optimizer_factory=lambda: StubOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[scope])
+        result = await controller.run()
 
-        tr = result.threat_model_results[0].task_results[0]
+        tr = result.task_results[0]
         assert tr.llm_usage.calls == 0
         assert tr.llm_usage.cost == 0.0
         assert tr.runs[0].llm_usage.calls == 0
@@ -352,14 +354,15 @@ class TestControllerLLMIntegration:
         )
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
+            scope=scope,
             optimizer_factory=lambda: LLMUsingOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[config],
+            llm_config=config,
         )
-        result = await controller.run(scopes=[scope])
+        result = await controller.run()
 
-        tr = result.threat_model_results[0].task_results[0]
+        tr = result.task_results[0]
         assert tr.llm_usage.calls == 1
         assert tr.llm_usage.cost == pytest.approx(0.005)
 
@@ -428,16 +431,17 @@ class TestBudgetExhaustionGraceful:
         target = StubTarget()
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
+            scope=scope,
             optimizer_factory=lambda: LLMEveryRunOptimizer(done=False),
             target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[config],
+            llm_config=config,
             max_runs_per_task=10,
         )
-        result = await controller.run(scopes=[scope])
+        result = await controller.run()
 
         # Should have results, not a crash
-        tmr = result.threat_model_results[0]
+        tmr = result
         assert len(tmr.task_results) == 1
         tr = tmr.task_results[0]
         # 2 runs completed (calls 1 and 2), 3rd run hit budget and was aborted
@@ -496,14 +500,15 @@ class TestBudgetExhaustionGraceful:
         )
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
+            scope=scope,
             optimizer_factory=lambda: DoubleCallOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[config],
+            llm_config=config,
         )
-        result = await controller.run(scopes=[scope])
+        result = await controller.run()
 
-        tmr = result.threat_model_results[0]
+        tmr = result
         assert len(tmr.task_results) == 1
         tr = tmr.task_results[0]
         # First run aborted — no completed runs
@@ -566,15 +571,16 @@ class TestBudgetExhaustionGraceful:
         task_b = StubTask(goal_text="Task B")
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
+            scope=scope,
             optimizer_factory=lambda: LLMOnceOptimizer(done=False),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([task_a, task_b]),
-            llm_configs=[config],
+            llm_config=config,
         )
-        result = await controller.run(scopes=[scope])
+        result = await controller.run()
 
         # Both tasks should have results
-        tmr = result.threat_model_results[0]
+        tmr = result
         assert len(tmr.task_results) == 2
         # Each task got 1 completed run before budget stopped it
         assert len(tmr.task_results[0].runs) == 1
@@ -624,12 +630,13 @@ class TestLLMClientNoop:
 
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
+            scope=scope,
             optimizer_factory=lambda: CapturingOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             # No llm_configs
         )
-        await controller.run(scopes=[scope])
+        await controller.run()
 
         assert captured_client is not None
         assert isinstance(captured_client, LLMClient)

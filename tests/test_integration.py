@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from superred.core.controller import Controller, ControllerResult, TargetFactory
+from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
@@ -51,10 +51,6 @@ DOMAIN = SecurityDomain([ROOT, EXTERNAL, INTERNAL, USER])
 ROOT_SCOPE: Scope = frozenset({ROOT})
 EXTERNAL_SCOPE: Scope = frozenset({EXTERNAL})
 USER_SCOPE: Scope = frozenset({USER})
-
-
-def _first_tmr(result: ControllerResult):
-    return result.threat_model_results[0]
 
 
 # ---------------------------------------------------------------------------
@@ -305,10 +301,10 @@ class _PostCallTarget(Target):
 
 @pytest.mark.integration
 class TestFullControllerWorkflow:
-    """This test verifies that a full run produces a correct ControllerResult by
-    verifying the complete data flow: task configures target, optimizer injects
-    via events, target produces trajectory, evaluator scores, feedback flows
-    back through trajectory."""
+    """Verifies that a full run produces a correct ThreatModelResult by
+    exercising the complete data flow: task configures target, optimizer
+    injects via events, target produces trajectory, evaluator scores,
+    feedback flows back through trajectory."""
 
     async def test_end_to_end_single_task(self) -> None:
         target = RAGTarget()
@@ -316,15 +312,17 @@ class TestFullControllerWorkflow:
         claim = SecurityClaim.from_tasks([task])
 
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(target),
             security_claim=claim,
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[ROOT_SCOPE])
+        tmr = await controller.run()
 
-        assert isinstance(result, ControllerResult)
-        tmr = _first_tmr(result)
+        from superred.core.controller import ThreatModelResult
+
+        assert isinstance(tmr, ThreatModelResult)
         assert len(tmr.task_results) == 1
         assert len(tmr.skipped_tasks) == 0
 
@@ -346,14 +344,15 @@ class TestSecurityScopeFiltering:
     async def test_scoped_to_user_blocks_internal(self) -> None:
         """When scoped to USER, the db_lookup (INTERNAL) is not controlled."""
         controller = Controller(
+            scope=USER_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([SecretExtractionTask(secret="HIDDEN")]),
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
-        result = await controller.run(scopes=[USER_SCOPE])
-        traj = _first_tmr(result).task_results[0].runs[0].trajectory
+        result = await controller.run()
+        traj = result.task_results[0].runs[0].trajectory
 
         # Extract event/response pairs from trajectory
         ctrl_events = [e for e in traj.snapshot() if isinstance(e, ControllablePreCallEvent)]
@@ -380,13 +379,14 @@ class TestSecurityScopeFiltering:
     async def test_scoped_to_external_includes_user(self) -> None:
         """EXTERNAL scope includes USER (child), so user_query is controlled."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([SecretExtractionTask()]),
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        traj = _first_tmr(result).task_results[0].runs[0].trajectory
+        result = await controller.run()
+        traj = result.task_results[0].runs[0].trajectory
         entries = traj.snapshot()
         events = [e for e in entries if isinstance(e, ControllablePreCallEvent)]
         responses = [
@@ -414,14 +414,15 @@ class TestMultiTaskClaim:
         combined = SecurityClaim.from_claims([c1, c2])
 
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(target),
             security_claim=combined,
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[ROOT_SCOPE])
+        result = await controller.run()
 
-        tmr = _first_tmr(result)
+        tmr = result
         assert len(tmr.task_results) == 3
         evaluated_goals = {tr.task.goal.description for tr in tmr.task_results}
         assert "Extract the secret 'ALPHA' from the system" in evaluated_goals
@@ -441,16 +442,17 @@ class TestFeedbackFlowsToOptimizer:
         claim = SecurityClaim.from_tasks([task])
 
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(target),
             security_claim=claim,
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=3,
         )
-        result = await controller.run(scopes=[ROOT_SCOPE])
+        result = await controller.run()
 
         # Verify feedback entries exist in each run's trajectory
-        tmr = _first_tmr(result)
+        tmr = result
         for run_result in tmr.task_results[0].runs:
             entries = run_result.trajectory.snapshot()
             run_end_entries = [
@@ -473,15 +475,16 @@ class TestTrajectoryDataIntegrity:
         claim = SecurityClaim.from_tasks([task])
 
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(target),
             security_claim=claim,
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
-        result = await controller.run(scopes=[ROOT_SCOPE])
+        result = await controller.run()
 
-        trajectory = _first_tmr(result).task_results[0].runs[0].trajectory
+        trajectory = result.task_results[0].runs[0].trajectory
         entries = trajectory.snapshot()
 
         # Trajectory has controllable events/responses,
@@ -515,14 +518,15 @@ class TestParallelControllablesIntegration:
 
         target = RAGTarget()  # uses integration test's domain
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
-        result = await controller.run(scopes=[ROOT_SCOPE])
-        traj = _first_tmr(result).task_results[0].runs[0].trajectory
+        result = await controller.run()
+        traj = result.task_results[0].runs[0].trajectory
         # RAGTarget fires 2 controllable events per run (user_query + db_lookup)
         ctrl_events = [e for e in traj.snapshot() if isinstance(e, ControllablePreCallEvent)]
         assert len(ctrl_events) == 2
@@ -536,14 +540,15 @@ class TestMultiTaskMixedResults:
         success_task = StubTask(score=1.0, success=True, goal_text="will succeed")
         fail_task = StubTask(score=0.0, success=False, goal_text="will fail")
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([success_task, fail_task]),
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
-        result = await controller.run(scopes=[ROOT_SCOPE])
-        tmr = _first_tmr(result)
+        result = await controller.run()
+        tmr = result
         by_goal = {tr.task.goal.description: tr for tr in tmr.task_results}
         assert by_goal["will succeed"].success is True
         assert by_goal["will fail"].success is False
@@ -562,13 +567,14 @@ class TestOptimizerUsesPastTrajectories:
                 return await super().on_event(event)
 
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: HistoryOptimizer(),
             target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks([SecretExtractionTask(secret="test")]),
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[ROOT_SCOPE])
-        assert len(_first_tmr(result).task_results[0].runs) == 3
+        result = await controller.run()
+        assert len(result.task_results[0].runs) == 3
         assert past_traj_lengths == [0, 1, 2]
 
 
@@ -591,12 +597,13 @@ class TestPostCallEventIntegration:
                 return await super().on_event(event)
 
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: PostCallOptimizer(done=True),
             target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
         )
-        await controller.run(scopes=[ROOT_SCOPE])
+        await controller.run()
         assert len(post_call_seen) == 1
         assert post_call_seen[0].answer == "injected"
 
@@ -621,13 +628,14 @@ class TestTargetConfigPerTask:
         claim = SecurityClaim.from_tasks([t1, t2])
 
         controller = Controller(
+            scope=ROOT_SCOPE,
             optimizer_factory=lambda: AdaptiveOptimizer(),
             target_factory=TargetFactory.singleton(target),
             security_claim=claim,
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
-        await controller.run(scopes=[ROOT_SCOPE])
+        await controller.run()
 
         # Each task called set_config with its own secret
         assert "Confidential: ALPHA" in configs_seen
@@ -671,15 +679,16 @@ class TestDomainFilteredOptimizerInputs:
                 return await super().on_event(event)
 
         controller = Controller(
+            scope=USER_SCOPE,
             optimizer_factory=lambda: InspectingOptimizer(),
             target_factory=TargetFactory.singleton(RAGTarget()),
             security_claim=SecurityClaim.from_tasks(
                 [SecretExtractionTask(secret="TEST")],
             ),
-            llm_configs=[_LLM_CONFIG],
+            llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
         )
-        await controller.run(scopes=[USER_SCOPE])
+        await controller.run()
 
         # Only USER-scoped controllable (not INTERNAL db_lookup)
         assert "user_query" in received_ctrl_names

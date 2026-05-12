@@ -1,28 +1,31 @@
-"""Controller: the main orchestrator for red-teaming evaluations.
+"""Controller: orchestrates one red-teaming threat model.
 
-The controller iterates **threat models** — combinations of a security
-domain scope (:data:`Scope`) and an optional LLM configuration — and for
-each threat model evaluates every task in the security claim.
+One ``Controller`` instance evaluates one security claim against one
+``(scope, llm_config)`` threat model.  Each task in the claim runs
+against a fresh :class:`Target` from the configured
+:class:`TargetFactory`; tasks run concurrently up to
+``target_factory.concurrency`` at a time, with each task's events,
+responses, and trajectory entries recorded on its own trajectory — the
+single source of truth per run.
 
-Each task gets a fresh :class:`Target` instance produced by the
-configured :class:`TargetFactory`.  Within a threat model, tasks run
-concurrently up to ``target_factory.concurrency`` at a time; all events,
-responses, and trajectory entries for each task are recorded on its own
-trajectory — the single source of truth per run.
+To sweep multiple scopes or attacker models, instantiate one
+``Controller`` per threat model at the experiment level and run them
+sequentially or via ``asyncio.gather``.
 
 Usage::
 
     target_factory = TargetFactory(
         create=lambda: MyTarget(...),
-        concurrency=8,  # how many tasks the target can serve in parallel
+        concurrency=8,
     )
     controller = Controller(
         optimizer_factory=lambda: MyOptimizer(),
         target_factory=target_factory,
         security_claim=claim,
-        llm_configs=[my_llm_config],  # optional
+        scope=my_scope,
+        llm_config=my_llm_config,  # or omit for non-LLM optimizers
     )
-    result = await controller.run()
+    result = await controller.run()  # -> ThreatModelResult
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -184,17 +187,6 @@ class ThreatModelResult:
     skipped_tasks: list[Task[Target]] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class ControllerResult:
-    """Result of a complete controller evaluation.
-
-    Attributes:
-        threat_model_results: Results for each threat model evaluated.
-    """
-
-    threat_model_results: list[ThreatModelResult]
-
-
 def _format_exception(exc: BaseException) -> str:
     """Format an exception with type, message, and traceback for the JSON log."""
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -296,40 +288,40 @@ async def _safe_teardown_target(target: Target, context: str) -> None:
 
 
 class Controller:
-    """Orchestrates red-teaming evaluations across threat models.
+    """Orchestrates one threat model: a single security claim evaluated
+    against a single ``(scope, llm_config)`` combination.
 
-    The controller iterates all relevant threat models — combinations of
-    a security domain scope and an LLM configuration — and for each one
-    evaluates every task in the security claim with a freshly instantiated
-    optimizer and a freshly instantiated target.
+    One ``Controller`` instance is one threat model.  To sweep multiple
+    scopes or attacker models, construct one ``Controller`` per
+    combination at the experiment level and ``asyncio.gather`` them (or
+    iterate sequentially).
 
-    Within a threat model, tasks run concurrently up to
+    Within the threat model, tasks run concurrently up to
     ``target_factory.concurrency`` at a time.  Each task owns its
     target's full lifecycle so concurrent tasks never share mutable
     target state.
 
     Args:
         optimizer_factory: A callable that returns a new :class:`Optimizer`
-            instance.  A fresh optimizer is created for each
-            (task, scope, llm_config) combination.
+            instance.  A fresh optimizer is created for each task.
         target_factory: Produces fresh :class:`Target` instances and
             declares how many tasks may run in parallel against
             independent instances (see :class:`TargetFactory`).
         security_claim: The collection of tasks to evaluate.
-        llm_configs: LLM access configurations for the optimizer.  Each
-            config represents a different attacker model to test.  Optional
-            — pass an empty list or omit for non-LLM optimizers.
+        scope: The security domain scope under test.  Must be a non-empty
+            ``frozenset[SecurityDomainTag]``.
+        llm_config: LLM access configuration for the optimizer, or
+            ``None`` for non-LLM optimizers (in which case the optimizer
+            receives a noop client that raises on any call).
         max_runs_per_task: Safety limit on runs per task. ``None`` (default)
             uses the built-in cap of 100; pass an explicit positive int to
             override.
         results_dir: Optional directory for persisted artifacts. When set,
-            each completed threat model is written atomically to
-            ``{results_dir}/{scope}__{model}.json`` immediately after it
-            finishes — so a later threat model that crashes does not lose
-            already-completed ones. Trajectories, evaluations, and
-            cumulative LLM usage per run are included; ``LLMConfig.api_key``
-            and ``api_base`` are not. Trajectory contents are not scrubbed
-            for secrets.
+            the completed threat model is written atomically to
+            ``{results_dir}/{scope}__{model}.json`` (plus a sibling
+            subfolder with per-task detail files) when ``run()`` finishes.
+            ``LLMConfig.api_key`` and ``api_base`` are excluded;
+            trajectory contents are not scrubbed for secrets.
     """
 
     DEFAULT_MAX_RUNS_PER_TASK = 100
@@ -339,11 +331,14 @@ class Controller:
         optimizer_factory: OptimizerFactory,
         target_factory: TargetFactory,
         security_claim: SecurityClaim[Target],
-        llm_configs: Sequence[LLMConfig] | None = None,
+        scope: Scope,
+        llm_config: LLMConfig | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
     ) -> None:
+        if not scope:
+            raise ValueError("scope must be non-empty")
         resolved_max_runs = (
             self.DEFAULT_MAX_RUNS_PER_TASK if max_runs_per_task is None else max_runs_per_task
         )
@@ -352,7 +347,8 @@ class Controller:
         self._optimizer_factory = optimizer_factory
         self._target_factory = target_factory
         self._security_claim = security_claim
-        self._llm_configs: list[LLMConfig] = list(llm_configs) if llm_configs else []
+        self._scope: Scope = scope
+        self._llm_config: LLMConfig | None = llm_config
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
@@ -361,116 +357,19 @@ class Controller:
     # Main entry point
     # ------------------------------------------------------------------
 
-    async def run(
-        self,
-        *,
-        scopes: Sequence[Scope] | None = None,
-        models: Sequence[str] | None = None,
-    ) -> ControllerResult:
-        """Run the full evaluation across threat models.
-
-        Args:
-            scopes: Security domain scopes to test.  Each scope is a
-                ``frozenset[SecurityDomainTag]``.  If ``None``, uses all
-                non-empty combinations from the target's
-                :meth:`~SecurityDomain.distinct_combinations` (read from
-                a short-lived probe target produced by the factory).
-            models: Model names to test (must match an ``LLMConfig.model``
-                in *llm_configs*).  If ``None``, uses all configured
-                ``llm_configs``.  Ignored when ``llm_configs`` is empty.
+    async def run(self) -> ThreatModelResult:
+        """Evaluate the security claim under this controller's threat model.
 
         Returns:
-            A :class:`ControllerResult` with results for each threat model.
+            A :class:`ThreatModelResult` for the configured
+            ``(scope, llm_config)``.  When ``results_dir`` is set, the
+            result is also written to disk before this returns.
         """
-        # Resolve scopes (may briefly construct a probe target)
-        effective_scopes = await self._resolve_scopes(scopes)
-
-        # Resolve LLM configs
-        effective_configs = self._resolve_llm_configs(models)
-
-        results = await self._iterate_threat_models(
-            effective_scopes,
-            effective_configs,
-        )
-
-        controller_result = ControllerResult(threat_model_results=results)
-        self._print_summary(controller_result)
-        return controller_result
-
-    # ------------------------------------------------------------------
-    # Resolution helpers
-    # ------------------------------------------------------------------
-
-    async def _resolve_scopes(
-        self,
-        scopes: Sequence[Scope] | None,
-    ) -> list[Scope]:
-        """Resolve scopes to test.
-
-        Every scope must be non-empty — an empty scope covers nothing
-        and cannot provide a security domain for trajectory events.
-
-        When *scopes* is ``None``, a short-lived probe target is
-        constructed from the factory only to read ``security_domain``,
-        then immediately torn down.  When the caller passes explicit
-        scopes, no probe is built.
-
-        Raises:
-            ValueError: If any scope is empty.
-        """
-        if scopes is not None:
-            resolved = list(scopes)
-        else:
-            probe = self._target_factory.create()
-            try:
-                all_combos = probe.security_domain.distinct_combinations()
-                resolved = [c for c in all_combos if c]
-            finally:
-                await _safe_teardown_target(probe, "scope-resolution probe")
-        for s in resolved:
-            if not s:
-                raise ValueError("Scope must not be empty")
-        return resolved
-
-    def _resolve_llm_configs(
-        self,
-        models: Sequence[str] | None,
-    ) -> list[LLMConfig]:
-        """Resolve LLM configs to test."""
-        if not self._llm_configs:
-            return []
-        if models is None:
-            return list(self._llm_configs)
-        model_set = set(models)
-        return [c for c in self._llm_configs if c.model in model_set]
-
-    # ------------------------------------------------------------------
-    # Threat model iteration
-    # ------------------------------------------------------------------
-
-    async def _iterate_threat_models(
-        self,
-        scopes: list[Scope],
-        llm_configs: list[LLMConfig],
-    ) -> list[ThreatModelResult]:
-        """Iterate all (scope, llm_config) combinations.
-
-        After each completed threat model, the result is persisted to
-        ``self._results_dir`` (when configured) before the next one
-        begins. This keeps already-finished threat models safe if a
-        later iteration raises.
-        """
-        results: list[ThreatModelResult] = []
-        config_axis: list[LLMConfig | None] = list(llm_configs) if llm_configs else [None]
-
-        for scope in scopes:
-            for llm_config in config_axis:
-                result = await self._iterate_tasks(scope, llm_config)
-                results.append(result)
-                if self._results_dir is not None:
-                    write_threat_model_result(result, self._results_dir)
-
-        return results
+        result = await self._iterate_tasks(self._scope, self._llm_config)
+        if self._results_dir is not None:
+            write_threat_model_result(result, self._results_dir)
+        self._print_summary(result)
+        return result
 
     # ------------------------------------------------------------------
     # Task iteration (one threat model)
@@ -862,37 +761,33 @@ class Controller:
     # CLI output
     # ------------------------------------------------------------------
 
-    def _print_summary(self, result: ControllerResult) -> None:
-        """Print a human-readable summary of the evaluation."""
+    def _print_summary(self, tmr: ThreatModelResult) -> None:
+        """Print a human-readable summary of one threat model."""
+        scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(empty)"
+        model_name = tmr.llm_config.model if tmr.llm_config else "(no LLM)"
         print("\n" + "=" * 60)
-        print("Evaluation Summary")
+        print(f"Threat model: scope=[{scope_names}] model={model_name}")
         print("=" * 60)
 
-        for tmr in result.threat_model_results:
-            scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(empty)"
-            model_name = tmr.llm_config.model if tmr.llm_config else "(no LLM)"
-            print(f"\n  Threat model: scope=[{scope_names}] model={model_name}")
-
-            for tr in tmr.task_results:
-                status = "SUCCEEDED" if tr.success else "FAILED"
-                print(
-                    f"\n    [{status}] {tr.task.goal.description}"
-                    f"\n      Best score: {tr.best_score.value:.4f}"
-                    f"\n      Runs: {len(tr.runs)}"
-                    f"\n      LLM usage: {tr.llm_usage.calls} calls,"
-                    f" ${tr.llm_usage.cost:.6f}"
-                )
-
-            if tmr.skipped_tasks:
-                print(f"\n    Skipped: {len(tmr.skipped_tasks)} task(s) (NotApplicable)")
-
-        all_task_results = [tr for tmr in result.threat_model_results for tr in tmr.task_results]
-        if all_task_results:
-            best = max(tr.best_score.value for tr in all_task_results)
-            total_success = sum(1 for tr in all_task_results if tr.success)
+        for tr in tmr.task_results:
+            status = "SUCCEEDED" if tr.success else "FAILED"
             print(
-                f"\n  Overall: {total_success}/{len(all_task_results)} task evaluations"
-                f" succeeded\n  Highest score: {best:.4f}"
+                f"\n  [{status}] {tr.task.goal.description}"
+                f"\n    Best score: {tr.best_score.value:.4f}"
+                f"\n    Runs: {len(tr.runs)}"
+                f"\n    LLM usage: {tr.llm_usage.calls} calls,"
+                f" ${tr.llm_usage.cost:.6f}"
+            )
+
+        if tmr.skipped_tasks:
+            print(f"\n  Skipped: {len(tmr.skipped_tasks)} task(s) (NotApplicable)")
+
+        if tmr.task_results:
+            best = max(tr.best_score.value for tr in tmr.task_results)
+            total_success = sum(1 for tr in tmr.task_results if tr.success)
+            print(
+                f"\n  Overall: {total_success}/{len(tmr.task_results)} tasks succeeded"
+                f"\n  Highest score: {best:.4f}"
             )
 
         print("=" * 60 + "\n")

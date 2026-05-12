@@ -59,10 +59,6 @@ def _obs(content: str) -> ObservableEvent:
     return ObservableEvent(observable=_EXT_OBS, content=content)
 
 
-def _first_tmr(result):
-    return result.threat_model_results[0]
-
-
 # ---------------------------------------------------------------------------
 # SecurityDomainTag.includes — kills mutations in the traversal loop
 # ---------------------------------------------------------------------------
@@ -343,39 +339,42 @@ class TestControllerRunMutations:
     async def test_done_true_stops_loop(self) -> None:
         """Kills: `if done: break` removed or negated."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=10,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert len(_first_tmr(result).task_results[0].runs) == 1  # stopped at 1, not 10
+        result = await controller.run()
+        assert len(result.task_results[0].runs) == 1  # stopped at 1, not 10
 
     async def test_done_false_continues_to_max(self) -> None:
         """Kills: `done=True` default or `max_runs_per_task` off-by-one."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=3,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert len(_first_tmr(result).task_results[0].runs) == 3
+        result = await controller.run()
+        assert len(result.task_results[0].runs) == 3
 
     async def test_success_tracked_across_runs(self) -> None:
         """Kills: `if evaluation.success: success = True` removed or
         `success` initialized to True."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=2,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert _first_tmr(result).task_results[0].success is False
+        result = await controller.run()
+        assert result.task_results[0].success is False
 
     async def test_best_score_uses_greater_than(self) -> None:
         """Kills: `>` mutated to `>=` or `<` in score comparison."""
@@ -404,14 +403,15 @@ class TestControllerRunMutations:
                 )
 
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: ScoreOptimizer(done=False),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([ScoredTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
+        result = await controller.run()
         # Best should be 0.8 (first run), not 0.5 (last run)
-        assert _first_tmr(result).task_results[0].best_score.value == 0.8
+        assert result.task_results[0].best_score.value == 0.8
 
     async def test_best_score_tie_keeps_first(self) -> None:
         """Kills: `>` mutated to `>=` — on a tie, the first evaluation wins."""
@@ -441,24 +441,26 @@ class TestControllerRunMutations:
                 return next(evals)
 
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: CountingOptimizer(stop_after=2),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([TiedTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert _first_tmr(result).task_results[0].best_evaluation.rationale == "first"
+        result = await controller.run()
+        assert result.task_results[0].best_evaluation.rationale == "first"
 
     async def test_trajectory_close_called(self) -> None:
         """Kills: `trajectory.close()` removed from _run_single."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        traj = _first_tmr(result).task_results[0].runs[0].trajectory
+        result = await controller.run()
+        traj = result.task_results[0].runs[0].trajectory
         # Trajectory must be closed — emitting should raise
         with pytest.raises(RuntimeError, match="closed"):
             traj.emit(_obs("x"))
@@ -467,22 +469,24 @@ class TestControllerRunMutations:
         """Kills: `optimizer.initialize()` call removed."""
         optimizer = StubOptimizer(done=True)
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: optimizer,
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        await controller.run(scopes=[EXTERNAL_SCOPE])
+        await controller.run()
         assert optimizer.initialized is True
 
     async def test_max_runs_validation(self) -> None:
         """Kills: `max_runs_per_task < 1` check removed."""
         with pytest.raises(ValueError):
             Controller(
+                scope=EXTERNAL_SCOPE,
                 optimizer_factory=lambda: StubOptimizer(),
                 target_factory=TargetFactory.singleton(StubTarget()),
                 security_claim=SecurityClaim.from_tasks([StubTask()]),
-                llm_configs=[STUB_LLM_CONFIG],
+                llm_config=STUB_LLM_CONFIG,
                 max_runs_per_task=0,
             )
 
@@ -507,12 +511,13 @@ class TestControllerRunMutations:
 
         optimizer = CapturingOptimizer(done=True)
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: optimizer,
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        await controller.run(scopes=[EXTERNAL_SCOPE])
+        await controller.run()
 
         assert received_controllables is not None
         assert isinstance(received_controllables, list)
@@ -538,13 +543,14 @@ class TestBestScoreMCDC:
         """MC/DC: A=True makes condition True regardless of B.
         On first run, best_score is None, so the score is always accepted."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask(score=0.1)]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert _first_tmr(result).task_results[0].best_score.value == 0.1
+        result = await controller.run()
+        assert result.task_results[0].best_score.value == 0.1
 
     async def test_higher_score_replaces(self) -> None:
         """MC/DC: A=False, B=True — higher score replaces."""
@@ -564,13 +570,14 @@ class TestBestScoreMCDC:
                 )
 
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: CountingOptimizer(stop_after=2),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([S()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert _first_tmr(result).task_results[0].best_score.value == 0.7
+        result = await controller.run()
+        assert result.task_results[0].best_score.value == 0.7
 
     async def test_lower_score_does_not_replace(self) -> None:
         """MC/DC: A=False, B=False — lower score does NOT replace."""
@@ -590,13 +597,14 @@ class TestBestScoreMCDC:
                 )
 
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: CountingOptimizer(stop_after=2),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([S()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        assert _first_tmr(result).task_results[0].best_score.value == 0.9
+        result = await controller.run()
+        assert result.task_results[0].best_score.value == 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -616,10 +624,11 @@ class TestControllerDefaultValues:
         Pins ``DEFAULT_MAX_RUNS_PER_TASK`` and the ``None``-normalisation
         branch in ``Controller.__init__``."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
         )
         assert Controller.DEFAULT_MAX_RUNS_PER_TASK == 100
         assert controller._max_runs_per_task == 100
@@ -629,10 +638,11 @@ class TestControllerDefaultValues:
         callers can pass ``None`` to defer to the framework instead of
         hardcoding 100 themselves."""
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(),
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=None,
         )
         assert controller._max_runs_per_task == Controller.DEFAULT_MAX_RUNS_PER_TASK
@@ -831,14 +841,6 @@ class TestResultFrozenness:
         with pytest.raises(AttributeError):
             tmr.scope = ROOT_SCOPE  # type: ignore[misc]
 
-    def test_controller_result_is_frozen(self) -> None:
-        """Kills mutant 7: `frozen=True` -> `frozen=False` on ControllerResult."""
-        from superred.core.controller import ControllerResult
-
-        cr = ControllerResult(threat_model_results=[])
-        with pytest.raises(AttributeError):
-            cr.threat_model_results = []  # type: ignore[misc]
-
 
 # ---------------------------------------------------------------------------
 # Event base type mutations — kills mutants 191, 192, 194, 200, 201
@@ -939,14 +941,15 @@ class TestBudgetExhaustedStopsTask:
                 await super().run(emit, send_event)
 
         controller = Controller(
+            scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(BudgetBlowingTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_configs=[STUB_LLM_CONFIG],
+            llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=10,
         )
-        result = await controller.run(scopes=[EXTERNAL_SCOPE])
-        tr = _first_tmr(result).task_results[0]
+        result = await controller.run()
+        tr = result.task_results[0]
         # Only 1 successful run should be recorded — the second raised
         # BudgetExhaustedError and the loop should break, not continue.
         assert len(tr.runs) == 1

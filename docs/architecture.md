@@ -48,53 +48,61 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
 ## Initialization and Run Loop
 
 ```
-0. User instantiates target with manual values (API keys, etc.)
-   → target = MyTarget(api_key="sk-...")
+0. User builds a TargetFactory wrapping the target constructor:
+   target_factory = TargetFactory(
+       create=lambda: MyTarget(api_key="sk-..."),
+       concurrency=8,   # how many tasks may run in parallel
+   )
 
-1. Controller constructed with optimizer_factory, target, security_claim,
-   llm_configs (optional), max_runs_per_task
+1. Controller constructed with optimizer_factory, target_factory,
+   security_claim, scope (required), llm_config (optional),
+   max_runs_per_task (optional), results_dir (optional)
 
-2. await controller.run(scopes=..., models=...):
+2. await controller.run():
 
-   Resolve scopes (default: target.security_domain.distinct_combinations())
-   Resolve llm_configs (filter by models= if provided)
+   For each task in security_claim, bounded by target_factory.concurrency
+   (asyncio.Semaphore + asyncio.gather; results in input order):
+     a. target = target_factory.create()
+        task.configure_target(target)
+        → sets pre-run config via target.set_config()
+        → raises NotApplicable if incompatible (task skipped)
 
-   For each (scope, llm_config) threat model:
-     For each task in security_claim:
-       a. task.configure_target(target)
-          → sets pre-run config via target.set_config()
-          → raises NotApplicable if incompatible (task skipped)
+     b. Create LLMClient from llm_config — fresh per task (budget is per-task)
+        Create fresh optimizer via optimizer_factory()
+        Filter controllables and observables by scope
+        optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)
 
-       b. Create LLMClient from llm_config — fresh per task (budget is per-task)
-          Create fresh optimizer via optimizer_factory()
-          Filter controllables and observables by scope
-          optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)
+     c. channel = EventChannel()
+        optimizer_task = asyncio.create_task(optimizer.run(channel))
 
-       c. channel = EventChannel()
-          optimizer_task = asyncio.create_task(optimizer.run(channel))
+     d. For each run (until optimizer signals done or max_runs):
+        Create Trajectory (full) and FilteredTrajectory (optimizer's view)
+        channel.send(RunStartEvent(filtered_trajectory))
+        target.run(emit, send_event)
+          → target emits ObservableEvent instances via emit(event)
+          → send_event bridges to channel with filtering
+          → trajectory_recorder middleware records events/responses to trajectory
+        task.evaluate(trajectory, target) → EvaluationResult
+          → controller filters sub_scores by scope
+        channel.send(RunEndEvent(evaluation=filtered_eval, security_domain=scope_tag))
+          → RunEndEvent is persisted to the trajectory
+          → optimizer responds with RunEndResponse(done=True/False)
+        Close the trajectory
+        target.cleanup() — resets target state for next run within this task
+        If done=True, break
+        On exception: preserve partial trajectory + zero-score evaluation;
+                      capture exception traceback on TaskResult.error; break
 
-       d. For each run (until optimizer signals done or max_runs):
-          i.   Create Trajectory (full) and FilteredTrajectory (optimizer's view)
-               channel.send(RunStartEvent(filtered_trajectory))
-          ii.  target.run(emit, send_event)
-               → target emits ObservableEvent instances via emit(event); send_event bridges to channel with filtering
-               → trajectory_recorder middleware records events/responses directly to trajectory
-          iii. task.evaluate(trajectory, target) → EvaluationResult
-               → controller filters sub_scores by scope
-          iv.  channel.send(RunEndEvent(evaluation=filtered_eval, security_domain=scope_tag))
-               → RunEndEvent is persisted to the trajectory
-               → optimizer responds with RunEndResponse(done=True/False)
-          v.   Close the trajectory
-          vi.  target.cleanup()
-               → resets target state for next run
-          vii. If done=True, break
+     e. channel.close() → optimizer.run() exits
+        await optimizer_task, optimizer.teardown()
+        target.cleanup() (final) and target.teardown() — instance is discarded
 
-       e. channel.close() → optimizer.run() exits
-          await optimizer_task, optimizer.teardown()
+   3. If results_dir set: write the threat model's JSON files
+   4. Print summary to stdout
+   5. Return ThreatModelResult
 
-   3. Print summary to stdout
-   4. target.teardown()
-   5. Return ControllerResult
+Sweeping multiple (scope, llm_config) combinations is the caller's job:
+construct one Controller per combination and await asyncio.gather() them.
 ```
 
 ## asyncio Runtime
@@ -144,8 +152,8 @@ The controller does not create its own event loop. This allows embedding in larg
 ```
 src/superred/core/
   channel.py           -- EventEnvelope, EventChannel (thread-safe)
-  controller.py        -- Controller, RunResult, TaskResult, ThreatModelResult,
-                          ControllerResult, OptimizerFactory
+  controller.py        -- Controller, TargetFactory, RunResult, TaskResult,
+                          ThreatModelResult, OptimizerFactory
   llm.py               -- LLMClient (constrained LLM proxy for optimizers)
   middleware.py         -- Middleware type, compose(), security_domain_filter(),
                           trajectory_recorder()

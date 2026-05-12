@@ -3,7 +3,6 @@
 from superred.core.channel import EventChannel, EventEnvelope
 from superred.core.controller import (
     Controller,
-    ControllerResult,
     OptimizerFactory,
     RunResult,
     TargetFactory,
@@ -61,7 +60,6 @@ __all__ = [
     "EventEnvelope",
     # Controller
     "Controller",
-    "ControllerResult",
     "OptimizerFactory",
     "RunResult",
     "TargetFactory",

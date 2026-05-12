@@ -1,6 +1,6 @@
 # Controller
 
-The controller is the main orchestrator for red-teaming evaluations. It iterates **threat models** — combinations of a security domain scope (`Scope`) and an optional LLM configuration — and for each threat model evaluates every task in the security claim.
+The controller is the main orchestrator for red-teaming evaluations. One `Controller` instance evaluates one security claim against one threat model — a single `(scope, llm_config)` combination. Sweeping multiple threat models is the caller's job: instantiate one `Controller` per combination and run them sequentially or via `asyncio.gather`.
 
 ## Construction
 
@@ -24,78 +24,75 @@ llm_config = LLMConfig(
     max_cost=5.00,  # USD budget limit (optional, None = unlimited)
 )
 
+scope: Scope = frozenset({external_tag})
+
 controller = Controller(
-    optimizer_factory=lambda: MyOptimizer(),  # fresh optimizer per (task, scope, config)
+    optimizer_factory=lambda: MyOptimizer(),  # fresh optimizer per task
     target_factory=target_factory,            # fresh target per task; bounded concurrency
     security_claim=claim,
-    llm_configs=[llm_config],       # optional — omit for non-LLM optimizers
-    max_runs_per_task=100,          # safety limit, default 100
-    include_feedback=True,          # populate RunEndEvent.evaluation (default True)
-    results_dir="results/run-1",    # optional — persist one JSON per threat model
+    scope=scope,                              # required, non-empty
+    llm_config=llm_config,                    # optional — omit for non-LLM optimizers
+    max_runs_per_task=100,                    # safety limit, default 100
+    include_feedback=True,                    # populate RunEndEvent.evaluation (default True)
+    results_dir="results/run-1",              # optional — persist threat-model JSON
 )
 
-# Run with explicit scopes
-scope: Scope = frozenset({external_tag})
-result = await controller.run(scopes=[scope])
-
-# Or let the controller derive scopes from target.security_domain.distinct_combinations()
-# (a short-lived probe target is built from the factory to read the domain).
-result = await controller.run()
+tmr = await controller.run()  # -> ThreatModelResult
 ```
 
 For single-instance targets (tests, expensive-to-construct resources), use
 the `TargetFactory.singleton(target)` classmethod — concurrency is locked
-to 1 since a shared instance can't safely serve parallel tasks.
+to 1 since a shared instance can't safely serve parallel tasks. The
+controller still calls `target.teardown()` once per task, so a multi-task
+singleton needs an idempotent teardown.
 
 The controller does not create an asyncio event loop — the caller provides it via `asyncio.run()` or an existing loop.
 
-## Threat model iteration
+Sweeping multiple threat models:
 
-`await controller.run(scopes=..., models=...) -> ControllerResult`:
+```python
+import asyncio, itertools
 
-The controller iterates all combinations of (scope, llm_config):
-- **scopes**: Defaults to `target.security_domain.distinct_combinations()` (non-empty subsets). Each scope is a `frozenset[SecurityDomainTag]`.
-- **llm_configs**: Passed at construction. `models=` filters by model name at run time.
-- When `llm_configs` is empty, scopes are iterated without LLM configs (for non-LLM optimizers).
-- When both are provided, every scope × config combination is tested.
-
-For each threat model, a fresh optimizer is instantiated via `optimizer_factory()`.
+results = await asyncio.gather(*(
+    Controller(
+        scope=s, llm_config=c,
+        optimizer_factory=..., target_factory=target_factory,
+        security_claim=claim,
+    ).run()
+    for s, c in itertools.product(scopes, configs)
+))
+```
 
 ## Run lifecycle
 
-For each (scope, llm_config) combination:
+`await controller.run() -> ThreatModelResult` runs every task in the security claim against the configured `(scope, llm_config)`. Tasks run concurrently bounded by `target_factory.concurrency` (`asyncio.Semaphore` + `asyncio.gather`); results are collected in input order.
 
-1. **Per task** (from security claim) — tasks run concurrently bounded by `target_factory.concurrency`. Each in-flight task uses an independent target produced by the factory.
-   - `target_factory.create()` — fresh `Target` instance owned by this task.
-   - `task.configure_target(target)` — if `NotApplicable`, skip task.
-   - Create `LLMClient` from `llm_config` (fresh per task — budget is per-task). If no `llm_config`, use a noop client.
-   - Create fresh optimizer via `optimizer_factory()`.
-   - `optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)` — only controllables and observables within the security domain scope are passed.
-   - Create `EventChannel`, launch `optimizer.run(channel)` as concurrent `asyncio.Task`.
-   - **Run loop** (until optimizer signals done or `max_runs_per_task`):
-     - Create `Trajectory(filtered_scope=scope)`. Access `trajectory.filtered` for optimizer's view.
-     - Send `RunStartEvent(filtered_trajectory)` through channel — optimizer gets filtered view.
-     - `target.run(emit, send_event)` — target emits `ObservableEvent` instances via `emit(event)`; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records all events and responses directly to the trajectory.
-     - `task.evaluate(trajectory, target)` — returns `EvaluationResult`. Controller filters `sub_scores` by scope (keeping only in-scope scores).
-     - Send `RunEndEvent(evaluation=filtered_eval, security_domain=<scope_tag>)` through channel — `RunEndEvent` is persisted to the trajectory. When `include_feedback=True` (default), `evaluation` carries the filtered result; when `False`, `evaluation` is `None`. Check `RunEndResponse.done`.
-     - Close the trajectory.
-     - `target.cleanup()` — reset target state for next run within this task.
-     - Track best score, success across runs.
-     - If `done=True`, break.
-   - Close channel, await optimizer task, `optimizer.teardown()`.
-   - Post-task `target.cleanup()` (in `finally`) followed by `target.teardown()`; the per-task target instance is then discarded.
-   - Collect `TaskResult`.
-2. **Summary**: Print human-readable results to stdout.
-3. **Return** `ControllerResult`.
+For each task:
 
-The controller does not maintain a long-lived target instance. The only construction outside the per-task lifecycle is a short-lived probe built by `_resolve_scopes` when the caller doesn't pass explicit scopes (to read `security_domain.distinct_combinations()`); the probe is torn down immediately.
+1. `target = target_factory.create()` — fresh `Target` instance owned by this task.
+2. `task.configure_target(target)` — if `NotApplicable`, the task is collected into `skipped_tasks` and not retried.
+3. Create `LLMClient` from `llm_config` (fresh per task — budget is per-task). If no `llm_config`, use a noop client.
+4. Create fresh optimizer via `optimizer_factory()`.
+5. `optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)` — only controllables and observables within the scope are passed.
+6. Create `EventChannel`, launch `optimizer.run(channel)` as concurrent `asyncio.Task`.
+7. **Run loop** (until optimizer signals done or `max_runs_per_task`):
+   - Create `Trajectory(filtered_scope=scope)`. Access `trajectory.filtered` for the optimizer's view.
+   - Send `RunStartEvent(filtered_trajectory)` through the channel.
+   - `target.run(emit, send_event)` — target emits `ObservableEvent` instances; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records events and responses directly to the trajectory.
+   - `task.evaluate(trajectory, target)` — returns `EvaluationResult`; controller filters `sub_scores` by scope.
+   - Send `RunEndEvent(evaluation=filtered_eval, security_domain=<scope_tag>)` through the channel; it is persisted to the trajectory. When `include_feedback=True` (default) the evaluation is attached.
+   - Close the trajectory; call `target.cleanup()` to reset state for the next run within this task.
+   - Track best score / success across runs.
+   - On exception inside the run: the partial trajectory is preserved as a final `RunResult` with a zero-score evaluation; the formatted exception lands on `TaskResult.error`; `stop_reason = "error"`; loop ends.
+8. Close channel, await optimizer task, `optimizer.teardown()`. Final `target.cleanup()` (in `finally`) followed by `target.teardown()`; the per-task target instance is then discarded.
+
+After all tasks finish, the controller writes the threat-model JSON files (when `results_dir` is set), prints a summary to stdout, and returns the `ThreatModelResult`.
 
 ### Internal structure
 
-- `_iterate_threat_models(scopes, llm_configs)` — iterates all (scope, llm_config) combinations.
-- `_iterate_tasks(scope, llm_config)` — runs the security claim with an `asyncio.Semaphore(target_factory.concurrency)` + `asyncio.gather`. Each task acquires the semaphore, calls `target_factory.create()`, runs the task, then `target.teardown()` in `finally` before releasing the slot. Results are reassembled in input order.
+- `_iterate_tasks(scope, llm_config)` — runs the security claim with `asyncio.Semaphore(target_factory.concurrency)` + `asyncio.gather`. Each in-flight task acquires the semaphore, calls `target_factory.create()`, runs the task, then `target.teardown()` in `finally` before releasing the slot. Results are reassembled in input order.
 - `_run_task(task, scope, llm_config, target)` — manages the per-task lifecycle: configure, create fresh optimizer, initialize, build middleware stack, run loop, collect results.
-- `_run_single(task, target, channel, scope, run_number)` — executes one iteration: RunStartEvent → target.run → evaluate → RunEndEvent (with evaluation) → close trajectory. Returns `(trajectory, evaluation, done)`.
+- `_run_single(task, target, channel, scope, run_number, trajectory)` — executes one iteration. The trajectory is owned by `_run_task` so a partial trajectory survives an exception. Returns `(evaluation, done)`.
 
 The `send_event` callback passed to `target.run` is built by composing middleware onto `channel.send`:
 ```python
@@ -158,18 +155,13 @@ Results for one (scope, llm_config) combination:
 - `task_results: list[TaskResult]` — results for each evaluated task.
 - `skipped_tasks: list[Task[Target]]` — tasks that raised `NotApplicable`.
 
-### ControllerResult (frozen)
-
-The full evaluation:
-- `threat_model_results: list[ThreatModelResult]` — results for each threat model evaluated.
-
 ## LLM access and budget tracking
 
 The controller mediates LLM access for the optimizer. This is part of the threat model — it defines what computational resources the attacker has.
 
-- **Configuration**: Pass `llm_configs=[LLMConfig(...)]` to the controller constructor (optional — omit for non-LLM optimizers). Each config specifies the model, API credentials, and an optional cost budget (`max_cost` in USD).
+- **Configuration**: Pass `llm_config=LLMConfig(...)` to the controller constructor (optional — omit for non-LLM optimizers). The config specifies the model, API credentials, and an optional cost budget (`max_cost` in USD).
 - **Per-task budget**: A fresh `LLMClient` is created for each task. Budget resets per task.
-- **Non-LLM optimizers**: When `llm_configs` is empty/omitted, the optimizer receives a noop `LLMClient` that raises `BudgetExhaustedError` on any call.
+- **Non-LLM optimizers**: When `llm_config` is `None`/omitted, the optimizer receives a noop `LLMClient` that raises `BudgetExhaustedError` on any call.
 - **Constrained client**: The `LLMClient` locks the model, API base, and API key. The optimizer cannot override them.
 - **Cost-based budget enforcement**: Pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches `max_cost`. Cost is computed per call via `litellm.completion_cost()`, which uses the model's pricing to convert token usage to USD.
 - **Usage tracking**: Each `RunResult` includes a cumulative `llm_usage` snapshot (calls, cost). Each `TaskResult` includes the total `llm_usage`. This enables budget-vs-performance analysis across runs.
@@ -189,29 +181,28 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 - **Per-task error containment**: An unexpected exception escaping `optimizer.on_event`, `target.run`, `task.evaluate`, or `target.cleanup` is caught inside the run loop. The task ends with `stop_reason="error"` and any runs already completed before the failure are preserved in `TaskResult.runs`. Errors raised outside the run loop (e.g. `task.configure_target` non-`NotApplicable`, `optimizer.initialize`) are caught at the `_iterate_tasks` level as a backstop and recorded as a synthetic error `TaskResult` with `runs=[]`. `BudgetExhaustedError` is preserved as `stop_reason="budget_exhausted"` wherever it originates inside the optimizer's run loop or `optimizer.initialize` (so an optimizer that exhausts its budget during a warmup call is not misclassified). `NotApplicable` continues to be handled distinctly (`skipped_tasks`). The rest of the threat model — and every later threat model — still runs and is persisted.
 - **Post-task target reset**: `target.cleanup()` is called at the end of every task's run loop in the `finally` block, even when the loop ended via an error and the inner-loop cleanup-after-success was skipped. This means the next task in the threat model always starts against a target that has been told to reset its state at least once after the previous task's last run. The call is wrapped so a failing `target.cleanup()` is logged but does not propagate or block the next task. The `optimizer.initialize` early-return paths (budget-exhausted and generic error) do not invoke this post-task cleanup because the run loop never started; targets whose `configure_target` mutates more than config slots should not rely on cleanup running in that case.
 - **Unified trajectory**: Events and responses are recorded directly to the trajectory via the `trajectory_recorder` middleware. No separate event log — the trajectory is the single source of truth.
-- **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ControllerResult` provides structured output for programmatic use.
+- **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ThreatModelResult` provides structured output for programmatic use.
 - **LLM access as threat model parameter**: The model and budget are experiment-level settings, not optimizer choices. The controller creates a constrained `LLMClient` per task and the optimizer cannot escape the configured model/credentials. Budget limits are a fairness measure for comparing optimizer strategies.
 - **Per-task LLM budget**: Each task gets a fresh `LLMClient` with reset counters. This ensures budget fairness when evaluating across multiple tasks and enables per-task budget analysis.
 - **Cumulative usage snapshots**: `RunResult.llm_usage` is cumulative (includes all prior runs) rather than per-run delta. This is more useful for budget-vs-performance curves — each point shows (total_budget_spent, score_at_that_point).
 
 ## Persistence (`results_dir`)
 
-When `results_dir` is provided, the controller writes a two-level layout per completed threat model:
+When `results_dir` is provided, the controller writes a two-level layout for the threat model when `run()` completes:
 
 ```
 results_dir/
-├── {scope}__{model}.json            ← claim-level summary (one per threat model)
-├── {scope}__{model}/
-│   ├── 00001__{goal}.json            ← per-task detail (one per task)
-│   └── ...
-├── {other_scope}__{model}.json
-└── {other_scope}__{model}/
+├── {scope}__{model}.json            ← claim-level summary
+└── {scope}__{model}/
+    ├── 00001__{goal}.json            ← per-task detail (one per task)
     └── ...
 ```
 
-- **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_configs` is empty, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
-- **When**: immediately after each `_iterate_tasks` returns and before the next threat model begins.
-- **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"` and an empty or partial `runs` list; sibling tasks and later threat models persist normally.
+Multiple controllers pointed at the same `results_dir` (the multi-threat-model sweep pattern) each write their own pair of files, named by their scope and model.
+
+- **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_config` is `None`, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
+- **When**: at the end of `run()`, before it returns.
+- **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"`, the partial trajectory accumulated before the crash, and the formatted exception under the `error` field. Sibling tasks still finish and are persisted.
 - **Atomicity**: each individual file is written via temp file + `rename`. Per-task detail files are written first; the claim-level file lands last and acts as a completion marker for the threat model.
 - **Claim-level file**: `version`, `completed_at`, `scope`, `llm_config` (model + max_cost only), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
 - **Per-task detail file**: self-contained — repeats `version`, `scope`, `llm_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`).
