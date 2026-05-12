@@ -146,6 +146,7 @@ All runs for one task:
 - `success: bool` — whether any run achieved the adversarial goal.
 - `llm_usage: LLMUsage` — total optimizer LLM usage across all runs.
 - `stop_reason: Literal["done", "max_runs", "budget_exhausted", "error"]` — why the run loop ended: optimizer signaled `RunEndResponse(done=True)`, hit `max_runs_per_task`, `BudgetExhaustedError` was raised, or an unexpected exception escaped the optimizer/target/evaluator and the task was abandoned.
+- `error: str | None`: formatted exception (type + message + traceback) when something went wrong, `None` otherwise. Set whenever the controller observes an exception associated with the task. Most commonly populated with `stop_reason="error"`, but also populated as a bonus diagnostic when the run loop classified the task cleanly (`"done"` / `"max_runs"` / `"budget_exhausted"`) yet the optimizer task subsequently raised during teardown. Consumers should treat `error` and `stop_reason` as independent fields: `error is not None` does not imply `stop_reason == "error"`, and vice versa is the common (but not required) case.
 
 ### ThreatModelResult (frozen)
 
