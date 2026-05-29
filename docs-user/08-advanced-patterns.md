@@ -1,271 +1,190 @@
 # Advanced Patterns
 
-## Multi-Turn Targets
+Patterns you reach for once the basics are in place. Each is independent; read
+the ones you need.
 
-A target that has a multi-turn conversation with the LLM:
+## Multi-turn targets
+
+A target can hold a multi-turn conversation. The clean convention (used by the
+chatbot target) is to let the **optimizer control how many turns happen**: each
+turn the target asks for the next user message; an injection continues the
+conversation, a `ControllableNoInjection` ends it.
 
 ```python
 async def run(self, emit, send_event):
     messages = [{"role": "system", "content": self._system_prompt}]
 
     for turn in range(self._max_turns):
-        # Get user message from optimizer
-        ctrl = Controllable(spec=ControllableSpec(
-            name="user_input", security_domain=USER_TAG,
-        ))
-        resp = await send_event(
-            ControllablePreCallEvent(controllable=ctrl, request=f"Turn {turn + 1} user message"),
-        )
-        user_msg = resp.value if isinstance(resp, ControllableInjection) else "Hello"
+        resp = await send_event(ControllablePreCallEvent(
+            controllable=_USER_MESSAGE_CTRL, request=f"Turn {turn + 1} user message"))
+
+        if not isinstance(resp, ControllableInjection):
+            break                        # attacker declined: end the conversation
+        user_msg = resp.value
         messages.append({"role": "user", "content": user_msg})
+        emit(ObservableEvent(observable=_REQUEST_OBS, content=user_msg))
 
-        emit(LogEvent(
-            content=user_msg, label="model_request", security_domain=USER_TAG,
-        ))
-
-        # Call LLM
-        completion = await acompletion(model=self._model, messages=messages, ...)
+        completion = await acompletion(model=self._model, messages=messages,
+                                       api_base=self._api_base, api_key=self._api_key)
         assert isinstance(completion, ModelResponse)
-        assistant_msg = completion.choices[0].message.content or ""
-        messages.append({"role": "assistant", "content": assistant_msg})
-        self._last_response = assistant_msg
+        assistant = completion.choices[0].message.content or ""
+        messages.append({"role": "assistant", "content": assistant})
+        self._last_response = assistant
+        emit(ObservableEvent(observable=_RESPONSE_OBS, content=assistant))
 
-        emit(LogEvent(
-            content=assistant_msg, label="model_response", security_domain=SYSTEM_TAG,
-        ))
-
-        # Optionally let optimizer observe the response
-        await send_event(
-            ControllablePostCallEvent(
-                controllable=ctrl, request=f"Turn {turn + 1}", answer=assistant_msg,
-            ),
-        )
+        # Optional: let the attacker see this turn's reply before the next turn.
+        await send_event(ControllablePostCallEvent(
+            controllable=_USER_MESSAGE_CTRL, request=f"Turn {turn + 1}", answer=assistant))
 ```
 
-The optimizer gets one `ControllablePreCallEvent` per turn. It can adapt its injection based on the conversation history visible in the trajectory.
+The attacker sees one `ControllablePreCallEvent` per turn and can adapt each
+message from the conversation visible in its filtered trajectory. A `max_turns`
+ceiling in the target keeps a run finite even if the attacker keeps injecting.
 
-## Parallel Target Branches
+## Parallel branches inside one run
 
-A target with concurrent processing branches:
+A target may fan out into concurrent branches, each calling `send_event`
+independently. Each call suspends only its own branch and resumes when the
+attacker responds.
 
 ```python
 import asyncio
 
 async def run(self, emit, send_event):
-    spec = ControllableSpec(name="input", security_domain=USER_TAG)
-
-    async def branch(name: str) -> str:
-        ctrl = Controllable(spec=spec)
-        resp = await send_event(
-            ControllablePreCallEvent(controllable=ctrl, request=f"Input for {name}"),
-        )
+    async def branch(ctrl, label):
+        resp = await send_event(ControllablePreCallEvent(controllable=ctrl, request=label))
         value = resp.value if isinstance(resp, ControllableInjection) else "default"
-        emit(LogEvent(
-            content=f"[{name}] {value}", label="model_request",
-            security_domain=USER_TAG,
-        ))
+        emit(ObservableEvent(observable=Observable(name=f"{label}_input",
+             security_domain=ctrl.security_domain, description=label), content=value))
         return value
 
-    # Both branches run concurrently
-    result_a, result_b = await asyncio.gather(
-        branch("search"),
-        branch("generate"),
-    )
-
-    # Combine results
-    self._last_response = f"Search: {result_a}, Generate: {result_b}"
+    a, b = await asyncio.gather(branch(_SEARCH_CTRL, "search"), branch(_GEN_CTRL, "generate"))
+    self._last_response = await self._combine(a, b)
 ```
 
-Each branch fires its own event. The optimizer handles them sequentially by default (in `on_event`). Both branches suspend on their respective futures and resume when the optimizer responds.
+The default (sequential) optimizer handles the two events one after another; both
+branches resume once answered. The channel is built for exactly this.
 
-## Custom Middleware
+## Thread-based targets
 
-Middleware wraps the event handler callback. Use it for logging, rate limiting, budget enforcement, etc.
+If your target drives work on background threads (Docker containers,
+subprocesses), bridge back to the event loop with
+`asyncio.run_coroutine_threadsafe`. The channel and envelope are thread-safe
+(they use `call_soon_threadsafe` internally).
 
 ```python
-from superred.core.middleware import Middleware, compose
+import asyncio
 
-def logging_middleware() -> Middleware:
-    """Log every event and response."""
-    def apply(handler):
-        async def wrapped(event):
-            print(f"Event: {type(event).__name__}")
-            response = await handler(event)
-            print(f"Response: {type(response).__name__}")
-            return response
-        return wrapped
-    return apply
+async def run(self, emit, send_event):
+    loop = asyncio.get_running_loop()
 
-def injection_limit_middleware(max_injections: int) -> Middleware:
-    """Stop injecting after N controllable injections."""
-    count = [0]
+    def in_thread():
+        fut = asyncio.run_coroutine_threadsafe(
+            send_event(ControllablePreCallEvent(controllable=_CTRL, request="input")), loop)
+        return fut.result(timeout=30)        # blocks this thread, not the loop
 
-    def apply(handler):
-        async def wrapped(event):
-            if count[0] >= max_injections:
-                from superred.core.types.event import ControllableNoInjection
-                return ControllableNoInjection(event=event, controllable=event.controllable)
-            response = await handler(event)
-            if hasattr(response, "value"):
-                count[0] += 1
-            return response
-        return wrapped
-    return apply
+    resp = await loop.run_in_executor(None, in_thread)
 ```
 
-Middleware is applied by the Controller internally via `compose()`. To add custom middleware, you'd extend the Controller or modify its `_run_task` method. The built-in `security_domain_filter` is an example of production middleware.
+## Composing security claims
 
-## Custom Log Labels
-
-Use `LogEvent` with different `label` values for domain-specific recording:
-
-```python
-from superred.core.types.event import LogEvent
-
-# Use in target.run():
-emit(LogEvent(
-    content={"tool": "web_search", "query": "latest news"},
-    label="tool_call",
-    security_domain=SYSTEM_TAG,
-))
-
-result = await call_tool("web_search", "latest news")
-
-emit(LogEvent(
-    content=result,
-    label="tool_result",
-    security_domain=SYSTEM_TAG,
-))
-```
-
-The optimizer sees these in its filtered trajectory and can learn from them.
-
-## Composing Security Claims
-
-Build comprehensive evaluation suites from independent claims:
+Build large evaluation suites from small, independent claims. Composition is
+lazy and re-iterable:
 
 ```python
-# Different attack categories
-prompt_injection = SecurityClaim.from_tasks([
-    SystemPromptLeakTask(),
-    InstructionIgnoreTask(),
-    RolePlayJailbreakTask(),
-])
+prompt_injection = SecurityClaim.from_tasks([SystemPromptLeakTask(), InstructionIgnoreTask()])
+data_exfil       = SecurityClaim.from_tasks([SecretExtractionTask(), PIIExfilTask()])
 
-data_extraction = SecurityClaim.from_tasks([
-    SecretExtractionTask(secret="API_KEY_123"),
-    PIIExfiltrationTask(),
-])
+full = SecurityClaim.from_claims([prompt_injection, data_exfil])
 
-denial_of_service = SecurityClaim.from_tasks([
-    InfiniteLoopTask(),
-    ResourceExhaustionTask(),
-])
-
-# Compose into a full evaluation
-full_evaluation = SecurityClaim.from_claims([
-    prompt_injection,
-    data_extraction,
-    denial_of_service,
-])
-
-# Run everything
-controller = Controller(
-    optimizer=optimizer,
-    target=target,
-    security_claim=full_evaluation,
-    security_domain_tag=user_tag,
-)
-result = await controller.run()
-
-# Analyze by category
+# Analyse by task afterwards:
 for tr in result.task_results:
     print(f"{tr.task.goal.description}: {'PASS' if tr.success else 'FAIL'}")
 ```
 
-## Testing Multiple Security Scopes
+## Testing several scopes
 
-Run the same claim against different scopes to understand the attack surface:
+Run the same claim under different scopes to chart the attack surface. Build a
+fresh Controller per scope (see [Running Evaluations](06-running-evaluations.md#sweeping-multiple-threat-models)):
 
 ```python
-scopes = {
-    "user_only": user_input_tag,
-    "all_external": external_tag,
-    "full_access": system_tag,
-}
+scopes = {"user": frozenset({USER_TAG}),
+          "user+system": frozenset({USER_TAG, SYSTEM_PROMPT_TAG})}
 
 for name, scope in scopes.items():
-    print(f"\n--- Testing scope: {name} ---")
-    controller = Controller(
-        optimizer=optimizer,
-        target=target,
-        security_claim=claim,
-        security_domain_tag=scope,
-    )
+    controller = Controller(optimizer_factory=lambda: MyOptimizer(),
+                            target_factory=target_factory, security_claim=claim,
+                            scope=scope, llm_config=attacker_cfg, results_dir=f"results/{name}")
     result = await controller.run()
-    successes = sum(1 for tr in result.task_results if tr.success)
-    print(f"  {successes}/{len(result.task_results)} tasks succeeded")
+    succ = sum(1 for tr in result.task_results if tr.success)
+    print(f"{name}: {succ}/{len(result.task_results)}")
 ```
 
-## Packaging Modules
+## Packaging a module
 
-Each module (optimizer, target, claim) is its own pip-installable package:
+Each target, optimizer, and claim is its own pip-installable package. The layout
+is uniform across the repo:
 
 ```
 my_optimizer/
   pyproject.toml
   src/my_optimizer/
-    __init__.py       # exports
-    optimizer.py      # implementation
+    __init__.py        # public exports
+    optimizer.py       # implementation
+  tests/
 ```
 
-`pyproject.toml`:
 ```toml
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "my-optimizer"
+name = "my-optimizer"          # pip name: dashes
 version = "0.1.0"
 dependencies = ["superred"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/my_optimizer"]
+packages = ["src/my_optimizer"]   # import name: underscores
 ```
 
-Install editable during development:
 ```bash
 pip install -e ./my_optimizer
 ```
 
-Then import by name anywhere:
 ```python
-from my_optimizer import MyOptimizer
+from my_optimizer import MyOptimizer   # import by the underscore name
 ```
 
-## Thread-Safe Targets
+The pip name uses dashes (`my-optimizer`) and the import name uses underscores
+(`my_optimizer`); the folder under `superred-modules/` may differ again (the
+`test_*` fixtures are a deliberate example). Export your public surface from
+`__init__.py`, including any security-domain tag constants callers need to build
+scopes (the targets export their `*_TAG` constants for exactly this).
 
-If your target uses threads (e.g., Docker containers, subprocesses), bridge back to the event loop:
+## Middleware (how filtering is implemented)
+
+The security filtering and trajectory recording are implemented as
+**middleware**: small functions that wrap the event handler. The Controller
+builds the target's `send_event` by composing them onto the channel:
 
 ```python
-import asyncio
-import threading
-
-async def run(self, emit, send_event):
-    loop = asyncio.get_running_loop()
-
-    def thread_work():
-        # Running in a background thread
-        future = asyncio.run_coroutine_threadsafe(
-            send_event(ControllablePreCallEvent(...)),
-            loop,
-        )
-        response = future.result(timeout=30)  # blocks the thread, not the loop
-        return response
-
-    # Run thread work without blocking the event loop
-    response = await loop.run_in_executor(None, thread_work)
+send_event = compose(
+    trajectory_recorder(trajectory),     # records every event and response
+    security_domain_filter(scope),       # declines out-of-scope controllables
+)(channel.send)
 ```
 
-The `EventChannel` and `EventEnvelope.respond()` are thread-safe — they use `call_soon_threadsafe` internally.
+`compose(a, b)(handler)` applies `a` outermost, then `b`, then the inner handler,
+with zero extra tasks or channels. The two built-ins
+(`security_domain_filter`, `trajectory_recorder`) live in
+`superred.core.middleware`.
+
+This is the mechanism that enforces scope, and it is worth understanding when
+reading the Controller. Note, though, that wiring custom middleware into a run is
+**not** a public extension point today: the Controller composes a fixed stack
+internally. If you need extra behaviour (rate limiting, tracing), the supported
+places to put it are inside your target's `run()` or your optimizer's
+`on_event()`. For the design rationale, see
+[`../docs/architecture.md`](../docs/architecture.md) and
+[`../docs/controller.md`](../docs/controller.md).
