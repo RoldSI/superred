@@ -29,8 +29,9 @@ scope under test.
 Python 3.11 to 3.13 (3.14 is not supported).
 
 ```bash
+# run from the workspace root that holds both the superred and superred-modules folders
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"            # the framework, with test/lint extras
+pip install -e "./superred[dev]"   # the framework, with test/lint extras
 ```
 
 Then install whichever modules you need from `superred-modules/` (each is its

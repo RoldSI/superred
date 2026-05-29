@@ -30,7 +30,9 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
     ControllablePreCallEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -261,9 +263,9 @@ per run; signals `done` when the list is exhausted.
 
 ```python
 class BasicPromptListOptimizer(Optimizer):
-    def __init__(self, prompts: list[str]) -> None:
+    def __init__(self, prompts: list[str] | None = None) -> None:
         super().__init__()
-        self._prompts = prompts
+        self._prompts = prompts if prompts is not None else list(DEFAULT_PROMPTS)
         self._i = 0
 
     async def initialize(self, goal, controllables, observables, llm_client):
