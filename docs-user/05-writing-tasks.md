@@ -174,6 +174,8 @@ def my_benchmark_claim(
     categories: list[str] | None = None,
     max_per_category: int | None = None,
 ) -> SecurityClaim[Target]:
+    # LLMAsJudge, load_dataset, and MyBenchmarkTask here stand in for your
+    # module's own classes; they are not framework APIs.
     judge = LLMAsJudge.from_config(judge_llm_config)
 
     rows = load_dataset(categories=categories, limit=max_per_category)

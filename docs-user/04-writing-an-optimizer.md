@@ -31,6 +31,7 @@ from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     ObservableEvent,
     RunEndEvent,
@@ -55,7 +56,7 @@ class MyOptimizer(Optimizer):
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, RunStartEvent):
-            return EventResponse(event=event)
+            return EventResponse(event=event)  # RunStartEvent accepts a bare EventResponse
 
         if isinstance(event, ControllablePreCallEvent):
             return ControllableInjection(
@@ -64,14 +65,29 @@ class MyOptimizer(Optimizer):
                 value="your attack payload",
             )
 
+        if isinstance(event, ControllablePostCallEvent):
+            # The target used your injection; observe the effect here if you
+            # want. You must still answer with a controllable response, so
+            # decline when there is nothing more to inject at this point.
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=False)  # keep going
 
         return EventResponse(event=event)
 ```
 
-Every response **must reference the event it answers** (`event=event`). For a
-controllable you also echo back `controllable=event.controllable`.
+Every response **must reference the event it answers** (`event=event`), and the
+channel **validates the response against the event's allowed types**. A
+controllable event (pre- or post-call) must be answered with a
+`ControllableInjection` or `ControllableNoInjection` (echoing back
+`controllable=event.controllable`), and a `RunEndEvent` with a `RunEndResponse`.
+A bare `EventResponse` is accepted only by events that allow it, such as
+`RunStartEvent`; returning the wrong type raises `TypeError` and ends the task
+with `stop_reason="error"`. The worked examples below inject once per run and
+omit the post-call branch because their targets are single-shot; a target that
+emits `ControllablePostCallEvent` (see
+[Advanced Patterns](08-advanced-patterns.md#multi-turn-targets)) needs it.
 
 ## The event sequence
 

@@ -33,7 +33,7 @@ controller = Controller(
         api_key="sk-...",
         max_cost=5.00,                          # USD budget; None = unlimited
     ),
-    max_runs_per_task=100,                      # safety cap; default 100
+    max_runs_per_task=100,                      # safety cap; None (the default) means 100
     include_feedback=True,                      # attach evaluation to RunEndEvent; default True
     results_dir="results/run-1",                # optional: persist JSON
 )
@@ -48,7 +48,7 @@ result = await controller.run()                 # -> ThreatModelResult
 | `security_claim` | the tasks to evaluate |
 | `scope` | a non-empty `frozenset[SecurityDomainTag]`: the attacker's boundary |
 | `llm_config` | the attacker's model + budget, or omit for non-LLM attackers |
-| `max_runs_per_task` | per-task run cap (>= 1); default 100 |
+| `max_runs_per_task` | per-task run cap (>= 1); `None` (default) means 100 |
 | `include_feedback` | whether the optimizer sees evaluation results; default `True` |
 | `results_dir` | where to write result JSON, or omit to write nothing |
 
