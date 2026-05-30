@@ -1,44 +1,72 @@
 # Running Evaluations
 
-The Controller wires everything together and runs the evaluation. This guide covers construction, execution, and interpreting results.
+The `Controller` wires a target, an attacker, and a claim together and runs one
+**threat model**. This page covers constructing it, what it returns, persistence,
+error handling, and how to sweep several threat models.
 
-## Controller Construction
+## One Controller is one threat model
+
+A threat model is a `(scope, llm_config)` pair: what the attacker controls, and
+what model/budget it has. **One `Controller` evaluates one claim under one threat
+model.** Comparing threat models means building several Controllers (see
+[Sweeping](#sweeping-multiple-threat-models) below).
+
+## Construction
 
 ```python
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
 
-controller = Controller(
-    optimizer=optimizer,
-    target=target,
-    security_claim=claim,
-    security_domain_tag=scope_tag,
-    llm_config=LLMConfig(             # required — LLM access for optimizer
-        model="gpt-4o-mini",
-        api_base="https://api.openai.com",
-        api_key="sk-...",
-        max_cost=5.00,                # USD budget limit (optional)
-    ),
-    max_runs_per_task=100,  # safety limit, default 100
+target_factory = TargetFactory(
+    create=lambda: MyTarget(api_key="sk-...", api_base="https://proxy"),
+    concurrency=8,                       # tasks in parallel; default 1
 )
+
+controller = Controller(
+    optimizer_factory=lambda: MyOptimizer(),   # fresh attacker per task
+    target_factory=target_factory,             # fresh target per task
+    security_claim=claim,
+    scope=frozenset({user_tag}),               # required, non-empty
+    llm_config=LLMConfig(                       # optional: omit for non-LLM attackers
+        model="gpt-4o-mini",
+        api_base="https://proxy",
+        api_key="sk-...",
+        max_cost=5.00,                          # USD budget; None = unlimited
+    ),
+    max_runs_per_task=100,                      # safety cap; None (the default) means 100
+    include_feedback=True,                      # attach evaluation to RunEndEvent; default True
+    results_dir="results/run-1",                # optional: persist JSON
+)
+
+result = await controller.run()                 # -> ThreatModelResult
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `optimizer` | The attacker (Optimizer instance) |
-| `target` | The AI system under test (Target instance) |
-| `security_claim` | The collection of tasks to evaluate |
-| `security_domain_tag` | Which security scope to test from |
-| `max_runs_per_task` | Safety limit on runs per task (min 1) |
-| `llm_config` | LLM access for the optimizer (`LLMConfig`) — required |
+| Parameter | Meaning |
+|-----------|---------|
+| `optimizer_factory` | zero-arg callable returning a fresh `Optimizer` (one per task) |
+| `target_factory` | a `TargetFactory`: how to build the target, and `concurrency` |
+| `security_claim` | the tasks to evaluate |
+| `scope` | a non-empty `frozenset[SecurityDomainTag]`: the attacker's boundary |
+| `llm_config` | the attacker's model + budget, or omit for non-LLM attackers |
+| `max_runs_per_task` | per-task run cap (>= 1); `None` (default) means 100 |
+| `include_feedback` | whether the optimizer sees evaluation results; default `True` |
+| `results_dir` | where to write result JSON, or omit to write nothing |
+
+Two things people get wrong coming from older versions:
+
+- You pass **factories**, not instances (`optimizer_factory=`, `target_factory=`),
+  because the Controller builds a fresh one per task.
+- You pass **`scope`** (a `frozenset` of tags), not a single tag. Even a
+  single-boundary scope is `frozenset({tag})`.
+
+For tests or a single expensive instance, `TargetFactory.singleton(target)`
+wraps one instance and locks `concurrency` to 1. The Controller still calls
+`teardown()` once per task, so a multi-task singleton needs an idempotent
+teardown.
 
 ## Running
 
-```python
-result = await controller.run()
-```
-
-Or from a script:
+The Controller does not create an event loop; you provide one:
 
 ```python
 import asyncio
@@ -50,208 +78,233 @@ async def main():
 asyncio.run(main())
 ```
 
-The Controller:
-1. Iterates each task in the security claim
-2. Configures the target for the task
-3. Runs the optimizer loop until done or max_runs
-4. Evaluates each run
-5. Prints a summary to stdout
-6. Calls teardown on both optimizer and target (even on errors)
-7. Returns a `ControllerResult`
+For each task the Controller builds a fresh target and optimizer, configures the
+target, runs the optimizer loop until it signals `done` or hits `max_runs_per_task`,
+evaluates each run, then tears everything down. Tasks run concurrently up to
+`target_factory.concurrency`, but results come back in claim order. It prints a
+summary to stdout and returns a `ThreatModelResult`.
 
-## Interpreting Results
+## Reading the result
 
-### ControllerResult
+### ThreatModelResult
 
 ```python
-result = await controller.run()
-
-# All task results
-for tr in result.task_results:
-    print(f"Task: {tr.task.goal.description}")
-    print(f"  Success: {tr.success}")
-    print(f"  Best score: {tr.best_score.value}")
-    print(f"  Runs: {len(tr.runs)}")
-
-# Tasks that were skipped (raised NotApplicable)
-for task in result.skipped_tasks:
-    print(f"Skipped: {task.goal.description}")
+result.scope            # the frozenset of tags this run tested
+result.llm_config       # the LLMConfig used, or None
+result.task_results     # list[TaskResult], in claim order
+result.skipped_tasks    # tasks that raised NotApplicable during configure
 ```
 
-### TaskResult
+### TaskResult (one per task)
 
 ```python
 tr = result.task_results[0]
-
-tr.task            # the Task that was evaluated
-tr.success         # True if ANY run achieved the goal
-tr.best_score      # Score with the highest value across all runs
-tr.best_evaluation # the EvaluationResult that produced the best score
-tr.runs            # list[RunResult], one per optimizer run
-tr.llm_usage       # LLMUsage — total optimizer LLM usage for this task
+tr.task             # the Task
+tr.success          # True if ANY run achieved the goal
+tr.best_score       # highest primary Score across runs
+tr.best_evaluation  # the EvaluationResult that produced best_score
+tr.runs             # list[RunResult], one per run
+tr.llm_usage        # total attacker LLM usage for this task (calls, cost)
+tr.stop_reason      # "done" | "max_runs" | "budget_exhausted" | "error"
+tr.error            # formatted traceback string, or None
 ```
 
-### RunResult
+`stop_reason` tells you *why the task stopped*: the optimizer signalled done, the
+run cap was hit, the attacker's budget ran out, or an unexpected exception
+abandoned the task. `error` carries the traceback when something went wrong.
+Treat the two as independent: `error` can be set as a diagnostic even when
+`stop_reason` is a clean value (e.g. the optimizer raised during teardown after a
+normal finish).
+
+### RunResult (one per run)
 
 ```python
 for run in tr.runs:
-    run.trajectory     # the Trajectory for this run
+    run.trajectory     # the full Trajectory for this run
     run.evaluation     # the EvaluationResult for this run
-    run.llm_usage      # LLMUsage — cumulative optimizer LLM usage after this run
+    run.llm_usage      # cumulative attacker usage AFTER this run
 
-    # Inspect the trajectory
-    entries = run.trajectory.snapshot()
-    for entry in entries:
-        if isinstance(entry, LogEvent):
-            print(f"  [{entry.label}]: {entry.content}")
-
-    # Check the evaluation
-    print(f"  Score: {run.evaluation.primary_score.value}")
-    print(f"  Success: {run.evaluation.success}")
-    print(f"  Rationale: {run.evaluation.rationale}")
+    for item in run.trajectory.snapshot():
+        ...            # inspect events/responses by isinstance
+    print(run.evaluation.primary_score.value, run.evaluation.success)
 ```
 
-### Events in the Trajectory
+`run.llm_usage` is **cumulative**: each run includes all prior usage, which is
+exactly what you want for budget-versus-performance curves.
 
-The Controller records all events and responses directly in the trajectory as `Event | EventResponse` objects. There is no separate event log. To inspect events for a run, use `isinstance` checks:
+### Inspecting a trajectory
+
+The trajectory is the unified event log; there is no separate log. Query items
+by type:
 
 ```python
-from superred.core.types.event import (
+from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    LogEvent,
+    ObservableEvent,
     RunEndEvent,
 )
 
-for run in tr.runs:
-    entries = run.trajectory.snapshot()
-    for entry in entries:
-        if isinstance(entry, ControllablePreCallEvent):
-            print(f"Event: {type(entry).__name__}")
-        elif isinstance(entry, ControllableInjection):
-            print(f"Injection: {entry.value}")
-        elif isinstance(entry, LogEvent):
-            print(f"Log [{entry.label}]: {entry.content}")
-        elif isinstance(entry, RunEndEvent) and entry.evaluation is not None:
-            print(f"Feedback: {entry.evaluation.primary_score.value}")
+for item in run.trajectory.snapshot():
+    if isinstance(item, ControllablePreCallEvent):
+        print("injection point:", item.controllable.name)
+    elif isinstance(item, ControllableInjection):
+        print("injected:", item.value)
+    elif isinstance(item, ObservableEvent):
+        print(f"{item.observable.name}: {item.content}")
+    elif isinstance(item, RunEndEvent) and item.evaluation is not None:
+        print("score:", item.evaluation.primary_score.value)
 ```
 
-Controllable events and their responses are recorded in the trajectory. `RunEndEvent` is also persisted to the trajectory (it carries the evaluation result). `RunStartEvent` flows through the channel only and is NOT stored in the trajectory.
+`RunStartEvent` is not in the trajectory; `RunEndEvent` is.
 
-## Multiple Tasks
+## Error handling: failures are contained per task
 
-The Controller evaluates each task in order:
+A single bad task does not abort the whole evaluation. If the optimizer, target,
+or evaluator raises during a task's run loop, that task ends with
+`stop_reason="error"`, its partial trajectory and traceback are preserved, and
+**the remaining tasks still run**. Errors before the run loop even starts (a
+failing `configure_target`, a constructor that throws) are likewise caught and
+recorded as a synthetic error `TaskResult`. `NotApplicable` is handled
+separately: the task is skipped into `skipped_tasks`.
+
+This means `await controller.run()` rarely raises; instead you inspect
+`stop_reason`/`error` per task. Teardown always runs.
+
+## Persistence (`results_dir`)
+
+Pass `results_dir` and the Controller writes structured JSON:
+
+```
+results/run-1/
+├── {scope}__{model}.json          # claim-level summary (the completion marker)
+└── {scope}__{model}/
+    ├── 00001__{goal}.json          # one self-contained file per task
+    └── ...
+```
+
+- Per-task detail files are written **incrementally**, as each task finishes, so
+  an interrupted run still leaves every completed task on disk.
+- The summary file is written last and acts as a completion marker: if you see
+  the subfolder but not the summary, the run was interrupted.
+- The summary holds aggregates (`n_tasks`, `n_success`, `n_skipped`,
+  `max/mean_primary_score`, `total_llm_usage`); each detail file holds the full
+  runs and trajectories plus `stop_reason` and the `error` traceback.
+- **Secrets**: `LLMConfig.api_key` and `api_base` are excluded. Trajectory
+  contents are **not** scrubbed, so keep credentials out of prompts, observables,
+  and config values.
+- **Collisions raise** `FileExistsError` rather than overwriting; use a fresh
+  subdirectory per run. Several Controllers pointed at the same `results_dir`
+  (the sweep pattern) each write their own scope/model-named pair safely.
+
+## include_feedback: modelling a blind attacker
+
+`include_feedback=False` sets `RunEndEvent.evaluation = None`: the optimizer gets
+no score signal and cannot adapt to it (the run still happens and is still
+scored in the results). Comparing `True` vs `False` for the same scope is a
+common experiment: does giving the attacker feedback make it more effective?
+
+## Sweeping multiple threat models
+
+Sweeping is deliberately the caller's job: build one Controller per threat model.
+Two patterns are used in practice.
+
+### In-script sequential loop
+
+Build a fresh Controller per scope and await them in turn:
 
 ```python
-claim = SecurityClaim.from_tasks([
-    SecretExtractionTask(secret="ALPHA"),
-    PromptInjectionTask(),
-    DataExfiltrationTask(),
-])
-
-controller = Controller(
-    optimizer=optimizer,
-    target=target,
-    security_claim=claim,
-    security_domain_tag=user_tag,
-)
-result = await controller.run()
-
-# Each task gets its own TaskResult
-assert len(result.task_results) == 3  # (minus any skipped)
+async def main():
+    target_factory = TargetFactory(create=lambda: MyTarget(...), concurrency=8)
+    scopes = {
+        "user":        frozenset({USER_TAG}),
+        "user+system": frozenset({USER_TAG, SYSTEM_PROMPT_TAG}),
+    }
+    for name, scope in scopes.items():
+        controller = Controller(
+            optimizer_factory=lambda: MyOptimizer(),
+            target_factory=target_factory,
+            security_claim=claim,
+            scope=scope,
+            llm_config=attacker_cfg,
+            results_dir=f"results/{name}",
+        )
+        result = await controller.run()
+        succ = sum(1 for tr in result.task_results if tr.success)
+        print(f"{name}: {succ}/{len(result.task_results)} succeeded")
 ```
 
-For each task, the optimizer is re-initialized with the task's goal. The target is re-configured. The run loop is independent per task.
+You can run the Controllers concurrently instead with
+`await asyncio.gather(*(c.run() for c in controllers))`, as long as each has its
+own `results_dir` (or none) and the target factory is safe to call many times.
 
-## Error Handling
+### One process per cell
 
-The Controller is exception-safe:
+The larger experiment scripts run **one Controller per process**, selecting the
+cell from environment variables, so a sweep is a shell loop that launches the
+script repeatedly. This isolates cells completely (separate logs, separate
+crashes) and is the style used by the `RQ*` experiments:
 
-- **Target.run() raises**: The error propagates. Teardown still runs.
-- **Task.evaluate() raises**: The error propagates. Teardown still runs.
-- **Optimizer.on_event() raises**: The exception is propagated to the controller via the channel. Teardown still runs.
-- **Task raises NotApplicable**: The task is skipped and added to `result.skipped_tasks`.
-
-```python
-try:
-    result = await controller.run()
-except Exception as e:
-    print(f"Evaluation failed: {e}")
-    # teardown() was still called on both optimizer and target
+```bash
+SCOPE=user        INCLUDE_FEEDBACK=false python run.py
+SCOPE=user        INCLUDE_FEEDBACK=true  python run.py
+SCOPE=user+system INCLUDE_FEEDBACK=true  python run.py
 ```
 
-## Choosing the Security Domain Scope
+## A complete example
 
-The `security_domain_tag` parameter controls what the optimizer can see and control:
-
-```python
-# Test from the user's perspective — optimizer controls user input only
-controller = Controller(..., security_domain_tag=user_input_tag)
-
-# Test from a broader scope — optimizer controls all external surfaces
-controller = Controller(..., security_domain_tag=external_tag)
-
-# Test everything — optimizer controls all injection points
-controller = Controller(..., security_domain_tag=root_tag)
-```
-
-See [Security Domains](07-security-domains.md) for details.
-
-## Complete Example
+This mirrors a real chatbot experiment: a Crescendo attacker against a chatbot
+target, judged by SORRY-Bench, with **separate** attacker and judge budgets.
 
 ```python
 import asyncio
 import os
+
 from dotenv import load_dotenv
 
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
-from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
-from basic_prompt_list_optimizer import BasicPromptListOptimizer
-from basic_secret_leak_claim import basic_secret_leak_claim
+from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
+from crescendo_optimizer import CrescendoOptimizer
+from security_claim_sorry_bench import sorry_bench_claim
 
 
-async def main():
+async def main() -> None:
     load_dotenv()
-
     api_base = os.environ["LITELLM_API_BASE"]
     api_key = os.environ["LITELLM_API_KEY"]
+    target_model = "gpt-4o-mini"
 
-    target = BasicLLMChatTarget(
-        model="gpt-4o-mini",
-        api_base=api_base,
-        api_key=api_key,
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(model=target_model, api_base=api_base, api_key=api_key),
+        concurrency=8,
     )
-    optimizer = BasicPromptListOptimizer()
-    claim = basic_secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
+
+    # The judge gets its OWN LLMConfig, separate from the attacker's.
+    claim = sorry_bench_claim(
+        target_model_id=target_model,
+        judge_llm_config=LLMConfig(model="openai/gpt-4-turbo-2024-04-09",
+                                   api_base=api_base, api_key=api_key, max_cost=10.0),
+        prompts_per_category=2,
+    )
 
     controller = Controller(
-        optimizer=optimizer,
-        target=target,
+        optimizer_factory=lambda: CrescendoOptimizer(),
+        target_factory=target_factory,
         security_claim=claim,
-        security_domain_tag=USER_INPUT_TAG,
-        llm_config=LLMConfig(
-            model="gpt-4o-mini",
-            api_base=api_base,
-            api_key=api_key,
-            max_cost=0.50,
-        ),
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
+        llm_config=LLMConfig(model="gpt-4o", api_base=api_base, api_key=api_key, max_cost=5.0),
+        include_feedback=True,
+        results_dir="results/crescendo-user_response",
     )
+
     result = await controller.run()
+    succ = sum(1 for tr in result.task_results if tr.success)
+    print(f"{succ}/{len(result.task_results)} prompts jailbroken")
 
-    # Programmatic access to results
-    tr = result.task_results[0]
-    if tr.success:
-        print(f"Attack succeeded! Best score: {tr.best_score.value}")
-        for i, run in enumerate(tr.runs):
-            if run.evaluation.success:
-                print(f"  Succeeded on run {i+1}")
-                print(f"  Rationale: {run.evaluation.rationale}")
-    else:
-        print(f"Attack failed. Best score: {tr.best_score.value}")
-
-    u = tr.llm_usage
-    print(f"LLM usage: {u.calls} calls, ${u.cost:.6f}")
 
 asyncio.run(main())
 ```
+
+For the design rationale behind all of this (per-task lifecycle, the middleware
+pipeline, exact persistence format), see [`../docs/controller.md`](../docs/controller.md).
