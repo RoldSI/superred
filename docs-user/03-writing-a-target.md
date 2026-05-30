@@ -185,11 +185,12 @@ These serve different actors at different times. Keep them distinct.
 | Purpose | set up the scenario | read out what happened |
 | Examples | system prompt, DB seed | last response, transcript, DB row |
 
-Both `ConfigSpec` and `QuerySpec` carry only a `name` and a `description`. **The
-description is the contract**: values are always plain text, and the description
-tells the task author what format to send and what they will get back. A
-`QuerySpec` may also declare `params` for queries that take arguments (e.g.
-`read_file(path=...)`).
+A `QuerySpec` carries a `name` and a `description`; a `ConfigSpec` additionally
+carries a `security_domain` (config slots are tagged just like controllables).
+**The description is the contract**: values are always plain text, and the
+description tells the task author what format to send and what they will get
+back. A `QuerySpec` may also declare `params` for queries that take arguments
+(e.g. `read_file(path=...)`).
 
 ### Controllables: the attack surface
 
