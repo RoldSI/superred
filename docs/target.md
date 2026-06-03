@@ -41,7 +41,7 @@ Config and query are **intentionally distinct**:
 - `cleanup()` — reset state after a run and its evaluation (clear databases, reset containers, etc.). Called by the controller after each evaluation, before the next run. Must be implemented even if a no-op.
 - `teardown()` — release resources when all evaluation is done.
 
-`EventHandler = Callable[[Event], Awaitable[EventResponse]]` — the `send_event` callback type. The controller wraps it to bridge to the EventChannel with security domain filtering. The target doesn't know or care what's on the other end.
+`EventResponseHandler = Callable[[Event], Awaitable[EventResponse]]` — the `send_event` callback type. The controller wraps it to bridge to the EventChannel with security domain filtering. The target doesn't know or care what's on the other end.
 
 ## Internal parallelism
 

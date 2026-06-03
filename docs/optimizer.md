@@ -61,7 +61,7 @@ The optimizer chooses how to process events by overriding `run()`:
 ```python
 async def on_event(self, event):
     if isinstance(event, ControllablePreCallEvent):
-        return ControllableInjection(event=event, value="...")
+        return ControllableInjection(event=event, controllable=event.controllable, value="...")
     elif isinstance(event, RunStartEvent):
         return EventResponse(event=event)
     elif isinstance(event, RunEndEvent):
@@ -103,7 +103,7 @@ The base class provides `_dispatch()` which:
 3. Archives trajectory to `_past_trajectories` on `RunEndEvent`, clears `_current_trajectory`
 4. Calls `envelope.respond(response)` to deliver the response back through the channel
 
-**Exception safety**: If `on_event()` raises, `_dispatch` still runs the post-dispatch lifecycle (trajectory archiving) and rejects the envelope (propagating the exception to the sender). The exception is then re-raised.
+**Exception safety**: If `on_event()` raises, `_dispatch` archives the trajectory only when the failing event is a `RunEndEvent`, rejects the envelope (propagating the exception to the sender), and re-raises.
 
 Use `_dispatch` from custom `run()` implementations to retain automatic trajectory tracking. Advanced optimizers can handle envelopes directly if they want full control.
 
@@ -143,4 +143,4 @@ Both managed automatically by `_dispatch()`. If you override `run()` and don't u
 - **Lifecycle events over hooks**: `RunStartEvent`/`RunEndEvent` flow through the same channel as controllable events. Uniform interface — no special methods to override.
 - **`_dispatch` for convenience**: Handles trajectory bookkeeping and envelope response. Optional — advanced optimizers can handle envelopes directly.
 - **Base class tracks trajectories**: `_current_trajectory` and `_past_trajectories` are managed by the base class via `_dispatch`. This is the common case — most optimizers want trajectory history without boilerplate.
-- **Exception-safe by default**: `_dispatch` responds to envelopes even on `on_event` failure. `run()` continues draining the channel after errors to prevent deadlock. The first error is re-raised after the channel closes.
+- **Exception-safe by default**: `_dispatch` rejects the envelope on `on_event` failure (propagating the exception to the sender) and re-raises, exiting `run()` on the first error. The controller poisons the channel via `set_error()` to prevent deadlock.
