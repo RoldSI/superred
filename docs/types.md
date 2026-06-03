@@ -114,7 +114,7 @@ Thread-safe bidirectional event-response channel.
 - `async for envelope in channel` — iterates envelopes until closed (raises `StopAsyncIteration` on `None`).
 
 **Lifecycle**:
-- `close()` — thread-safe. Puts a sentinel (`None`) on the queue. Uses `call_soon_threadsafe` if called from another thread, `put_nowait` if no event loop has been captured yet. Idempotent.
+- `close()` — thread-safe. Puts a sentinel (`None`) on the queue. Uses `call_soon_threadsafe` if an event loop has been bound, `put_nowait` otherwise. Idempotent.
 
 **Design decision**: Uses `asyncio.Queue` internally — all queue access happens on the event loop thread. Thread safety for `respond()` and `close()` comes from `call_soon_threadsafe` bridging. The interface is designed so a future process-safe implementation (multiprocessing, sockets) can provide the same contract.
 
@@ -122,11 +122,11 @@ Thread-safe bidirectional event-response channel.
 
 ## Middleware (`middleware.py`)
 
-Composable transformations on the `EventHandler` callback. Zero overhead — pure function composition, no extra tasks or channels.
+Composable transformations on the `EventResponseHandler` callback. Zero overhead — pure function composition, no extra tasks or channels.
 
 ### Middleware type
 
-`Middleware = Callable[[EventHandler], EventHandler]` — takes a handler, returns a wrapped handler.
+`Middleware = Callable[[EventResponseHandler], EventResponseHandler]` — takes a handler, returns a wrapped handler.
 
 ### compose(*middlewares)
 
@@ -150,7 +150,7 @@ The trajectory stores `Event | EventResponse` objects directly -- there is no `T
 
 ### get_domain(item)
 
-Public function that extracts `security_domain` from a trajectory item. For `Event`, returns `item.security_domain` directly. For `EventResponse`, derives it from `item.event.security_domain`.
+Public function that extracts `security_domain` from a trajectory item. For `Event`, returns `item.security_domain` directly. For `EventResponse`, recurses via `get_domain(item.event)`.
 
 ### Trajectory (class, thread-safe)
 
