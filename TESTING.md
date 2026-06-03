@@ -84,7 +84,7 @@ pytest tests/test_mutations.py --no-cov
 ```
 tests/
   conftest.py                  -- Shared fixtures: domain tags, stub optimizer/target/task
-  test_types.py                -- Value types: Goal, Score, EvaluationResult, FeedbackEvent,
+  test_types.py                -- Value types: Goal, Score, EvaluationResult,
                                   Controllable, Observable, ConfigSpec, Event hierarchy, etc.
   test_security_domain.py      -- SecurityDomainTag.includes(), SecurityDomain construction,
                                   immutability, roots, distinct_combinations
