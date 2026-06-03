@@ -127,7 +127,7 @@ The controller does not create its own event loop. This allows embedding in larg
 
 4. **Target internal parallelism**: Multiple concurrent branches each calling `send_event` independently. Each gets its own response via the channel's future-based mechanism. Supports asyncio tasks and thread bridging.
 
-5. **Composable middleware**: `Middleware = Callable[[EventHandler], EventHandler]`. Wraps the event callback with zero overhead (function composition, no extra tasks or channels). `compose(a, b)(handler)` applies `a` outermost, `b` inner. Built-in: `security_domain_filter`, `trajectory_recorder`. Users can add logging, tracing, budget enforcement etc. as additional middleware.
+5. **Composable middleware**: `Middleware = Callable[[EventResponseHandler], EventResponseHandler]`. Wraps the event-response handler with zero overhead (function composition, no extra tasks or channels). `compose(a, b)(handler)` applies `a` outermost, `b` inner. Built-in: `security_domain_filter`, `trajectory_recorder`. Users can add logging, tracing, budget enforcement etc. as additional middleware.
 
 6. **Manual values are constructor concerns**: API keys, credentials, etc. are passed to the target's constructor. Not part of the framework interface.
 
