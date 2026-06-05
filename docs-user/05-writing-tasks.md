@@ -122,8 +122,8 @@ only reveals the relevant ones. See [Security Domains](07-security-domains.md).
 
 A task never stores the target. It receives it in `configure_target` and again
 in `evaluate`. Per-run scenario state belongs in the target (set via config and
-reset in `cleanup`); per-task identity (the secret, the prompt) belongs in the
-task's constructor.
+reset in `reset_ephemeral_state`); per-task identity (the secret, the prompt)
+belongs in the task's constructor.
 
 ```python
 # WRONG: holding a reference

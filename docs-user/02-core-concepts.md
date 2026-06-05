@@ -133,10 +133,10 @@ LOOP (until the optimizer says done, or max_runs_per_task):
         target pauses at each controllable: send_event(...) -> optimizer injects
     evaluation = task.evaluate(trajectory, target)   # did it work?
     send RunEndEvent(evaluation)  ->  optimizer       # optimizer may answer done=True
-    target.cleanup()                                  # reset for the next run
+    target.reset_ephemeral_state()                    # reset for the next run
 
 optimizer.teardown()
-target.cleanup(); target.teardown()        # instance is then discarded
+target.reset_ephemeral_state(); target.teardown()        # instance is then discarded
 ```
 
 A "run" is one full pass of the target plus its evaluation. A task can take many

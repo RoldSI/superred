@@ -208,3 +208,25 @@ if isinstance(event, RunEndEvent):
 1. Replace `event.trajectory` on `RunEndEvent` with `self.current_trajectory` or `event.evaluation`.
 2. Remove all `FeedbackEvent` imports and handlers — the type no longer exists.
 3. To read feedback, use `event.evaluation` on `RunEndEvent` or query past trajectories.
+
+### Target.cleanup() renamed to reset_ephemeral_state()
+
+The `Target` ABC lifecycle method `cleanup()` is now `reset_ephemeral_state()`, with a sharper contract: it resets **only ephemeral (per-run) state**, leaving **durable** state intact. Durable state (for example a memory bank accumulated by a memory-injection attack) persists across runs within a task and is discarded only when the controller obtains a fresh instance from the `TargetFactory` between tasks. Resources and identity live for the instance's lifetime and are released in `teardown()`.
+
+Behavior is unchanged: the controller still calls the method after each run's evaluation, and once more post-task. Only the name and the documented contract change.
+
+```python
+# Before
+class MyTarget(Target):
+    async def cleanup(self) -> None:
+        self._last_response = ""
+
+# After
+class MyTarget(Target):
+    async def reset_ephemeral_state(self) -> None:
+        self._last_response = ""   # reset ephemeral state only; leave durable state intact
+```
+
+**Impact**: Every `Target` subclass must rename its `cleanup()` override to `reset_ephemeral_state()`. The method is abstract, so a subclass that still defines `cleanup()` is no longer instantiable (`TypeError` at construction).
+
+**Migration**: Rename `async def cleanup` to `async def reset_ephemeral_state`. If the old method reset state that an attack should be able to accumulate across runs (for example a memory store), move that state out of the method so it survives between runs.

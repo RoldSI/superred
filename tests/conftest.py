@@ -115,7 +115,7 @@ class StubTarget(Target):
         self._config: dict[str, str] = {}
         self.run_count = 0
         self.torn_down = False
-        self.cleanup_count = 0
+        self.reset_count = 0
 
     @property
     def security_domain(self) -> SecurityDomain:
@@ -147,8 +147,8 @@ class StubTarget(Target):
         event = ControllablePreCallEvent(controllable=ctrl, request="hello")
         await send_event(event)
 
-    async def cleanup(self) -> None:
-        self.cleanup_count += 1
+    async def reset_ephemeral_state(self) -> None:
+        self.reset_count += 1
 
     async def teardown(self) -> None:
         self.torn_down = True
@@ -195,7 +195,7 @@ class ParallelTarget(Target):
         assert isinstance(r1, ControllableInjection)
         assert isinstance(r2, ControllableInjection)
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         pass
 
     async def teardown(self) -> None:

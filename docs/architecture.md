@@ -88,14 +88,14 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
           → RunEndEvent is persisted to the trajectory
           → optimizer responds with RunEndResponse(done=True/False)
         Close the trajectory
-        target.cleanup() — resets target state for next run within this task
+        target.reset_ephemeral_state() — resets ephemeral target state for next run within this task
         If done=True, break
         On exception: preserve partial trajectory + zero-score evaluation;
                       capture exception traceback on TaskResult.error; break
 
      e. channel.close() → optimizer.run() exits
         await optimizer_task, optimizer.teardown()
-        target.cleanup() (final) and target.teardown() — instance is discarded
+        target.reset_ephemeral_state() (final) and target.teardown() — instance is discarded
 
    3. Per-task detail files were written incrementally as each task
       finished (when results_dir set).  Write the claim-level summary
