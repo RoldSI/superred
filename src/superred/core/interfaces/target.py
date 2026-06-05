@@ -37,7 +37,7 @@ class Target(ABC):
         - :meth:`get_controllables` — declare runtime injection points.
         - :meth:`get_observables` — provide static context.
         - :meth:`run` — execute one run.
-        - :meth:`cleanup` — reset state after a run.
+        - :meth:`reset_ephemeral_state` — reset ephemeral (per-run) state after a run.
         - :meth:`teardown` — release resources.
     """
 
@@ -148,12 +148,29 @@ class Target(ABC):
         ...
 
     @abstractmethod
-    async def cleanup(self) -> None:
-        """Reset state after a run and its evaluation.
+    async def reset_ephemeral_state(self) -> None:
+        """Reset the target's ephemeral (per-run) state after a run.
 
         Called by the controller after each run's evaluation, before the
-        next run begins. Implement to clear databases, reset containers,
-        etc. May be a no-op, but must be explicit.
+        next run begins. Reset only ephemeral state here (for example the
+        active conversation or the most recent response). Durable state
+        must survive this call.
+
+        A target has three state lifetimes:
+
+        - **Ephemeral**: per-run state such as the active conversation.
+          Reset by this method after every run.
+        - **Durable**: state that persists across runs within a single
+          task, such as a memory bank accumulated by a memory-injection
+          attack. Not reset here; it is discarded only when the
+          controller obtains a fresh instance from the ``TargetFactory``
+          between tasks.
+        - **Resources / identity**: the configured definition and
+          external handles. Constant for the instance's lifetime and
+          released in :meth:`teardown`.
+
+        Implement to clear ephemeral databases, reset containers, etc.
+        May be a no-op, but must be explicit.
         """
         ...
 

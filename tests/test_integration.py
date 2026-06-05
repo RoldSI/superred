@@ -153,7 +153,7 @@ class RAGTarget(Target):
             )
         )
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         self._last_response = ""
 
     async def teardown(self) -> None:
@@ -287,7 +287,7 @@ class _PostCallTarget(Target):
         value = pre.value if isinstance(pre, ControllableInjection) else "default"
         await send_event(ControllablePostCallEvent(controllable=ctrl, request="q", answer=value))
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         pass
 
     async def teardown(self) -> None:
@@ -613,7 +613,7 @@ class TestTargetConfigPerTask:
     """Verifies that each task configures the target independently."""
 
     async def test_config_does_not_bleed_between_tasks(self) -> None:
-        """Each task's configure_target is called, and cleanup resets state."""
+        """Each task's configure_target is called, and reset_ephemeral_state resets state."""
         configs_seen: list[str] = []
 
         class TrackingTarget(RAGTarget):

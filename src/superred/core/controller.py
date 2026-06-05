@@ -78,7 +78,7 @@ class TargetFactory:
     The controller calls :attr:`create` once per task and runs up to
     :attr:`concurrency` tasks in parallel within a threat model.  Each
     task owns its target's full lifecycle: ``configure_target`` →
-    ``run``/``cleanup`` loop → ``teardown``.
+    ``run``/``reset_ephemeral_state`` loop → ``teardown``.
 
     Attributes:
         create: Zero-arg callable that returns a new :class:`Target`.
@@ -620,15 +620,16 @@ class Controller:
                 if evaluation.success:
                     success = True
 
-                # Cleanup target state for next run within this task.  If
-                # cleanup raises, the successful run we just appended stays
-                # — only the task is abandoned, with the cleanup exception
+                # Reset ephemeral target state for next run within this task.  If
+                # reset_ephemeral_state raises, the successful run we just appended stays
+                # — only the task is abandoned, with the reset exception
                 # captured on ``error``.
                 try:
-                    await target.cleanup()
+                    await target.reset_ephemeral_state()
                 except Exception as exc:
                     logger.exception(
-                        "Task %r: target.cleanup() failed after run %d, stopping task",
+                        "Task %r: target.reset_ephemeral_state() failed after run %d, "
+                        "stopping task",
                         task.goal.description,
                         run_number,
                     )
@@ -656,10 +657,10 @@ class Controller:
                 if error_text is None:
                     error_text = _format_exception(exc)
             await _swallow(optimizer.teardown(), "optimizer.teardown post-run")
-            # Final cleanup so the target ends in a reset state even when the
-            # inner-loop cleanup-after-success was skipped. Target teardown
+            # Final reset_ephemeral_state so the target ends in a reset state even when the
+            # inner-loop reset-after-success was skipped. Target teardown
             # itself happens in the caller before the next semaphore slot opens.
-            await _swallow(target.cleanup(), "target.cleanup post-task")
+            await _swallow(target.reset_ephemeral_state(), "target.reset_ephemeral_state post-task")
 
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still

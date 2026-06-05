@@ -25,7 +25,7 @@ You subclass `superred.core.interfaces.target.Target` and implement:
 | `get_controllables()` | method | the injection points, each tagged with a domain |
 | `get_observables()` | method | static facts the attacker may read, each tagged |
 | `run(emit, send_event)` | async method | execute one interaction |
-| `cleanup()` | async method | reset per-run state (called after each evaluation) |
+| `reset_ephemeral_state()` | async method | reset ephemeral (per-run) state (called after each evaluation) |
 | `teardown()` | async method | release resources (called once at the end) |
 
 ## Minimal template
@@ -158,8 +158,8 @@ class BasicLLMChatTarget(Target):
             content=self._last_response,
         ))
 
-    async def cleanup(self) -> None:
-        self._last_response = ""   # reset per-run state
+    async def reset_ephemeral_state(self) -> None:
+        self._last_response = ""   # reset ephemeral (per-run) state
 
     async def teardown(self) -> None:
         pass                       # nothing to release here
@@ -281,19 +281,20 @@ tagged `SYSTEM_TAG`.
 The target never sees the full trajectory. It only writes to it (through
 `emit`) and asks questions (through `send_event`).
 
-### cleanup vs teardown
+### reset_ephemeral_state vs teardown
 
-- **`cleanup()`** runs after *every* run-and-evaluation, to reset per-run state
-  so the next run starts clean (clear the last response, wipe a scratch
-  database, reset a container's mutable state). It must be explicit even when it
-  is a no-op.
+- **`reset_ephemeral_state()`** runs after *every* run-and-evaluation, to reset
+  ephemeral (per-run) state so the next run starts clean (clear the last
+  response, wipe a scratch database, reset a container's mutable state). Durable
+  state that must persist across runs within a task (e.g. an accumulated memory
+  bank) is not reset here. It must be explicit even when it is a no-op.
 - **`teardown()`** runs once when the task is finished with this instance, to
   release resources (close connections, stop containers). After `teardown` the
   instance is discarded.
 
 Because the Controller builds a **fresh target per task**, you do not need
-`cleanup`/`teardown` to undo cross-task state. They only manage state *within*
-one task's sequence of runs.
+`reset_ephemeral_state`/`teardown` to undo cross-task state. They only manage
+state *within* one task's sequence of runs.
 
 ## Concurrency: how many instances run at once
 

@@ -38,7 +38,7 @@ Config and query are **intentionally distinct**:
 ## Execution
 
 - `run(emit, send_event)` — execute one run. Emit events via `emit(event)` (an `EventHandler = Callable[[Event], None]`, typically `emit(ObservableEvent(observable=..., content=...))`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object — only the emit function.
-- `cleanup()` — reset state after a run and its evaluation (clear databases, reset containers, etc.). Called by the controller after each evaluation, before the next run. Must be implemented even if a no-op.
+- `reset_ephemeral_state()` — reset ephemeral (per-run) state after each evaluation, before the next run (clear the active conversation or last response, reset containers, etc.). Durable state (e.g. an accumulated memory bank) must survive this call; it is discarded only when a fresh `TargetFactory` instance is obtained between tasks. Must be implemented even if a no-op.
 - `teardown()` — release resources when all evaluation is done.
 
 `EventResponseHandler = Callable[[Event], Awaitable[EventResponse]]` — the `send_event` callback type. The controller wraps it to bridge to the EventChannel with security domain filtering. The target doesn't know or care what's on the other end.
@@ -80,4 +80,4 @@ async def run(self, emit, send_event):
 - **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format. The target interprets the text.
 - **Parameterized queries**: `QuerySpec` has `params: list[QueryParam]`. Simple getters have no params. Actions (e.g. "search the DB for X") declare params with names and descriptions.
 - **`send_event` as callback**: Decouples the target from the optimizer. The same target works with different controller implementations.
-- **`cleanup` is required**: Even if a no-op, forces the implementor to think about inter-run state.
+- **`reset_ephemeral_state` is required**: Even if a no-op, forces the implementor to think about inter-run state.

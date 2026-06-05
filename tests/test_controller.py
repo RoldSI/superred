@@ -158,12 +158,12 @@ class RaisingTeardownOptimizer(StubOptimizer):
         raise RuntimeError("teardown exploded")
 
 
-class FailingCleanupTarget(StubTarget):
-    """Target whose cleanup() raises after the first run finishes."""
+class FailingResetTarget(StubTarget):
+    """Target whose reset_ephemeral_state() raises after the first run finishes."""
 
-    async def cleanup(self) -> None:
-        await super().cleanup()
-        raise RuntimeError("cleanup exploded")
+    async def reset_ephemeral_state(self) -> None:
+        await super().reset_ephemeral_state()
+        raise RuntimeError("reset_ephemeral_state exploded")
 
 
 class AlternatingSuccessTask(StubTask):
@@ -458,7 +458,7 @@ class TestControllerRun:
         assert optimizer.torn_down
         assert target.torn_down
 
-    async def test_cleanup_called_after_each_run(self) -> None:
+    async def test_reset_ephemeral_state_called_after_each_run(self) -> None:
         target = StubTarget()
         controller = Controller(
             scope=EXTERNAL_SCOPE,
@@ -469,9 +469,9 @@ class TestControllerRun:
             max_runs_per_task=3,
         )
         await controller.run()
-        # 3 inner cleanups (one after each run's evaluation) + 1 post-task
-        # cleanup invoked from the finally block.
-        assert target.cleanup_count == 4
+        # 3 inner resets (one after each run's evaluation) + 1 post-task
+        # reset invoked from the finally block.
+        assert target.reset_count == 4
 
     async def test_best_score_tracks_highest(self) -> None:
         controller = Controller(
@@ -969,8 +969,8 @@ class TestExceptionSafety:
         assert len(tr.runs) == 1
         assert opt.torn_down
 
-    async def test_target_cleanup_invoked_in_finally_after_failed_run(self) -> None:
-        """A failed task still calls target.cleanup in the finally block so
+    async def test_target_reset_ephemeral_state_invoked_in_finally_after_failed_run(self) -> None:
+        """A failed task still calls target.reset_ephemeral_state in the finally block so
         the next task starts against a clean target."""
         target = FailingRunTarget()  # raises on every target.run
         controller = Controller(
@@ -984,14 +984,14 @@ class TestExceptionSafety:
         result = await controller.run()
         tr = result.task_results[0]
         assert tr.stop_reason == "error"
-        # The inner-loop cleanup-after-success never ran (every run failed),
-        # so the only cleanup attempt comes from the outer finally.
-        assert target.cleanup_count == 1
+        # The inner-loop reset-after-success never ran (every run failed),
+        # so the only reset attempt comes from the outer finally.
+        assert target.reset_count == 1
         assert target.torn_down
 
-    async def test_target_cleanup_error_treated_as_error(self) -> None:
-        """target.cleanup raising after a run is treated like any other error."""
-        target = FailingCleanupTarget()
+    async def test_target_reset_ephemeral_state_error_treated_as_error(self) -> None:
+        """target.reset_ephemeral_state raising after a run is treated like any other error."""
+        target = FailingResetTarget()
         controller = Controller(
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: CountingOptimizer(stop_after=10),
@@ -1003,13 +1003,13 @@ class TestExceptionSafety:
         result = await controller.run()
         tr = result.task_results[0]
         assert tr.stop_reason == "error"
-        # The run before cleanup succeeded — preserved (one entry, no
-        # duplicate from the cleanup error path).
+        # The run before reset succeeded — preserved (one entry, no
+        # duplicate from the reset error path).
         assert len(tr.runs) == 1
         assert tr.runs[0].evaluation.success is True
-        # The cleanup exception is captured on TaskResult.error.
+        # The reset exception is captured on TaskResult.error.
         assert tr.error is not None
-        assert "cleanup exploded" in tr.error
+        assert "reset_ephemeral_state exploded" in tr.error
         assert target.torn_down
 
     async def test_optimizer_raises_post_loop_is_captured_on_task_error(self) -> None:
