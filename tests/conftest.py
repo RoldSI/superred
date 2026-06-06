@@ -229,7 +229,7 @@ class StubTask(Task[Target]):
     ) -> EvaluationResult:
         return EvaluationResult(
             success=self._success,
-            primary_score=Score(value=self._score, security_domain=EXTERNAL_TAG),
+            primary_score=Score(value=self._score),
         )
 
 

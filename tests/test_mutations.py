@@ -399,7 +399,7 @@ class TestControllerRunMutations:
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
-                    primary_score=Score(value=next(scores), security_domain=EXTERNAL_TAG),
+                    primary_score=Score(value=next(scores)),
                 )
 
         controller = Controller(
@@ -421,12 +421,12 @@ class TestControllerRunMutations:
             [
                 EvaluationResult(
                     success=False,
-                    primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+                    primary_score=Score(0.5),
                     rationale="first",
                 ),
                 EvaluationResult(
                     success=False,
-                    primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+                    primary_score=Score(0.5),
                     rationale="second",
                 ),
             ]
@@ -566,7 +566,7 @@ class TestBestScoreMCDC:
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
-                    primary_score=Score(next(scores), security_domain=EXTERNAL_TAG),
+                    primary_score=Score(next(scores)),
                 )
 
         controller = Controller(
@@ -593,7 +593,7 @@ class TestBestScoreMCDC:
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
-                    primary_score=Score(next(scores), security_domain=EXTERNAL_TAG),
+                    primary_score=Score(next(scores)),
                 )
 
         controller = Controller(
@@ -805,7 +805,7 @@ class TestResultFrozenness:
             trajectory=t,
             evaluation=EvaluationResult(
                 success=False,
-                primary_score=Score(0.5, security_domain=EXTERNAL_TAG),
+                primary_score=Score(0.5),
             ),
             llm_usage=LLMUsage(),
         )

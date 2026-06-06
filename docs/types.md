@@ -193,7 +193,7 @@ Defined in `event.py`:
 
 ### Score (frozen)
 
-A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags each score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope before attaching the evaluation to `RunEndEvent`.
+A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags a sub-score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope (dropping only out-of-scope ones) before attaching the evaluation to `RunEndEvent`. The `primary_score` carries no `security_domain` and is never filtered.
 
 ### EvaluationResult (frozen)
 
@@ -203,7 +203,7 @@ The result of evaluating one run:
 - `sub_scores: dict[str, Score]` — named sub-scores for multi-objective analysis (default empty).
 - `rationale: str` — optional free-text explanation from the evaluator (default empty).
 
-**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each score carries a `security_domain` — the controller filters sub_scores by the active scope before attaching the evaluation to `RunEndEvent`, so the optimizer only sees scores within its security domain. `primary_score` is always included (the main optimization signal).
+**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each sub-score carries a `security_domain`; the controller filters sub_scores by the active scope before attaching the evaluation to `RunEndEvent`, dropping only those with an out-of-scope domain (an untagged sub-score, `security_domain=None`, is always visible), so the optimizer only sees scores within its security domain. `primary_score` carries no `security_domain` and is never filtered: it is the unscoped optimization signal, always included.
 
 ## Security Domains (`security_domain.py`)
 

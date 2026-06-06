@@ -220,11 +220,14 @@ An `EvaluationResult` carries a `success: bool`, a `primary_score: Score`, and
 optional named `sub_scores`. A `Score` has:
 
 - `value: float` - higher is better (the scale is whatever the task defines);
-- `security_domain: SecurityDomainTag | None` - which boundary it pertains to
-  (`None` means always visible);
+- `security_domain: SecurityDomainTag | None` - on a sub-score, which boundary it
+  pertains to (`None` means always visible); the `primary_score` carries no
+  `security_domain`;
 - `name: str` - the dimension name (default `"primary"`).
 
 The Controller tracks the best primary score across a task's runs. `sub_scores`
-outside the active scope are filtered out of the feedback the optimizer sees;
+carrying an out-of-scope `security_domain` are filtered out of the feedback the
+optimizer sees (an untagged sub-score, `security_domain=None`, stays visible);
 the `primary_score`, `success`, and `rationale` are always shown, because the
-attacker needs the main signal to improve.
+attacker needs the main signal to improve. The `primary_score` is never
+scope-filtered: it is the unscoped optimization signal.

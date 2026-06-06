@@ -119,7 +119,7 @@ def test_serialize_score_no_domain_is_null() -> None:
 
 
 def test_serialize_evaluation_round_trips_fields() -> None:
-    primary = Score(value=0.9, security_domain=EXTERNAL_TAG)
+    primary = Score(value=0.9)
     sub = {"asr": Score(value=0.3, security_domain=EXTERNAL_TAG)}
     ev = EvaluationResult(success=True, primary_score=primary, sub_scores=sub, rationale="because")
     out = _serialize_evaluation(ev)
@@ -170,7 +170,7 @@ def test_serialize_run_end_event_with_eval() -> None:
     ev = RunEndEvent(
         evaluation=EvaluationResult(
             success=False,
-            primary_score=Score(value=0.0, security_domain=EXTERNAL_TAG),
+            primary_score=Score(value=0.0),
         ),
         security_domain=EXTERNAL_TAG,
     )
@@ -276,7 +276,7 @@ def test_task_filename_only_strips_underscore_not_other_chars() -> None:
 
 def _make_task_result(score: float, success: bool, calls: int = 0, cost: float = 0.0) -> TaskResult:
     """Helper: a minimal TaskResult with the given primary score."""
-    primary = Score(value=score, security_domain=EXTERNAL_TAG)
+    primary = Score(value=score)
     ev = EvaluationResult(success=success, primary_score=primary)
     return TaskResult(
         task=StubTask(),
@@ -350,7 +350,7 @@ def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult
     traj = Trajectory()
     end = RunEndEvent(security_domain=EXTERNAL_TAG)
     traj.emit(end)
-    primary = Score(value=0.7, security_domain=EXTERNAL_TAG)
+    primary = Score(value=0.7)
     eval_result = EvaluationResult(success=True, primary_score=primary)
     run = RunResult(trajectory=traj, evaluation=eval_result, llm_usage=LLMUsage(calls=2, cost=0.01))
     task = StubTask()
@@ -484,7 +484,7 @@ def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
     obs = Observable(name="o", security_domain=EXTERNAL_TAG)
     traj.emit(ObservableEvent(observable=obs, content=Opaque()))
     traj.emit(RunEndEvent(security_domain=EXTERNAL_TAG))
-    primary = Score(value=0.0, security_domain=EXTERNAL_TAG)
+    primary = Score(value=0.0)
     ev = EvaluationResult(success=False, primary_score=primary)
     run = RunResult(trajectory=traj, evaluation=ev, llm_usage=LLMUsage())
     task = StubTask()
@@ -515,7 +515,7 @@ def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
     ts = datetime(2026, 1, 1, 12, 0, 0)
     traj.emit(ObservableEvent(observable=obs, content=ts))
     traj.emit(RunEndEvent(security_domain=EXTERNAL_TAG))
-    primary = Score(value=0.0, security_domain=EXTERNAL_TAG)
+    primary = Score(value=0.0)
     ev = EvaluationResult(success=False, primary_score=primary)
     run = RunResult(trajectory=traj, evaluation=ev, llm_usage=LLMUsage())
     task = StubTask()

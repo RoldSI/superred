@@ -64,7 +64,7 @@ class VaryingScoreTask(StubTask):
     ) -> EvaluationResult:
         return EvaluationResult(
             success=False,
-            primary_score=Score(value=next(self._scores), security_domain=EXTERNAL_TAG),
+            primary_score=Score(value=next(self._scores)),
         )
 
 
@@ -183,7 +183,6 @@ class AlternatingSuccessTask(StubTask):
             success=(self._call_count == 1),
             primary_score=Score(
                 value=float(self._call_count),
-                security_domain=EXTERNAL_TAG,
             ),
         )
 
@@ -1396,7 +1395,7 @@ class _ScopedScoresTask(StubTask):
     ) -> EvaluationResult:
         return EvaluationResult(
             success=True,
-            primary_score=Score(value=0.9, security_domain=ROOT_TAG),
+            primary_score=Score(value=0.9),
             sub_scores={
                 "external_asr": Score(
                     value=0.8,
@@ -1494,25 +1493,6 @@ class TestScopedScoreFiltering:
         assert "external_asr" in sub_score_names_seen
         assert "internal_leak" not in sub_score_names_seen
 
-    async def test_primary_score_included_even_when_out_of_scope(self) -> None:
-        """primary_score is always in the feedback, even if its domain
-        is outside the tested scope (optimizer needs the main signal)."""
-        controller = Controller(
-            scope=EXTERNAL_SCOPE,
-            optimizer_factory=lambda: StubOptimizer(done=True),
-            target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
-            # EXTERNAL scope, but primary_score has ROOT domain
-            llm_config=STUB_LLM_CONFIG,
-        )
-        result = await controller.run()
-        entries = result.task_results[0].runs[0].trajectory.snapshot()
-        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
-        fb = feedback[0]
-        # primary_score domain is ROOT, scope is EXTERNAL — still included
-        assert fb.evaluation.primary_score.value == 0.9
-        assert fb.evaluation.primary_score.security_domain is ROOT_TAG
-
     async def test_all_sub_scores_out_of_scope(self) -> None:
         """When every sub_score is out of scope, feedback has empty sub_scores."""
 
@@ -1524,7 +1504,7 @@ class TestScopedScoreFiltering:
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=True,
-                    primary_score=Score(value=0.5, security_domain=ROOT_TAG),
+                    primary_score=Score(value=0.5),
                     sub_scores={
                         "a": Score(value=0.1, security_domain=INTERNAL_TAG, name="a"),
                         "b": Score(value=0.2, security_domain=INTERNAL_TAG, name="b"),
@@ -1558,7 +1538,7 @@ class TestScopedScoreFiltering:
             ) -> EvaluationResult:
                 return EvaluationResult(
                     success=False,
-                    primary_score=Score(value=0.1, security_domain=EXTERNAL_TAG),
+                    primary_score=Score(value=0.1),
                     rationale="Attack partially succeeded",
                 )
 
