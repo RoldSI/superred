@@ -23,7 +23,7 @@ it filters everything the optimizer can see or do, on five fronts:
 | Observables | only in-scope ones are passed to `optimizer.initialize()` |
 | Events | out-of-scope controllable events are auto-answered `ControllableNoInjection` |
 | Trajectory | the optimizer sees a `FilteredTrajectory` with only in-scope entries |
-| Feedback sub-scores | only in-scope sub-scores are shown (primary/success/rationale always shown) |
+| Feedback sub-scores | tagged out-of-scope sub-scores are dropped; untagged sub-scores, primary, success, and rationale are always shown |
 
 So scoping to `{user}` literally constructs the experiment "what can an attacker
 achieve controlling only the user input, seeing only what a user-input attacker
@@ -217,13 +217,15 @@ sparingly, for things that should never be hidden from any attacker.
 
 ## Score filtering
 
-A task can report scores at several boundaries. The Controller shows the
-optimizer only the in-scope sub-scores:
+A task can report scores at several boundaries. The Controller drops only the
+sub-scores whose `security_domain` is out of scope; an untagged sub-score
+(`security_domain=None`) is always visible, and the `primary_score` carries no
+`security_domain` and is never filtered:
 
 ```python
 EvaluationResult(
     success=True,
-    primary_score=Score(value=0.9, security_domain=system),   # always shown
+    primary_score=Score(value=0.9),                           # always shown, never scoped
     sub_scores={
         "user_attack": Score(value=0.8, security_domain=user, name="user_attack"),
         "db_leak":     Score(value=0.3, security_domain=db,   name="db_leak"),

@@ -47,11 +47,11 @@ Tasks hold no reference to the target. `configure_target` sets config and return
 
 - `goal -> Goal` — property, the adversarial objective.
 - `configure_target(target) -> None` — set pre-run config via `target.set_config()`. Raise `NotApplicable` if incompatible with this target.
-- `evaluate(trajectory, target) -> EvaluationResult` — query post-run ground truth via `target.query()`, assess success. Each `Score` carries a `security_domain` (`SecurityDomainTag | None`); the controller filters `sub_scores` by scope. `None` means the score is always visible.
+- `evaluate(trajectory, target) -> EvaluationResult` — query post-run ground truth via `target.query()`, assess success. Each `sub_score` carries a `security_domain` (`SecurityDomainTag | None`); the controller filters `sub_scores` by scope, dropping only those with an out-of-scope domain (`None` means always visible). The `primary_score` carries no `security_domain` and is never filtered.
 
 ## Design decisions
 
 - **Generics via TypeVar**: `T_Target = TypeVar("T_Target", bound=Target)` ensures the same concrete target type flows through both `configure_target` and `evaluate`.
 - **`configure_target` returns None**: Configuration is a side effect on the target. No need to return what was set — the target holds its own state.
-- **`evaluate` receives target for queries**: The evaluator discovers available queries via `target.query_specs` and calls `target.query(name, **params)`. Post-run state may differ from initial config. Each `Score` in the result carries a `security_domain` (`SecurityDomainTag | None`); `None` means always visible. The controller filters `sub_scores` by the active scope before writing feedback to the trajectory.
+- **`evaluate` receives target for queries**: The evaluator discovers available queries via `target.query_specs` and calls `target.query(name, **params)`. Post-run state may differ from initial config. Each `sub_score` carries a `security_domain` (`SecurityDomainTag | None`); `None` means always visible. The controller filters `sub_scores` by the active scope before writing feedback to the trajectory, dropping only out-of-scope ones; the `primary_score` carries no `security_domain` and is never filtered.
 - **`NotApplicable` exception**: A task that cannot work with a given target raises this from `configure_target`. Named without `Error` suffix (suppressed via `noqa: N818`) because it signals incompatibility, not a bug. The controller catches this and skips the task.

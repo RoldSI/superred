@@ -95,10 +95,9 @@ class TestScore:
 
 class TestEvaluationResult:
     def test_required_fields(self) -> None:
-        tag = SecurityDomainTag("ext")
         er = EvaluationResult(
             success=True,
-            primary_score=Score(value=1.0, security_domain=tag),
+            primary_score=Score(value=1.0),
         )
         assert er.success is True
         assert er.primary_score.value == 1.0
@@ -110,7 +109,7 @@ class TestEvaluationResult:
         sub = {"asr": Score(value=0.9, security_domain=tag, name="asr")}
         er = EvaluationResult(
             success=False,
-            primary_score=Score(value=0.5, security_domain=tag),
+            primary_score=Score(value=0.5),
             sub_scores=sub,
             rationale="Partial extraction",
         )
@@ -118,10 +117,9 @@ class TestEvaluationResult:
         assert er.rationale == "Partial extraction"
 
     def test_frozen(self) -> None:
-        tag = SecurityDomainTag("ext")
         er = EvaluationResult(
             success=True,
-            primary_score=Score(value=1.0, security_domain=tag),
+            primary_score=Score(value=1.0),
         )
         with pytest.raises(FrozenInstanceError):
             er.success = False  # type: ignore[misc]
