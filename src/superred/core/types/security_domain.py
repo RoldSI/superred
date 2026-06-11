@@ -20,6 +20,12 @@ Unrelated roots form independent trees in the forest.
 A :data:`Scope` is a ``frozenset[SecurityDomainTag]`` representing a
 combination of security domain tags to test simultaneously.  Use
 :func:`scope_includes` to check whether a scope covers a given tag.
+
+The controller takes a read & write ``scope`` plus an optional
+``read_only`` scope for visible-but-not-injectable surfaces (see
+:class:`~superred.core.controller.Controller`); both are plain
+:data:`Scope` values, so access level is expressed by which set a tag
+lands in, not by any per-tag wrapper.
 """
 
 from __future__ import annotations
@@ -133,8 +139,10 @@ class SecurityDomain:
 Scope = frozenset[SecurityDomainTag]
 """A set of security domain tags defining the attack surface scope.
 
-Each frozenset is an antichain: no tag is an ancestor of another.
-An item is in scope if ANY tag in the set includes it.
+An item is in scope if ANY tag in the set includes it.  Caller-specified
+scopes are conventionally antichains (no tag an ancestor of another —
+the ancestor already covers the descendant), but this is neither enforced
+nor required.
 """
 
 

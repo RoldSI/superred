@@ -85,8 +85,14 @@ def security_domain_filter(scope: Scope) -> Middleware:
     Events for controllables outside *scope* are answered with
     :class:`ControllableNoInjection` without reaching the inner handler.
 
+    The controller passes its read & write ``scope`` here (not the wider
+    visibility scope that also includes ``read_only`` tags): controllable
+    events under tags it does not cover are declined, while the outer
+    :func:`trajectory_recorder` still records them — read-only surfaces
+    stay visible on the trajectory but cannot be injected into.
+
     Args:
-        scope: A frozenset of security domain tags (antichain). Events whose
+        scope: A frozenset of security domain tags. Events whose
             controllable's domain is included by any tag in the scope pass
             through.
     """

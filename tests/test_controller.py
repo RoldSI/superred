@@ -301,6 +301,7 @@ class TestResultTypesFrozen:
         """ThreatModelResult.skipped_tasks defaults to an empty list, not None."""
         tmr = ThreatModelResult(
             scope=EXTERNAL_SCOPE,
+            read_only=frozenset(),
             llm_config=None,
             task_results=[],
         )
@@ -1092,8 +1093,8 @@ class TestControllerValidation:
         )
 
     def test_empty_scope_raises(self) -> None:
-        """An empty scope can't include any tags; the ctor must refuse it."""
-        with pytest.raises(ValueError, match="scope must be non-empty"):
+        """An empty scope with no read_only can't include any tags; refuse it."""
+        with pytest.raises(ValueError, match="cannot both be empty"):
             Controller(
                 optimizer_factory=lambda: StubOptimizer(),
                 target_factory=TargetFactory.singleton(StubTarget()),
@@ -1836,3 +1837,244 @@ class TestParallelExecution:
         for tr in trs[1:]:
             assert tr.stop_reason == "done"
             assert tr.success is True
+
+
+# ---------------------------------------------------------------------------
+# Read-only scope entries
+# ---------------------------------------------------------------------------
+
+
+class _TwoChannelTarget(StubTarget):
+    """Target that fires one controllable event on EXTERNAL and one on INTERNAL."""
+
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
+        self.run_count += 1
+        external = Controllable(name="external_input", security_domain=EXTERNAL_TAG)
+        internal = Controllable(name="internal_input", security_domain=INTERNAL_TAG)
+        await send_event(ControllablePreCallEvent(controllable=external, request="ext_q"))
+        await send_event(ControllablePreCallEvent(controllable=internal, request="int_q"))
+
+
+class TestReadOnlyScope:
+    """The ``read_only`` scope adds visible-but-not-injectable tags: their
+    surfaces stay visible to the optimizer but are never offered for injection."""
+
+    def test_controllable_as_observable_preserves_fields(self) -> None:
+        """The read-only controllable -> observable conversion is faithful:
+        name, domain, and description preserved; value_type becomes
+        observable_type; content is None (value arrives at runtime)."""
+        from superred.core.controller import _controllable_as_observable
+
+        c = Controllable(
+            name="system_prompt",
+            security_domain=EXTERNAL_TAG,
+            description="the agent's system prompt",
+            value_type="json",
+        )
+        ov = _controllable_as_observable(c)
+        assert ov.content is None
+        assert ov.observable.name == "system_prompt"
+        assert ov.observable.security_domain is EXTERNAL_TAG
+        assert ov.observable.description == "the agent's system prompt"
+        assert ov.observable.observable_type == "json"  # value_type carried over
+
+    async def test_read_only_event_not_offered_to_optimizer(self) -> None:
+        optimizer = StubOptimizer(done=True)
+        controller = Controller(
+            scope=frozenset(),  # nothing read & write
+            read_only=frozenset({EXTERNAL_TAG}),  # EXTERNAL visible only
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        ctrl_events = [
+            e for e in optimizer.events_received if isinstance(e, ControllablePreCallEvent)
+        ]
+        assert ctrl_events == []
+        # The event and its auto-decline are still recorded on the trajectory.
+        snapshot = result.task_results[0].runs[0].trajectory.snapshot()
+        events = [e for e in snapshot if isinstance(e, ControllablePreCallEvent)]
+        declines = [e for e in snapshot if isinstance(e, ControllableNoInjection)]
+        assert len(events) == 1
+        assert events[0].request == "hello"
+        assert len(declines) == 1
+
+    async def test_read_only_entries_visible_in_filtered_trajectory(self) -> None:
+        """Unlike out-of-scope events, read-only events stay visible to the optimizer."""
+        controller = Controller(
+            scope=frozenset(),
+            read_only=frozenset({EXTERNAL_TAG}),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        filtered = result.task_results[0].runs[0].trajectory.filtered.snapshot()
+        assert any(isinstance(e, ControllablePreCallEvent) for e in filtered)
+        assert any(isinstance(e, ControllableNoInjection) for e in filtered)
+
+    async def test_read_only_controllables_shown_as_observables_at_initialize(self) -> None:
+        """A read-only controllable is NOT in the optimizer's ``controllables``
+        list (it can't inject) but is surfaced as an observable instead, so the
+        optimizer can still see the surface exists and is readable."""
+        optimizer = _CapturingOptimizer()
+        controller = Controller(
+            scope=frozenset(),
+            read_only=frozenset({EXTERNAL_TAG}),
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(_MultiControllableTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        await controller.run()
+        # Nothing is injectable (scope is empty), so no controllables.
+        assert [c.name for c in optimizer.received_controllables] == []
+        # The in-visibility observable plus the read-only controllable,
+        # re-presented as an observable (external_input); the out-of-scope
+        # int_obs / internal_input are absent.
+        obs_names = sorted(o.observable.name for o in optimizer.received_observables)
+        assert obs_names == ["ext_obs", "external_input"]
+        # The read-only controllable surfaced with no static content.
+        ext_input_obs = next(
+            o for o in optimizer.received_observables if o.observable.name == "external_input"
+        )
+        assert ext_input_obs.content is None
+        assert ext_input_obs.observable.security_domain is EXTERNAL_TAG
+
+    async def test_mixed_scope_lists_writable_and_readonly_separately(self) -> None:
+        """Upgrade pattern (scope={external}, read_only={root}): the writable
+        controllable is in ``controllables``; the read-only one is surfaced as
+        an observable alongside the real observables."""
+        optimizer = _CapturingOptimizer()
+        controller = Controller(
+            scope=frozenset({EXTERNAL_TAG}),
+            read_only=ROOT_SCOPE,
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(_MultiControllableTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        await controller.run()
+        # Only the EXTERNAL controllable is injectable.
+        assert [c.name for c in optimizer.received_controllables] == ["external_input"]
+        # Both real observables (ROOT covers both), plus the read-only
+        # INTERNAL controllable re-presented as an observable.
+        assert sorted(o.observable.name for o in optimizer.received_observables) == [
+            "ext_obs",
+            "int_obs",
+            "internal_input",
+        ]
+
+    async def test_read_write_subtree_under_read_only_ancestor(self) -> None:
+        """scope={external} (read & write), read_only={root} (visible): the
+        external subtree is injectable, the rest of the root subtree is read-only."""
+        optimizer = StubOptimizer(done=True)
+        controller = Controller(
+            scope=frozenset({EXTERNAL_TAG}),
+            read_only=ROOT_SCOPE,
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(_TwoChannelTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        offered = [
+            e.controllable.name
+            for e in optimizer.events_received
+            if isinstance(e, ControllablePreCallEvent)
+        ]
+        assert offered == ["external_input"]
+        snapshot = result.task_results[0].runs[0].trajectory.snapshot()
+        injected = [r.controllable.name for r in snapshot if isinstance(r, ControllableInjection)]
+        declined = [r.controllable.name for r in snapshot if isinstance(r, ControllableNoInjection)]
+        assert injected == ["external_input"]
+        assert declined == ["internal_input"]
+
+    async def test_default_read_only_empty_makes_scope_read_write(self) -> None:
+        """Omitting ``read_only`` makes the whole scope read & write."""
+        optimizer = StubOptimizer(done=True)
+        controller = Controller(
+            scope=ROOT_SCOPE,  # read_only defaults to empty
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(_TwoChannelTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        await controller.run()
+        offered = {
+            e.controllable.name
+            for e in optimizer.events_received
+            if isinstance(e, ControllablePreCallEvent)
+        }
+        assert offered == {"external_input", "internal_input"}
+
+    async def test_read_only_feedback_sub_scores_included(self) -> None:
+        """Sub-scores under a read-only tag stay feedback-visible (read access)."""
+        controller = Controller(
+            scope=frozenset(),
+            read_only=frozenset({EXTERNAL_TAG}),
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        entries = result.task_results[0].runs[0].trajectory.snapshot()
+        feedback = [e for e in entries if isinstance(e, RunEndEvent) and e.evaluation is not None]
+        assert len(feedback) == 1
+        assert "external_asr" in feedback[0].evaluation.sub_scores
+        assert "internal_leak" not in feedback[0].evaluation.sub_scores
+
+    async def test_read_only_tag_covered_by_scope_is_overruled(self) -> None:
+        """A read_only tag already covered by the read & write scope stays
+        injectable (read & write overrules); it is not a contradiction and
+        does not raise."""
+        optimizer = StubOptimizer(done=True)
+        controller = Controller(
+            scope=ROOT_SCOPE,
+            read_only=frozenset({EXTERNAL_TAG}),  # EXTERNAL already r&w via ROOT
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(_TwoChannelTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        # Both controllables are offered: ROOT is read & write and covers both,
+        # so the redundant read_only entry has no effect on injection.
+        offered = {
+            e.controllable.name
+            for e in optimizer.events_received
+            if isinstance(e, ControllablePreCallEvent)
+        }
+        assert offered == {"external_input", "internal_input"}
+        # read_only is recorded verbatim (not normalized away).
+        assert result.read_only == frozenset({EXTERNAL_TAG})
+
+    def test_scope_and_read_only_both_empty_raises(self) -> None:
+        """The optimizer must be able to see at least one tag."""
+        with pytest.raises(ValueError, match="cannot both be empty"):
+            Controller(
+                scope=frozenset(),
+                read_only=frozenset(),
+                optimizer_factory=lambda: StubOptimizer(),
+                target_factory=TargetFactory.singleton(StubTarget()),
+                security_claim=SecurityClaim.from_tasks([StubTask()]),
+                llm_config=STUB_LLM_CONFIG,
+            )
+
+    async def test_result_carries_scope_and_read_only(self) -> None:
+        """ThreatModelResult reports the read & write scope and read-only set."""
+        controller = Controller(
+            scope=frozenset({EXTERNAL_TAG}),
+            read_only=ROOT_SCOPE,
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        assert result.scope == frozenset({EXTERNAL_TAG})
+        assert result.read_only == ROOT_SCOPE

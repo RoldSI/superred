@@ -30,12 +30,17 @@ controller = Controller(
     optimizer_factory=lambda: MyOptimizer(),  # fresh optimizer per task
     target_factory=target_factory,            # fresh target per task; bounded concurrency
     security_claim=claim,
-    scope=scope,                              # required, non-empty
+    scope=scope,                              # read & write surface (visible + injectable)
+    read_only=frozenset(),                    # optional: visible-but-not-injectable tags
     llm_config=llm_config,                    # optional — omit for non-LLM optimizers
     max_runs_per_task=100,                    # safety limit, default 100
     include_feedback=True,                    # populate RunEndEvent.evaluation (default True)
     results_dir="results/run-1",              # optional — persist threat-model JSON
 )
+# `scope` is what the attacker can read AND write; `read_only` adds tags it
+# can only read. To see the whole system but inject only the prompt:
+#   Controller(scope=frozenset({prompt_tag}),
+#              read_only=frozenset({system_tag}), ...)
 
 tmr = await controller.run()  # -> ThreatModelResult
 ```
@@ -98,9 +103,11 @@ The `send_event` callback passed to `target.run` is built by composing middlewar
 ```python
 send_event = compose(
     trajectory_recorder(trajectory),
-    security_domain_filter(scope),
+    security_domain_filter(write_scope),
 )(channel.send)
 ```
+
+The filter receives the **read & write scope** (the controller's `scope`); all other filtering uses the full visibility scope (`scope | read_only`). When `read_only` is empty the two are identical.
 
 Users can add custom middleware (logging, tracing, budget enforcement) by extending the composition.
 
@@ -108,13 +115,15 @@ Users can add custom middleware (logging, tracing, budget enforcement) by extend
 
 The controller enforces the security domain scope across **all optimizer inputs**:
 
-1. **Controllables**: Filtered with `scope_includes(scope, c.security_domain)` before `optimizer.initialize()`. Out-of-scope controllables are never exposed to the optimizer.
-2. **Observables**: Filtered with `scope_includes(scope, o.observable.security_domain)` before `optimizer.initialize()`. Out-of-scope observables are never exposed to the optimizer.
-3. **Events**: `ControllablePreCallEvent` and `ControllablePostCallEvent` for out-of-scope controllables are answered with `ControllableNoInjection` without reaching the optimizer. Implemented as the `security_domain_filter` middleware composed onto `channel.send`.
+1. **Controllables**: Only the **injectable** ones are passed to `optimizer.initialize()` — filtered with `scope_includes(write_scope, c.security_domain)` (the read & write `scope`). Out-of-scope and read-only controllables are not in this list, so it means exactly "what the optimizer can inject into."
+2. **Observables**: Filtered with `scope_includes(visibility, o.observable.security_domain)` before `optimizer.initialize()`, **plus** each read-only controllable (visible but not injectable) re-presented as an `ObservableValue` (with `content=None`, since its value is revealed at runtime on the trajectory). So `observables` means "what the optimizer can read," including read-only controllables. Out-of-scope observables are never exposed.
+3. **Events**: `ControllablePreCallEvent` and `ControllablePostCallEvent` for out-of-scope controllables are answered with `ControllableNoInjection` without reaching the optimizer. Implemented as the `security_domain_filter` middleware composed onto `channel.send`. The filter is given the **read & write `scope`**, so controllable events under `read_only` tags — visible but not injectable — are declined the same way. The difference from out-of-scope events is visibility: a read-only event is inside the full visibility scope, so it (and its `ControllableNoInjection`) remains visible through the filtered trajectory, observables, and feedback.
 4. **Trajectory**: The optimizer receives a `FilteredTrajectory` (via `RunStartEvent`) that only exposes items within the security domain scope.
 5. **Feedback**: Each `sub_score` in the `EvaluationResult` carries a `security_domain`. The controller filters `sub_scores`, dropping only those whose `security_domain` is out of scope (an untagged sub-score, `security_domain=None`, is always visible). The `RunEndEvent` carries the filtered evaluation directly (when `include_feedback=True`, the default) and is persisted to the trajectory with `security_domain` set to a tag from the scope. The `primary_score` carries no `security_domain` and is never filtered; it, `success`, and `rationale` are always included (the optimizer needs the main optimization signal). The optimizer reads feedback from `event.evaluation` on `RunEndEvent`, or from past trajectories.
 
 A `Scope` is a `frozenset[SecurityDomainTag]`. `scope_includes(scope, tag)` returns `True` if ANY tag in the scope includes the target tag. This allows testing specific security boundaries — scoping to `{external_tag}` tests only external-facing surfaces, while scoping to `{root_tag}` tests everything.
+
+Access level is a property of the scope, not of each tag. The controller takes two sets: `scope` (read & write — visible and injectable) and an optional `read_only` set (visible only). `read_only` defaults to empty, so the whole `scope` is read & write — the classic behavior. To make part of the surface read-only, list it under `read_only` instead: `Controller(scope={prompt}, read_only={system})` lets the attacker see the whole `system` subtree but inject only into `prompt`. A `read_only` tag already covered by `scope` has no effect (read & write overrules — only `scope` drives the injection check, so it stays injectable); `scope` and `read_only` cannot both be empty. Internally only the injection check (item 3) uses `scope`; items 1, 2, 4, 5 and the `FilteredTrajectory` use the full visibility scope `scope | read_only`, so read-only information flows through the exact same recording mechanism as read & write surfaces.
 
 ## Unified trajectory as event log
 
@@ -151,7 +160,8 @@ All runs for one task:
 ### ThreatModelResult (frozen)
 
 Results for one (scope, llm_config) combination:
-- `scope: Scope` — the security domain scope tested.
+- `scope: Scope` — the visibility scope tested.
+- `read_only: Scope` — extra visible-but-not-injectable tags (empty for an all-read & write run).
 - `llm_config: LLMConfig | None` — the LLM configuration used, or `None` when no LLM configs were provided.
 - `task_results: list[TaskResult]` — results for each evaluated task.
 - `skipped_tasks: list[Task[Target]]` — tasks that raised `NotApplicable`.
@@ -201,12 +211,12 @@ results_dir/
 
 Multiple controllers pointed at the same `results_dir` (the multi-threat-model sweep pattern) each write their own pair of files, named by their scope and model.
 
-- **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When `llm_config` is `None`, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
+- **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When the threat model has read-only tags, their sorted names are appended as a `__ro_{read_only}` component (e.g. `prompt__ro_system__gpt-4o.json`) so threat models differing only in access mode don't collide; all-read & write runs keep the plain `{scope}__{model}.json` name. When `llm_config` is `None`, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
 - **When**: per-task detail files are written **incrementally** — each one lands on disk as soon as its task finishes (success, error, or budget-exhausted). The claim-level summary file is written at the end of `run()` and acts as a completion marker; if a post-mortem sees the subfolder without the matching summary file, the run was interrupted and the detail files are the authoritative record of what completed.
 - **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"`, the partial trajectory accumulated before the crash, and the formatted exception under the `error` field (which lives *outside* the trajectory). Sibling tasks still finish and are persisted.
 - **Atomicity**: each individual file is written via temp file + `rename`. A disk failure on one task's write is logged and contained — the controller continues running the remaining tasks. The summary file will still point at the would-be path (the missing file at that path is the signal).
-- **Claim-level file**: `version`, `completed_at`, `scope`, `llm_config` (model + max_cost only), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
-- **Per-task detail file**: self-contained — repeats `version`, `scope`, `llm_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`).
+- **Claim-level file**: `version`, `completed_at`, `scope` (read & write tag names) plus `read_only` (visible-but-not-injectable tags; empty for an all-read & write run), `llm_config` (model + max_cost only), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
+- **Per-task detail file**: self-contained — repeats `version`, `scope`, `read_only`, `llm_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`).
 - **Aggregates**: `mean_primary_score` excludes `NotApplicable` tasks (they are reported separately as `n_skipped`). When the claim has no evaluable tasks, `mean_primary_score` and `max_primary_score` are `null`.
 - **`stop_reason` per task**: one of `"done"` (optimizer signaled `RunEndResponse(done=True)`), `"max_runs"` (hit the safety cap), `"budget_exhausted"` (`BudgetExhaustedError` was raised), or `"error"` (unexpected exception in optimizer/target/evaluator; the task was abandoned).
 - **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded from both claim and detail files. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed — keep credentials out of log/observable payloads.

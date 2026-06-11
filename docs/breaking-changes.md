@@ -2,6 +2,38 @@
 
 ## v0.2.0 (unreleased)
 
+### Read-only access via a `read_only` Controller argument (replaces `ReadOnly`/`ScopeSpec`)
+
+`scope` keeps its original meaning — the read & write surface (visible AND
+injectable). A new optional `read_only` argument adds tags that are visible but
+not injectable. `read_only` defaults to empty, so the whole `scope` is read &
+write, identical to the previous behavior; existing `Controller(scope=...)`
+calls are unaffected. Access level is expressed by which of the two plain
+`Scope` sets a tag lands in; the short-lived `ReadOnly`, `ScopeSpec`, and
+`resolve_scope` symbols are removed.
+
+```python
+# See the whole system subtree, inject only the prompt:
+controller = Controller(
+    scope=frozenset({prompt_tag}),     # read & write
+    read_only=frozenset({system_tag}), # visible only
+    ...,
+)
+```
+
+A `read_only` tag already covered by `scope` has no effect (read & write
+overrules: only `scope` drives injection, so it stays injectable). `scope` and
+`read_only` cannot both be empty. `ThreatModelResult` gains a `read_only: Scope`
+field, and persisted JSON carries `read_only` (replacing `read_only_scope`);
+runs with read-only tags get a `__ro_{read_only}` filename component.
+
+At `optimizer.initialize()`, the `controllables` list now means exactly "the
+surfaces the optimizer can inject into" (filtered by the read & write `scope`).
+A read-only controllable — visible but not injectable — is no longer in that
+list; it is re-presented in `observables` (as an `ObservableValue` with
+`content=None`). For an all-read & write run this changes nothing (no read-only
+controllables exist).
+
 ### Controller is now one threat model: `target_factory`, single `scope`, single `llm_config`
 
 The controller was previously a fan-out: it iterated the Cartesian

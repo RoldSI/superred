@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
+from superred.core.types.security_domain import (
+    SecurityDomain,
+    SecurityDomainTag,
+)
 
 # ---------------------------------------------------------------------------
 # SecurityDomainTag.includes()

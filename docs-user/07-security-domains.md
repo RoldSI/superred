@@ -19,9 +19,9 @@ it filters everything the optimizer can see or do, on five fronts:
 
 | What | How it is filtered |
 |------|--------------------|
-| Controllables | only in-scope ones are passed to `optimizer.initialize()` |
-| Observables | only in-scope ones are passed to `optimizer.initialize()` |
-| Events | out-of-scope controllable events are auto-answered `ControllableNoInjection` |
+| Controllables | only the **injectable** ones (in `scope`) are passed to `optimizer.initialize()` |
+| Observables | in-scope observables are passed to `optimizer.initialize()`, **plus** read-only controllables re-presented as observables (visible but not injectable) |
+| Events | out-of-scope controllable events are auto-answered `ControllableNoInjection`; so are in-scope events under a `read_only` tag (those stay visible on the trajectory) |
 | Trajectory | the optimizer sees a `FilteredTrajectory` with only in-scope entries |
 | Feedback sub-scores | tagged out-of-scope sub-scores are dropped; untagged sub-scores, primary, success, and rationale are always shown |
 
@@ -50,6 +50,46 @@ user.includes(user)       # True  - a tag includes itself
 `scope_includes(scope, tag)` is `True` when **any** tag in the scope includes
 `tag`. An out-of-scope surface is one no scope member covers.
 
+## Access levels: read-only surfaces
+
+`scope` is what the attacker can **read and write** (see and inject into). A
+second, optional Controller argument — `read_only` — adds tags it can **only
+read**. `read_only` defaults to empty, so the whole `scope` is read & write (the
+classic behavior). Tags listed under `read_only` stay visible (their events are
+recorded on the trajectory and shown through every filtered surface), but the
+Controller answers their controllable events with `ControllableNoInjection`
+without consulting the optimizer.
+
+```python
+controller = Controller(
+    scope=frozenset({api}),         # only the api subtree is read & write
+    read_only=frozenset({system}),  # the whole system tree is visible, read-only
+    ...
+)
+```
+
+Two rules govern the relationship:
+
+- **Read & write overrules read-only.** Only `scope` drives the injection
+  decision, so a `read_only` tag already inside `scope`'s subtree has no effect
+  (it stays injectable). The useful pattern is the reverse: a read & write
+  `scope` tag inside a `read_only` ancestor's subtree, like `api` above, makes
+  just that subtree injectable while the rest stays visible.
+- **Default is all-read & write.** Omit `read_only` and every tag in `scope` is
+  injectable. `scope` and `read_only` cannot both be empty.
+
+Use this instead of declaring separate `*_readable` subtags on the target: the
+target emits each piece of information exactly once, and whether an attacker
+can merely see it or also tamper with it is decided per threat model at the
+Controller.
+
+How the optimizer sees the split: at `initialize()` it gets a `controllables`
+list (exactly the surfaces it can inject into) and an `observables` list (what
+it can read). A read-only controllable is therefore **shown to the optimizer as
+an observable**, not a controllable — honest by construction, since for this run
+it is a thing you read, not a thing you inject. Its runtime values still arrive
+on the trajectory as its (declined) controllable events.
+
 ## First principles for mapping real trust boundaries
 
 These are the rules of thumb the chatbot and AgentDojo targets follow. They turn
@@ -64,16 +104,19 @@ emergent reading of a *scope*, not a tag.
 should encode capability subsumption: if holding A automatically gives you B,
 make B a child of A. In AgentDojo, `tool_catalogue` (full edit: replace,
 unregister, rewrite) includes `tool_catalogue_addable` (register-only, the
-weakest write), which includes `tool_catalogue_readable` (read-only). Granting
-the strong capability in a scope automatically grants the weak ones.
+weakest write). Granting the strong capability in a scope automatically grants
+the weak ones.
 
-**3. Read-only is a child of writable.** Being able to change something implies
-being able to see it, so the readable variant is a descendant of the writable
-one. The chatbot target has `system_prompt` (override) with child
-`system_prompt_readable` (see only), and `model` (rewrite the response) with
-child `response_readable` (see the response). This lets you distinguish "can read
-the system prompt but not change it" (`{system_prompt_readable}`) from "can
-override it" (`{system_prompt}`).
+**3. Read-only is a scope decision, not a tag.** Being able to change something
+implies being able to see it, so don't model "see only" as extra tags: declare
+one tag per surface, emit the information once, and grant weaker attackers
+visibility by listing the tag under `read_only` instead of `scope`. "Can read
+the system prompt but not change it" is `read_only={system_prompt, ...}`; "can
+override it" is `scope={system_prompt, ...}`. (The chatbot target predates this
+mechanism and still ships dedicated `*_readable` child tags — that pattern works
+too, but forces
+the target to emit the same information twice and duplicates trajectory
+entries when both tags end up in scope.)
 
 **4. Separate knowledge from control.** Put "knows a fact about the victim" on
 its own sibling tag so it can be granted without any write power. Both targets
@@ -97,8 +140,11 @@ third-party storage" (the natural prompt-injection surface, e.g. an external
 email or a web page) while keeping the user's own first-party data off-limits.
 
 **7. A scope is an antichain.** Never put both a tag and one of its ancestors in
-the same scope: the ancestor already covers the descendant. The framework's
+the same `scope`: the ancestor already covers the descendant. The framework's
 `distinct_combinations()` enumerates exactly the meaningful antichains for you.
+Access level is orthogonal: `scope` and `read_only` can each be an antichain, and
+`scope={descendant}, read_only={ancestor}` is the sanctioned way to make only the
+descendant's subtree injectable while the rest stays visible.
 
 ## Worked example 1: the chatbot target (two trees)
 
@@ -145,9 +191,7 @@ A tool-calling agent is richer. Three independent roots:
 ```
 Tree 1: system                       (agent-side capabilities the attacker may hold)
           ├── prompt                  (override system prompt)
-          │     └── prompt_readable
           ├── tool_catalogue          (full edit of the tool catalogue)
-          │     ├── tool_catalogue_readable
           │     └── tool_catalogue_addable   (register-only: weakest write)
           ├── model_identity
           └── agent_trace             (read the agent's runtime trace)
@@ -165,9 +209,11 @@ Tree 3: tools                        (inject into tool return values)
 Notice the principles at work:
 
 - **Capability subsumption** in the `tool_catalogue` subtree: scoping to
-  `tool_catalogue` grants the weaker register-only and read-only capabilities
-  automatically.
-- **Read-only children** (`prompt_readable`, the `agent_trace_*` leaves).
+  `tool_catalogue` grants the weaker register-only capability automatically.
+- **Read-only access lives in the scope, not in a tag**: "can see the prompt but
+  not change it" is `prompt` under `read_only` rather than `scope`. The
+  `agent_trace` tree stays — it is pure observation with no write counterpart,
+  a genuine surface of its own.
 - **Knowledge isolated** as `model_identity`.
 - **A provenance grid** under `tools`. The most realistic prompt-injection
   experiment scopes to `{content_3p_data_3p}` (the attacker controls only the
@@ -187,6 +233,8 @@ Scope determines the attacker's power, narrow to broad:
   attacker do controlling only the user input?"
 - **Medium** (`{content_3p_data_3p}`, `{system_prompt, user}`): a more capable
   or differently-positioned attacker.
+- **Read-mostly** (`scope={user}, read_only={system}`): full visibility into
+  the system side, but injection only through the user channel.
 - **Root** (`{system}`): worst case. The attacker controls everything under that
   tree. Useful for finding any vulnerability at all, less useful as a realistic
   claim.
