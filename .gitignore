@@ -14,3 +14,7 @@ coverage.json
 .pytest_cache/
 .hypothesis/
 .mutmut-cache
+
+# Local AI-agent steering pointers (machine-local, not versioned)
+CLAUDE.md
+AGENTS.md
