@@ -702,3 +702,92 @@ class TestDomainFilteredOptimizerInputs:
         assert any("Tell me" in c or "database" in c.lower() for c in traj_entry_contents)
         # The EXTERNAL model_response should NOT be visible
         assert not any("Based on" in c for c in traj_entry_contents)
+
+
+@pytest.mark.integration
+class TestReadOnlyAccessEndToEnd:
+    """End-to-end read vs read & write across the whole pipeline.
+
+    ``RAGTarget`` exposes ``user_query`` (USER) and ``db_lookup`` (INTERNAL)
+    controllables. Scoping read & write to USER and read-only to INTERNAL must:
+    list only ``user_query`` as a controllable; surface ``db_lookup`` to the
+    optimizer as an observable; offer only ``user_query`` for injection at
+    runtime while ``db_lookup``'s event is declined but stays visible on the
+    trajectory; and record both sets on the result.
+    """
+
+    async def test_read_only_controllable_is_observable_and_declined(self) -> None:
+        received_ctrl_names: list[str] = []
+        received_obs: list[ObservableValue] = []
+        offered_ctrl_names: list[str] = []  # controllables the optimizer was asked to inject
+
+        class InspectingOptimizer(AdaptiveOptimizer):
+            async def initialize(
+                self,
+                goal: Goal,
+                controllables: list[Controllable],
+                observables: list[ObservableValue],
+                llm_client: LLMClient,
+            ) -> None:
+                received_ctrl_names.extend(c.name for c in controllables)
+                received_obs.extend(observables)
+                await super().initialize(goal, controllables, observables, llm_client)
+
+            async def on_event(self, event: Event) -> EventResponse:
+                if isinstance(event, (ControllablePreCallEvent, ControllablePostCallEvent)):
+                    offered_ctrl_names.append(event.controllable.name)
+                return await super().on_event(event)
+
+        controller = Controller(
+            scope=USER_SCOPE,  # user_query is read & write
+            read_only=frozenset({INTERNAL}),  # db_lookup is read-only
+            optimizer_factory=lambda: InspectingOptimizer(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
+            security_claim=SecurityClaim.from_tasks([SecretExtractionTask(secret="TOPSECRET")]),
+            llm_config=_LLM_CONFIG,
+            max_runs_per_task=1,
+        )
+        result = await controller.run()
+
+        # 1. Only the writable controllable is presented as a controllable.
+        assert received_ctrl_names == ["user_query"]
+
+        # 2. The read-only controllable is surfaced as an observable instead,
+        #    with no static content (its value arrives at runtime); the
+        #    out-of-scope EXTERNAL observable (system_desc) is not present.
+        obs_names = {o.observable.name for o in received_obs}
+        assert "db_lookup" in obs_names
+        assert (
+            "user_query" not in obs_names
+        )  # the writable one is a controllable, not an observable
+        assert "system_desc" not in obs_names  # EXTERNAL, out of the USER|INTERNAL visibility
+        db_obs = next(o for o in received_obs if o.observable.name == "db_lookup")
+        assert db_obs.content is None
+        assert db_obs.observable.security_domain is INTERNAL
+
+        # 3. At runtime the optimizer is asked to inject only the writable
+        #    controllable; the read-only one is declined upstream and never
+        #    reaches the optimizer.
+        assert "user_query" in offered_ctrl_names
+        assert "db_lookup" not in offered_ctrl_names
+
+        # 4. The read-only controllable's event and its auto-decline are still
+        #    recorded and visible on the optimizer's (filtered) trajectory.
+        run = result.task_results[0].runs[0]
+        for view in (run.trajectory.snapshot(), run.trajectory.filtered.snapshot()):
+            db_events = [
+                e
+                for e in view
+                if isinstance(e, ControllablePreCallEvent) and e.controllable.name == "db_lookup"
+            ]
+            db_declines = [
+                r
+                for r in view
+                if isinstance(r, ControllableNoInjection) and r.controllable.name == "db_lookup"
+            ]
+            assert len(db_events) == 1
+            assert len(db_declines) == 1
+
+        # 5. The result records the access split.
+        assert result.scope == USER_SCOPE
+        assert result.read_only == frozenset({INTERNAL})

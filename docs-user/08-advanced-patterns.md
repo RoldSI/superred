@@ -170,10 +170,17 @@ builds the target's `send_event` by composing them onto the channel:
 
 ```python
 send_event = compose(
-    trajectory_recorder(trajectory),     # records every event and response
-    security_domain_filter(scope),       # declines out-of-scope controllables
+    trajectory_recorder(trajectory),         # records every event and response
+    security_domain_filter(scope),           # declines non-injectable controllables
 )(channel.send)
 ```
+
+The filter receives the read & write **`scope`** (not the wider visibility
+scope that also includes `read_only` tags), so it declines both out-of-scope
+controllable events and in-scope events under `read_only` tags (the latter stay
+recorded and visible; see
+[Security Domains](07-security-domains.md#access-levels-read-only-surfaces)).
+When `read_only` is empty the read & write scope equals the full visibility scope.
 
 `compose(a, b)(handler)` applies `a` outermost, then `b`, then the inner handler,
 with zero extra tasks or channels. The two built-ins

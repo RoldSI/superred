@@ -51,9 +51,11 @@ from superred.core.persistence import (
     write_claim_summary,
     write_task_detail,
 )
+from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import RunEndEvent, RunEndResponse, RunStartEvent
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
+from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import Scope, scope_includes
 from superred.core.types.trajectory import Trajectory
 
@@ -179,7 +181,9 @@ class ThreatModelResult:
     """Results for a single threat model (scope + LLM config combination).
 
     Attributes:
-        scope: The security domain scope tested.
+        scope: The read & write scope tested (visible and injectable).
+        read_only: Extra visible-but-not-injectable tags (empty for an
+            all-read & write run).
         llm_config: The LLM configuration used, or ``None`` when no LLM
             configs were provided.
         task_results: Results for each evaluated task.
@@ -187,6 +191,7 @@ class ThreatModelResult:
     """
 
     scope: Scope
+    read_only: Scope
     llm_config: LLMConfig | None
     task_results: list[TaskResult]
     skipped_tasks: list[Task[Target]] = field(default_factory=list)
@@ -195,6 +200,31 @@ class ThreatModelResult:
 def _format_exception(exc: BaseException) -> str:
     """Format an exception with type, message, and traceback for the JSON log."""
     return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+
+def _controllable_as_observable(controllable: Controllable) -> ObservableValue:
+    """Re-present a read-only controllable as an observable for the optimizer.
+
+    When a controllable's tag is visible but not in the write scope, the
+    optimizer can read the surface but never inject into it — so for this
+    threat model it is an observable, not a controllable.  Surfacing it in
+    the ``observables`` list (rather than ``controllables``) keeps the
+    optimizer's view honest: ``controllables`` means "injectable".
+
+    ``content`` is ``None`` because the value is not known statically; it is
+    revealed at runtime on the trajectory via the controllable's (declined)
+    events.  The name and security domain are preserved so the optimizer can
+    still identify the surface.
+    """
+    return ObservableValue(
+        observable=Observable(
+            name=controllable.name,
+            security_domain=controllable.security_domain,
+            description=controllable.description,
+            observable_type=controllable.value_type,
+        ),
+        content=None,
+    )
 
 
 def _synthesize_empty_task_result(
@@ -268,8 +298,25 @@ class Controller:
             declares how many tasks may run in parallel against
             independent instances (see :class:`TargetFactory`).
         security_claim: The collection of tasks to evaluate.
-        scope: The security domain scope under test.  Must be a non-empty
-            ``frozenset[SecurityDomainTag]``.
+        scope: The read & write security domain scope: the
+            ``frozenset[SecurityDomainTag]`` the attacker can both *see*
+            and *inject* into.  Controllables, observables, trajectory
+            entries, and feedback sub-scores under these tags (and their
+            descendants) are exposed to the optimizer, and its
+            controllable events are offered for injection.
+        read_only: Extra tags the attacker can *see* but not inject into.
+            Empty (default) means the whole ``scope`` is read & write
+            (the classic behavior).  Tags here (and their descendants)
+            are visible on every surface — trajectory, observables,
+            feedback — but their controllable events are answered with
+            ``ControllableNoInjection`` without consulting the optimizer.
+            Put a read & write tag in ``scope`` and a visible-only
+            ancestor in ``read_only`` to make just that subtree
+            injectable (e.g. ``scope={system_prompt}, read_only={system}``).
+            A ``read_only`` tag already covered by ``scope`` has no effect:
+            read & write overrules (only ``scope`` drives the injection
+            decision), so the tag stays injectable.  ``scope`` and
+            ``read_only`` cannot both be empty.
         llm_config: LLM access configuration for the optimizer, or
             ``None`` for non-LLM optimizers (in which case the optimizer
             receives a noop client that raises on any call).
@@ -292,13 +339,21 @@ class Controller:
         target_factory: TargetFactory,
         security_claim: SecurityClaim[Target],
         scope: Scope,
+        read_only: Scope = frozenset(),
         llm_config: LLMConfig | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
     ) -> None:
-        if not scope:
-            raise ValueError("scope must be non-empty")
+        # ``scope`` is the read & write surface (visible AND injectable);
+        # ``read_only`` adds tags that are visible but not injectable.
+        # By default ``read_only`` is empty, so the whole scope is
+        # read & write (the classic behavior).
+        self._write_scope: Scope = scope  # injectable
+        self._read_only: Scope = read_only  # visible but not injectable
+        self._visibility: Scope = scope | read_only  # everything the optimizer sees
+        if not self._visibility:
+            raise ValueError("scope and read_only cannot both be empty")
         resolved_max_runs = (
             self.DEFAULT_MAX_RUNS_PER_TASK if max_runs_per_task is None else max_runs_per_task
         )
@@ -307,7 +362,6 @@ class Controller:
         self._optimizer_factory = optimizer_factory
         self._target_factory = target_factory
         self._security_claim = security_claim
-        self._scope: Scope = scope
         self._llm_config: LLMConfig | None = llm_config
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
@@ -327,7 +381,7 @@ class Controller:
             task completes, and the claim-level summary lands at the
             end as a completion marker.
         """
-        result, task_file_basenames = await self._iterate_tasks(self._scope, self._llm_config)
+        result, task_file_basenames = await self._iterate_tasks()
         if self._results_dir is not None:
             write_claim_summary(self._results_dir, result, task_file_basenames)
         self._print_summary(result)
@@ -337,11 +391,7 @@ class Controller:
     # Task iteration (one threat model)
     # ------------------------------------------------------------------
 
-    async def _iterate_tasks(
-        self,
-        scope: Scope,
-        llm_config: LLMConfig | None,
-    ) -> tuple[ThreatModelResult, list[str]]:
+    async def _iterate_tasks(self) -> tuple[ThreatModelResult, list[str]]:
         """Iterate all tasks for a single threat model.
 
         Tasks run concurrently bounded by ``target_factory.concurrency``.
@@ -371,7 +421,9 @@ class Controller:
         subfolder: Path | None = None
         if self._results_dir is not None:
             # Up-front so FileExistsError fires before any task runs.
-            subfolder = prepare_results_dir(self._results_dir, scope, llm_config)
+            subfolder = prepare_results_dir(
+                self._results_dir, self._write_scope, self._read_only, self._llm_config
+            )
 
         async def run_one(
             index: int,
@@ -407,7 +459,7 @@ class Controller:
                 else:
                     try:
                         try:
-                            outcome = await self._run_task(task, scope, llm_config, target)
+                            outcome = await self._run_task(task, target)
                         except NotApplicable:
                             logger.info(
                                 "Task %r not applicable, skipping",
@@ -436,7 +488,14 @@ class Controller:
                 if subfolder is not None and isinstance(outcome, TaskResult):
                     detail_basename = task_detail_filename(index, outcome.task.goal.description)
                     try:
-                        write_task_detail(subfolder, detail_basename, outcome, scope, llm_config)
+                        write_task_detail(
+                            subfolder,
+                            detail_basename,
+                            outcome,
+                            self._write_scope,
+                            self._read_only,
+                            self._llm_config,
+                        )
                     except Exception:
                         logger.exception(
                             "Task %r: failed to write per-task detail file (continuing)",
@@ -463,8 +522,9 @@ class Controller:
                 skipped_tasks.append(outcome)
 
         result = ThreatModelResult(
-            scope=scope,
-            llm_config=llm_config,
+            scope=self._write_scope,
+            read_only=self._read_only,
+            llm_config=self._llm_config,
             task_results=task_results,
             skipped_tasks=skipped_tasks,
         )
@@ -477,33 +537,44 @@ class Controller:
     async def _run_task(
         self,
         task: Task[Target],
-        scope: Scope,
-        llm_config: LLMConfig | None,
         target: Target,
     ) -> TaskResult:
-        """Run the optimizer loop for a single task + threat model.
+        """Run the optimizer loop for a single task.
 
         A fresh optimizer and :class:`LLMClient` are created for each call;
         the caller (``_iterate_tasks``) supplies a fresh target and owns
-        its teardown after this returns.
+        its teardown after this returns.  Scope and LLM config are read
+        from ``self`` (constant for the threat model).
         """
         # Configure target (NotApplicable propagates to caller)
         await task.configure_target(target)
 
         # Create a fresh LLM client if we have a config
-        llm_client: LLMClient | None = LLMClient(llm_config) if llm_config else None
+        llm_client: LLMClient | None = LLMClient(self._llm_config) if self._llm_config else None
 
-        # Fresh optimizer for this (task, scope, llm_config) combo
+        # Fresh optimizer for this task
         optimizer = self._optimizer_factory()
 
-        # Initialize optimizer with filtered surfaces (only in-scope items)
+        # Split the target's controllables by access level.  The optimizer
+        # only gets the injectable ones in ``controllables``; a controllable
+        # that is visible but not writable (read-only this run) is surfaced
+        # in ``observables`` instead, so the list it can inject into is honest.
+        all_controllables = target.get_controllables()
         controllables = [
-            c for c in target.get_controllables() if scope_includes(scope, c.security_domain)
+            c for c in all_controllables if scope_includes(self._write_scope, c.security_domain)
         ]
+        # Readable surfaces: in-visibility observables, plus read-only
+        # controllables re-presented as observables.
         observables = [
             o
             for o in target.get_observables()
-            if scope_includes(scope, o.observable.security_domain)
+            if scope_includes(self._visibility, o.observable.security_domain)
+        ]
+        observables += [
+            _controllable_as_observable(c)
+            for c in all_controllables
+            if scope_includes(self._visibility, c.security_domain)
+            and not scope_includes(self._write_scope, c.security_domain)
         ]
         try:
             await optimizer.initialize(
@@ -558,13 +629,12 @@ class Controller:
             for run_number in range(1, self._max_runs_per_task + 1):
                 # Trajectory is owned by _run_task (not _run_single) so the
                 # partial trajectory survives any exception inside the run.
-                trajectory = Trajectory(filtered_scope=scope)
+                trajectory = Trajectory(filtered_scope=self._visibility)
                 try:
                     evaluation, done = await self._run_single(
                         task,
                         target,
                         channel,
-                        scope,
                         run_number,
                         trajectory,
                     )
@@ -696,7 +766,6 @@ class Controller:
         task: Task[Target],
         target: Target,
         channel: EventChannel,
-        scope: Scope,
         run_number: int,
         trajectory: Trajectory,
     ) -> tuple[EvaluationResult, bool]:
@@ -714,15 +783,21 @@ class Controller:
             A tuple of (evaluation, done) where done is True if the
             optimizer wants to stop.
         """
-        assert scope, "scope must contain at least one tag"
+        assert self._visibility, "scope must contain at least one tag"
 
         # Signal run start — optimizer gets filtered view
         await channel.send(RunStartEvent(trajectory=trajectory.filtered))
 
-        # Build the event pipeline: record → filter → send to optimizer
+        # Build the event pipeline: record → filter → send to optimizer.
+        # The filter gets the read & write scope: controllable events under
+        # read-only tags (outside it) are declined with
+        # ControllableNoInjection without consulting the optimizer, but the
+        # recorder (outermost) still records them — being in the full
+        # visibility scope, they stay visible through the optimizer's
+        # filtered trajectory view.
         send_event = compose(
             trajectory_recorder(trajectory),
-            security_domain_filter(scope),
+            security_domain_filter(self._write_scope),
         )(channel.send)
 
         # Target runs — events go through the pipeline
@@ -737,7 +812,7 @@ class Controller:
         filtered_sub = {
             k: v
             for k, v in evaluation.sub_scores.items()
-            if v.security_domain is None or scope_includes(scope, v.security_domain)
+            if v.security_domain is None or scope_includes(self._visibility, v.security_domain)
         }
         filtered_eval = EvaluationResult(
             success=evaluation.success,
@@ -751,7 +826,7 @@ class Controller:
         run_end_eval = filtered_eval if self._include_feedback else None
         run_end = RunEndEvent(
             evaluation=run_end_eval,
-            security_domain=next(iter(scope)),
+            security_domain=next(iter(self._visibility)),
         )
         trajectory.emit(run_end)
         end_response = await channel.send(run_end)
@@ -777,10 +852,15 @@ class Controller:
 
     def _print_summary(self, tmr: ThreatModelResult) -> None:
         """Print a human-readable summary of one threat model."""
-        scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(empty)"
+        scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(none)"
+        if tmr.read_only:
+            ro_names = ", ".join(sorted(t.name for t in tmr.read_only))
+            access = f" read_only=[{ro_names}]"
+        else:
+            access = ""
         model_name = tmr.llm_config.model if tmr.llm_config else "(no LLM)"
         print("\n" + "=" * 60)
-        print(f"Threat model: scope=[{scope_names}] model={model_name}")
+        print(f"Threat model: scope=[{scope_names}]{access} model={model_name}")
         print("=" * 60)
 
         for tr in tmr.task_results:

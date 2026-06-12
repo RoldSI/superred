@@ -86,8 +86,14 @@ class Optimizer(ABC):
 
         Args:
             goal: The adversarial goal.
-            controllables: Available injection points.
-            observables: Global observables describing the target system.
+            controllables: Available injection points — the surfaces the
+                optimizer can inject into.  A surface that is visible but
+                not injectable in this threat model (read-only) is not here;
+                it appears in ``observables`` instead.
+            observables: Readable surfaces describing the target system,
+                including any read-only controllables re-presented as
+                observables (with ``content=None`` — their values arrive at
+                runtime on the trajectory).
             llm_client: The constrained LLM client for this task.
         """
         self._llm_client = llm_client

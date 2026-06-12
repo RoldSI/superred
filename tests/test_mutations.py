@@ -654,6 +654,7 @@ class TestControllerDefaultValues:
 
         result = ThreatModelResult(
             scope=EXTERNAL_SCOPE,
+            read_only=frozenset(),
             llm_config=None,
             task_results=[],
         )
@@ -835,6 +836,7 @@ class TestResultFrozenness:
 
         tmr = ThreatModelResult(
             scope=EXTERNAL_SCOPE,
+            read_only=frozenset(),
             llm_config=None,
             task_results=[],
         )

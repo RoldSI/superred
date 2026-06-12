@@ -136,6 +136,8 @@ Composes middleware left-to-right (first listed = outermost). `compose(a, b)(han
 
 Built-in middleware that filters controllable events by security domain. Events for controllables outside `scope` are answered with `ControllableNoInjection` without reaching the inner handler.
 
+The controller passes its **read & write `scope`** here (not the wider visibility scope, which also includes `read_only` tags): controllable events under tags it does not cover are declined automatically. Because `trajectory_recorder` sits outside the filter, those declined events are still recorded — and, being inside the full visibility scope, remain visible through the optimizer's `FilteredTrajectory`.
+
 ### trajectory_recorder(trajectory)
 
 Built-in middleware that records events and responses directly to the trajectory. Takes only a `trajectory` parameter (no scope). Records `Event` and `EventResponse` objects as they pass through. `RunStartEvent` is NOT persisted. `RunEndEvent` IS persisted (it carries the evaluation result and has `security_domain` set from the scope).
@@ -277,3 +279,7 @@ Immutable after construction via `__setattr__`/`__delattr__` overrides.
 ### scope_includes (function)
 
 `scope_includes(scope: Scope, tag: SecurityDomainTag) -> bool` — helper that checks whether a security domain tag falls within a scope. Returns `True` if `any(s.includes(tag) for s in scope)`.
+
+### Access level (read-only surfaces)
+
+Access level is not a property of a tag — it is expressed at the Controller by which of two `Scope` sets a tag lands in. `scope` is the read & write surface (visible and injectable); the optional `read_only` set adds tags that are visible only. `read_only` defaults to empty, so the whole `scope` is read & write (the classic behavior). Tags listed under `read_only` stay on every filtered view the optimizer sees, but their controllable events are answered with `ControllableNoInjection`. A `read_only` tag already covered by `scope` has no effect (read & write overrules — the injection filter consults `scope` alone, so it stays injectable); `scope` and `read_only` cannot both be empty. This replaces the older module-side pattern of declaring separate `*_readable` subtags and emitting the same information twice.

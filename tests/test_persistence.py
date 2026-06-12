@@ -37,7 +37,7 @@ from superred.core.types.events import (
 )
 from superred.core.types.llm import LLMConfig, LLMUsage
 from superred.core.types.observable import Observable
-from superred.core.types.security_domain import SecurityDomainTag
+from superred.core.types.security_domain import Scope
 from superred.core.types.trajectory import Trajectory
 
 from .conftest import EXTERNAL_TAG, ROOT_TAG, StubTask
@@ -58,20 +58,37 @@ def test_sanitize_segment_replaces_unsafe() -> None:
 
 def test_filename_for_sorts_scope() -> None:
     scope = frozenset({EXTERNAL_TAG, ROOT_TAG})
-    name = _filename_for(scope, None)
+    name = _filename_for(scope, frozenset(), None)
     # ROOT_TAG = "root", EXTERNAL_TAG = "external" — sorted: external, root
     assert name == "external.root__no-llm.json"
 
 
 def test_filename_for_with_model() -> None:
     cfg = LLMConfig(model="openai/gpt-4o-mini", api_base="x", api_key="x")
-    name = _filename_for(frozenset({EXTERNAL_TAG}), cfg)
+    scope = frozenset({EXTERNAL_TAG})
+    name = _filename_for(scope, frozenset(), cfg)
     assert name == "external__openai_gpt-4o-mini.json"
 
 
 def test_filename_for_no_llm() -> None:
-    name = _filename_for(frozenset({EXTERNAL_TAG}), None)
+    scope = frozenset({EXTERNAL_TAG})
+    name = _filename_for(scope, frozenset(), None)
     assert name == "external__no-llm.json"
+
+
+def test_filename_for_marks_read_only() -> None:
+    # read & write external, read-only root visible: read-only tags are
+    # appended as a __ro_ component.
+    name = _filename_for(frozenset({EXTERNAL_TAG}), frozenset({ROOT_TAG}), None)
+    assert name == "external__ro_root__no-llm.json"
+
+
+def test_filename_differs_between_access_modes() -> None:
+    """Two threat models differing only in access mode must not collide."""
+    scope = frozenset({EXTERNAL_TAG})
+    read_write = _filename_for(scope, frozenset(), None)  # all read & write
+    read_only = _filename_for(frozenset(), scope, None)  # nothing writable
+    assert read_write != read_only
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +309,7 @@ def _make_task_result(score: float, success: bool, calls: int = 0, cost: float =
 def test_compute_summary_basic_aggregates() -> None:
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
+        read_only=frozenset(),
         llm_config=None,
         task_results=[
             _make_task_result(0.2, success=False, calls=1, cost=0.001),
@@ -313,6 +331,7 @@ def test_compute_summary_excludes_skipped_from_mean() -> None:
     must not affect the mean. Only n_skipped reflects them."""
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
+        read_only=frozenset(),
         llm_config=None,
         task_results=[_make_task_result(0.4, success=False)],
         skipped_tasks=[StubTask(goal_text="not applicable")],
@@ -328,6 +347,7 @@ def test_compute_summary_no_tasks_yields_null_score() -> None:
     are None rather than crashing on division by zero."""
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
+        read_only=frozenset(),
         llm_config=None,
         task_results=[],
         skipped_tasks=[StubTask(goal_text="x"), StubTask(goal_text="y")],
@@ -345,8 +365,10 @@ def test_compute_summary_no_tasks_yields_null_score() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult:
-    """Build a small ThreatModelResult for round-trip tests."""
+def _build_minimal_tmr(scope: Scope, read_only: Scope = frozenset()) -> ThreatModelResult:
+    """Build a small ThreatModelResult for round-trip tests.
+
+    *read_only* defaults to empty (the whole scope is read & write)."""
     traj = Trajectory()
     end = RunEndEvent(security_domain=EXTERNAL_TAG)
     traj.emit(end)
@@ -365,6 +387,7 @@ def _build_minimal_tmr(scope: frozenset[SecurityDomainTag]) -> ThreatModelResult
     )
     return ThreatModelResult(
         scope=scope,
+        read_only=read_only,
         llm_config=LLMConfig(model="m", api_base="x", api_key="SECRET"),
         task_results=[task_result],
         skipped_tasks=[],
@@ -378,6 +401,7 @@ def test_serialize_claim_level_shape() -> None:
     assert payload["version"] == SCHEMA_VERSION
     datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
     assert payload["scope"] == ["external"]
+    assert payload["read_only"] == []
     assert payload["llm_config"] == {"model": "m", "max_cost": None}
     assert payload["summary"]["n_tasks"] == 1
     assert payload["summary"]["n_success"] == 1
@@ -428,6 +452,7 @@ def test_detail_file_is_self_contained(tmp_path: Path) -> None:
     detail = json.loads(detail_files[0].read_text())
     assert detail["version"] == SCHEMA_VERSION
     assert detail["scope"] == ["external"]
+    assert detail["read_only"] == []
     assert detail["llm_config"] == {"model": "m", "max_cost": None}
     assert detail["task"]["goal"] == "Test goal"
     assert detail["stop_reason"] == "done"
@@ -499,6 +524,7 @@ def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
     )
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
+        read_only=frozenset(),
         llm_config=None,
         task_results=[tr],
     )
@@ -530,6 +556,7 @@ def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
     )
     tmr = ThreatModelResult(
         scope=frozenset({EXTERNAL_TAG}),
+        read_only=frozenset(),
         llm_config=None,
         task_results=[tr],
     )
@@ -537,3 +564,45 @@ def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
     detail = json.loads(next((tmp_path / "external__no-llm").glob("*.json")).read_text())
     content = detail["runs"][0]["trajectory"][0]["content"]
     assert "2026-01-01T12:00:00" in content
+
+
+# ---------------------------------------------------------------------------
+# Read-only surfaces
+# ---------------------------------------------------------------------------
+
+
+def test_claim_and_detail_files_record_read_only(tmp_path: Path) -> None:
+    """When read_only is non-empty, both sets are recorded (claim + detail)
+    and the filename gets a ``__ro_`` component."""
+    # read & write external, read-only root visible.
+    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}), read_only=frozenset({ROOT_TAG}))
+    claim = write_threat_model_result(tmr, tmp_path)
+    assert claim == tmp_path / "external__ro_root__m.json"
+    parsed = json.loads(claim.read_text())
+    assert parsed["scope"] == ["external"]
+    assert parsed["read_only"] == ["root"]
+    detail = json.loads(next((tmp_path / "external__ro_root__m").glob("*.json")).read_text())
+    assert detail["scope"] == ["external"]
+    assert detail["read_only"] == ["root"]
+
+
+def test_no_read_only_component_for_all_read_write(tmp_path: Path) -> None:
+    """All read & write: read_only empty, filename carries no ``__ro_`` component."""
+    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
+    claim = write_threat_model_result(tmr, tmp_path)
+    assert claim == tmp_path / "external__m.json"
+    parsed = json.loads(claim.read_text())
+    assert parsed["scope"] == ["external"]
+    assert parsed["read_only"] == []
+    detail = json.loads(next((tmp_path / "external__m").glob("*.json")).read_text())
+    assert detail["read_only"] == []
+
+
+def test_read_only_filename_differs_from_all_read_write(tmp_path: Path) -> None:
+    """read & write external vs read-only external: distinct filenames."""
+    tmr = _build_minimal_tmr(frozenset(), read_only=frozenset({EXTERNAL_TAG}))
+    claim = write_threat_model_result(tmr, tmp_path)
+    assert claim != tmp_path / "external__m.json"
+    parsed = json.loads(claim.read_text())
+    assert parsed["scope"] == []
+    assert parsed["read_only"] == ["external"]

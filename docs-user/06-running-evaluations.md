@@ -46,7 +46,8 @@ result = await controller.run()                 # -> ThreatModelResult
 | `optimizer_factory` | zero-arg callable returning a fresh `Optimizer` (one per task) |
 | `target_factory` | a `TargetFactory`: how to build the target, and `concurrency` |
 | `security_claim` | the tasks to evaluate |
-| `scope` | a non-empty `frozenset[SecurityDomainTag]`: the attacker's boundary |
+| `scope` | a non-empty `frozenset` of tags: the attacker's visible boundary |
+| `read_only` | optional `frozenset` of extra visible-but-not-injectable tags; omit (default) for all-read & write |
 | `llm_config` | the attacker's model + budget, or omit for non-LLM attackers |
 | `max_runs_per_task` | per-task run cap (>= 1); `None` (default) means 100 |
 | `include_feedback` | whether the optimizer sees evaluation results; default `True` |
@@ -57,7 +58,10 @@ Two things people get wrong coming from older versions:
 - You pass **factories**, not instances (`optimizer_factory=`, `target_factory=`),
   because the Controller builds a fresh one per task.
 - You pass **`scope`** (a `frozenset` of tags), not a single tag. Even a
-  single-boundary scope is `frozenset({tag})`.
+  single-boundary scope is `frozenset({tag})`. By default everything in `scope`
+  is read & write; pass a **`read_only`** set to add tags the attacker can see
+  but not inject into — see
+  [Security Domains](07-security-domains.md#access-levels-read-only-surfaces).
 
 For tests or a single expensive instance, `TargetFactory.singleton(target)`
 wraps one instance and locks `concurrency` to 1. The Controller still calls
