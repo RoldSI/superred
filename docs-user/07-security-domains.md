@@ -241,6 +241,49 @@ Scope determines the attacker's power, narrow to broad:
 
 Always pass a `frozenset`, even for one tag: `scope=frozenset({user_tag})`.
 
+## Per-task scope (advanced)
+
+Usually one Controller runs one fixed scope against every task in the claim. If
+different tasks deserve different access — say a claim where each goal targets a
+different database table, and you want each task scoped to just its own table —
+pass a **resolver** instead of a frozenset. The Controller's `scope` argument
+accepts either a `Scope` or a `Callable[[Task], Scope]`, called once per task.
+
+```python
+from superred.core import ScopeResolver
+from my_target import ORDERS_TAG, CUSTOMERS_TAG   # the target's exported tag singletons
+
+def resolve(task) -> frozenset:
+    if "customer" in task.goal.description:
+        return frozenset({CUSTOMERS_TAG})
+    return frozenset({ORDERS_TAG})
+
+controller = Controller(
+    optimizer_factory=...,
+    target_factory=...,
+    security_claim=claim,
+    scope=resolve,            # a resolver, not a frozenset
+    scope_label="per-table",  # required whenever scope is a callable
+)
+```
+
+Two things to get right:
+
+- **`scope_label` is required** in this mode (a non-empty string) and forbidden
+  in the fixed-scope mode. There is no single scope to name the run by, so the
+  label names it instead — it becomes the persisted filename stem and
+  `ThreatModelResult.scope_label`. Each `TaskResult.scope` then records the
+  scope that task actually ran under.
+- **Return the target's exported tag singletons**, not freshly built tags.
+  Scope matching is by object identity, so import the tags from the target
+  module (as above). A new `SecurityDomainTag("orders")` with the same name will
+  not match and would gate everything out.
+
+A resolver may raise `NotApplicable` to skip a task (it lands in
+`skipped_tasks`, like a `configure_target` skip). Any other exception from the
+resolver — or an empty resolved scope — fails just that one task
+(`stop_reason="error"`) without aborting the rest of the run.
+
 ## Tagging components (quick reference)
 
 ```python

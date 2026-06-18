@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.types.controllable import Controllable
@@ -398,3 +400,179 @@ async def test_include_feedback_false_persists_run_end_with_null_eval(
     end_events = [item for item in traj if item.get("type") == "RunEndEvent"]
     assert len(end_events) == 1
     assert end_events[0]["evaluation"] is None
+
+
+# ---------------------------------------------------------------------------
+# Dynamic per-task scope (resolver) persistence
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicScopePersistence:
+    """End-to-end persistence when the Controller is given a per-task scope
+    *resolver* (``Callable[[Task], Scope]``) plus a ``scope_label``.
+
+    In dynamic mode there is no single concrete run scope: the layout is
+    named by the ``scope_label`` and each per-task detail file records the
+    scope that was actually resolved (and enforced) for THAT task. The
+    claim-level summary then carries an empty top-level ``scope``/``read_only``
+    and the ``scope_label`` field instead.
+    """
+
+    @staticmethod
+    def _per_goal_resolver(task: StubTask) -> Scope:
+        """Give the ``ext`` task EXTERNAL scope and the ``int`` task INTERNAL
+        scope. The two tasks therefore enforce different scopes within one
+        run, which is the whole point of a resolver."""
+        if task.goal.description == "ext":
+            return EXTERNAL_SCOPE
+        return INTERNAL_SCOPE
+
+    async def test_scope_label_names_claim_file_and_subfolder(self, tmp_path: Path) -> None:
+        """The ``scope_label`` (not any concrete scope) drives both the
+        claim filename ``{label}__{model}.json`` and the subfolder
+        ``{label}__{model}/``. No single scope could produce these names:
+        the two tasks live in EXTERNAL and INTERNAL scopes respectively."""
+        controller = Controller(
+            scope=self._per_goal_resolver,
+            scope_label="mixed-bag",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=TwoTagTarget, concurrency=1),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="ext"), StubTask(goal_text="int")],
+            ),
+            llm_config=STUB_LLM_CONFIG,
+            results_dir=tmp_path,
+        )
+        await controller.run()
+
+        claim = tmp_path / "mixed-bag__test-model.json"
+        subfolder = tmp_path / "mixed-bag__test-model"
+        assert claim.exists()
+        assert subfolder.is_dir()
+        # Neither "external" nor "internal" appears in the stem.
+        assert not (tmp_path / "external__test-model.json").exists()
+        assert not (tmp_path / "internal__test-model.json").exists()
+        detail_files = sorted(subfolder.glob("*.json"))
+        assert len(detail_files) == 2
+
+    async def test_per_task_detail_records_own_resolved_scope(self, tmp_path: Path) -> None:
+        """Each per-task detail JSON records THAT task's own resolved scope —
+        the two files therefore disagree on ``scope`` (one external, one
+        internal), which a single run-level scope could never express."""
+        controller = Controller(
+            scope=self._per_goal_resolver,
+            scope_label="mixed-bag",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=TwoTagTarget, concurrency=1),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="ext"), StubTask(goal_text="int")],
+            ),
+            llm_config=STUB_LLM_CONFIG,
+            results_dir=tmp_path,
+        )
+        await controller.run()
+
+        subfolder = tmp_path / "mixed-bag__test-model"
+        # Tasks land in input order: 00001 = ext, 00002 = int.
+        details = [json.loads(p.read_text()) for p in sorted(subfolder.glob("*.json"))]
+        scopes = [d["scope"] for d in details]
+        assert scopes == [["external"], ["internal"]]
+        # Goal-to-scope correspondence is exact, not coincidental ordering.
+        by_goal = {d["task"]["goal"]: d["scope"] for d in details}
+        assert by_goal == {"ext": ["external"], "int": ["internal"]}
+        # No read-only tags configured for this run.
+        assert all(d["read_only"] == [] for d in details)
+
+    async def test_claim_summary_carries_label_and_empty_scope(self, tmp_path: Path) -> None:
+        """The claim-summary JSON records the ``scope_label`` and an EMPTY
+        top-level ``scope``/``read_only`` — the per-task truth lives in the
+        detail files, not the claim summary."""
+        controller = Controller(
+            scope=self._per_goal_resolver,
+            scope_label="mixed-bag",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=TwoTagTarget, concurrency=1),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="ext"), StubTask(goal_text="int")],
+            ),
+            llm_config=STUB_LLM_CONFIG,
+            results_dir=tmp_path,
+        )
+        await controller.run()
+
+        claim = json.loads((tmp_path / "mixed-bag__test-model.json").read_text())
+        assert claim["scope_label"] == "mixed-bag"
+        assert claim["scope"] == []
+        assert claim["read_only"] == []
+        assert claim["summary"]["n_tasks"] == 2
+
+    async def test_rerun_same_dir_and_label_raises_file_exists(self, tmp_path: Path) -> None:
+        """Re-running with the same ``results_dir`` + ``scope_label`` collides
+        on the claim file / subfolder and raises ``FileExistsError`` (just as
+        a static-scope re-run does)."""
+
+        def make_controller() -> Controller:
+            return Controller(
+                scope=self._per_goal_resolver,
+                scope_label="mixed-bag",
+                optimizer_factory=lambda: StubOptimizer(done=True),
+                target_factory=TargetFactory(create=TwoTagTarget, concurrency=1),
+                security_claim=SecurityClaim.from_tasks(
+                    [StubTask(goal_text="ext"), StubTask(goal_text="int")],
+                ),
+                llm_config=STUB_LLM_CONFIG,
+                results_dir=tmp_path,
+            )
+
+        await make_controller().run()
+        with pytest.raises(FileExistsError):
+            await make_controller().run()
+
+    async def test_static_scope_run_unchanged_by_dynamic_feature(self, tmp_path: Path) -> None:
+        """Regression: a STATIC-scope run still writes ``external__test-model.json``
+        exactly as before, with no ``scope_label`` (``None``) and a concrete
+        top-level ``scope``."""
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=TwoTagTarget, concurrency=1),
+            security_claim=SecurityClaim.from_tasks([StubTask(goal_text="ext")]),
+            llm_config=STUB_LLM_CONFIG,
+            results_dir=tmp_path,
+        )
+        await controller.run()
+
+        claim_path = tmp_path / "external__test-model.json"
+        assert claim_path.exists()
+        assert (tmp_path / "external__test-model").is_dir()
+        claim = json.loads(claim_path.read_text())
+        assert claim["scope"] == ["external"]
+        assert claim["scope_label"] is None
+        detail = json.loads(next((tmp_path / "external__test-model").glob("*.json")).read_text())
+        assert detail["scope"] == ["external"]
+
+
+async def test_detail_write_failure_is_contained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing per-task detail write is logged and swallowed; the run still completes."""
+    import superred.core.controller as controller_mod
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(controller_mod, "write_task_detail", _boom)
+    controller = Controller(
+        scope=EXTERNAL_SCOPE,
+        optimizer_factory=lambda: StubOptimizer(done=True),
+        target_factory=TargetFactory(create=lambda: StubTarget(tag=EXTERNAL_TAG)),
+        security_claim=SecurityClaim.from_tasks([StubTask(goal_text="g")]),
+        llm_config=STUB_LLM_CONFIG,
+        results_dir=str(tmp_path),
+    )
+    result = await controller.run()
+    # The detail-write failure was contained: the task still completed and is in
+    # the result, and the claim-summary completion marker was still written.
+    assert len(result.task_results) == 1
+    assert result.task_results[0].stop_reason == "done"
+    assert (tmp_path / "external__test-model.json").exists()

@@ -791,3 +791,208 @@ class TestReadOnlyAccessEndToEnd:
         # 5. The result records the access split.
         assert result.scope == USER_SCOPE
         assert result.read_only == frozenset({INTERNAL})
+
+
+@pytest.mark.integration
+class TestPerTaskScopeEndToEnd:
+    """End-to-end coverage of a per-task ``ScopeResolver`` (a
+    ``Callable[[Task], Scope]`` passed as the controller ``scope``) over a
+    MULTI-task claim. The resolver runs once per task, so different tasks in
+    the same run can be evaluated under different scopes. These tests drive a
+    real controller run and assert that every optimizer-facing surface, the
+    injection outcome, and the persisted artifacts reflect each task's own
+    resolved scope rather than a single run-level scope.
+    """
+
+    async def test_each_task_sees_only_its_scoped_surfaces(self) -> None:
+        """Two tasks, two distinct goals; the resolver maps each goal to a
+        different (disjoint) scope. ``RAGTarget`` exposes ``user_query`` (USER)
+        and ``db_lookup`` (INTERNAL). The USER-scoped task must see only
+        ``user_query`` and the INTERNAL-scoped task only ``db_lookup``, and
+        each ``TaskResult.scope`` must equal the scope the resolver picked.
+        """
+        # goal description -> controllable names the optimizer was initialized with
+        seen_controllables: dict[str, list[str]] = {}
+        seen_observables: dict[str, list[str]] = {}
+
+        class InspectingOptimizer(AdaptiveOptimizer):
+            async def initialize(
+                self,
+                goal: Goal,
+                controllables: list[Controllable],
+                observables: list[ObservableValue],
+                llm_client: LLMClient,
+            ) -> None:
+                seen_controllables[goal.description] = [c.name for c in controllables]
+                seen_observables[goal.description] = [o.observable.name for o in observables]
+                await super().initialize(goal, controllables, observables, llm_client)
+
+        task_user = SecretExtractionTask(secret="USER_SECRET")
+        task_internal = SecretExtractionTask(secret="INTERNAL_SECRET")
+        # Distinct goals so the resolver can tell the tasks apart by goal text.
+        assert task_user.goal.description != task_internal.goal.description
+
+        def resolver(task: Task) -> Scope:
+            if "USER_SECRET" in task.goal.description:
+                return USER_SCOPE
+            return frozenset({INTERNAL})
+
+        controller = Controller(
+            scope=resolver,
+            scope_label="per-task-disjoint",
+            optimizer_factory=lambda: InspectingOptimizer(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
+            security_claim=SecurityClaim.from_tasks([task_user, task_internal]),
+            llm_config=_LLM_CONFIG,
+            max_runs_per_task=1,
+        )
+        tmr = await controller.run()
+
+        # The run-level result carries the label; per-task truth lives on each
+        # TaskResult.scope (run-level scope/read_only are empty in dynamic mode).
+        assert tmr.scope_label == "per-task-disjoint"
+        assert tmr.scope == frozenset()
+        assert tmr.read_only == frozenset()
+
+        by_goal = {tr.task.goal.description: tr for tr in tmr.task_results}
+        tr_user = by_goal[task_user.goal.description]
+        tr_internal = by_goal[task_internal.goal.description]
+
+        # Each task's enforced scope matches the resolver's intent.
+        assert tr_user.scope == USER_SCOPE
+        assert tr_internal.scope == frozenset({INTERNAL})
+        assert tr_user.read_only == frozenset()
+        assert tr_internal.read_only == frozenset()
+
+        # Surface gating: the USER task saw only user_query; the INTERNAL task
+        # saw only db_lookup. The surfaces are disjoint precisely because the
+        # scopes are sibling subtrees, not ancestor/descendant.
+        assert seen_controllables[task_user.goal.description] == ["user_query"]
+        assert seen_controllables[task_internal.goal.description] == ["db_lookup"]
+
+        # The only declared observable is EXTERNAL (system_desc); neither USER
+        # nor INTERNAL includes EXTERNAL, so neither task sees it.
+        assert seen_observables[task_user.goal.description] == []
+        assert seen_observables[task_internal.goal.description] == []
+
+    async def test_per_task_scope_flips_injection_outcome(self) -> None:
+        """``_TwoChannelTarget`` fires an EXTERNAL event then an INTERNAL one.
+        With a resolver that scopes task0 to EXTERNAL and task1 to INTERNAL,
+        the SAME optimizer injects external_input / declines internal_input on
+        task0, and the reverse on task1 -- a per-task flip observed end-to-end
+        on each task's trajectory.
+        """
+        from .conftest import StubTarget, StubTask
+
+        # Local two-channel target: fires one EXTERNAL controllable event then
+        # one INTERNAL one per run (mirrors test_controller._TwoChannelTarget,
+        # which is module-local there and awkward to import cross-module).
+        class _TwoChannelTarget(StubTarget):
+            async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
+                self.run_count += 1
+                external = Controllable(name="external_input", security_domain=EXTERNAL)
+                internal = Controllable(name="internal_input", security_domain=INTERNAL)
+                await send_event(ControllablePreCallEvent(controllable=external, request="ext_q"))
+                await send_event(ControllablePreCallEvent(controllable=internal, request="int_q"))
+
+        task0 = StubTask(goal_text="flip-task-EXTERNAL")
+        task1 = StubTask(goal_text="flip-task-INTERNAL")
+
+        def resolver(task: Task) -> Scope:
+            if task.goal.description == "flip-task-EXTERNAL":
+                return EXTERNAL_SCOPE
+            return frozenset({INTERNAL})
+
+        controller = Controller(
+            scope=resolver,
+            scope_label="injection-flip",
+            optimizer_factory=lambda: AdaptiveOptimizer(),
+            target_factory=TargetFactory.singleton(_TwoChannelTarget()),
+            security_claim=SecurityClaim.from_tasks([task0, task1]),
+            llm_config=_LLM_CONFIG,
+            max_runs_per_task=1,
+        )
+        tmr = await controller.run()
+
+        by_goal = {tr.task.goal.description: tr for tr in tmr.task_results}
+
+        def injected_declined(goal_text: str) -> tuple[list[str], list[str]]:
+            snap = by_goal[goal_text].runs[0].trajectory.snapshot()
+            injected = [r.controllable.name for r in snap if isinstance(r, ControllableInjection)]
+            declined = [r.controllable.name for r in snap if isinstance(r, ControllableNoInjection)]
+            return injected, declined
+
+        ext_injected, ext_declined = injected_declined("flip-task-EXTERNAL")
+        assert ext_injected == ["external_input"]
+        assert ext_declined == ["internal_input"]
+
+        int_injected, int_declined = injected_declined("flip-task-INTERNAL")
+        assert int_injected == ["internal_input"]
+        assert int_declined == ["external_input"]
+
+        # Each task's recorded enforced scope matches the flip.
+        assert by_goal["flip-task-EXTERNAL"].scope == EXTERNAL_SCOPE
+        assert by_goal["flip-task-INTERNAL"].scope == frozenset({INTERNAL})
+
+    async def test_persisted_detail_files_record_per_task_scope(self, tmp_path) -> None:
+        """With ``results_dir`` set, dynamic mode names the claim file/subfolder
+        by the (sanitized) ``scope_label``, and each per-task detail JSON records
+        THAT task's own resolved scope -- so the two detail files differ.
+        """
+        import json
+
+        task_user = SecretExtractionTask(secret="PERSIST_USER")
+        task_internal = SecretExtractionTask(secret="PERSIST_INTERNAL")
+
+        def resolver(task: Task) -> Scope:
+            if "PERSIST_USER" in task.goal.description:
+                return USER_SCOPE
+            return frozenset({INTERNAL})
+
+        controller = Controller(
+            scope=resolver,
+            scope_label="persist label/v1",  # contains chars needing sanitizing
+            optimizer_factory=lambda: AdaptiveOptimizer(),
+            target_factory=TargetFactory.singleton(RAGTarget()),
+            security_claim=SecurityClaim.from_tasks([task_user, task_internal]),
+            llm_config=_LLM_CONFIG,
+            max_runs_per_task=1,
+            results_dir=tmp_path,
+        )
+        await controller.run()
+
+        # The claim file/subfolder stem is the sanitized label + model, not a
+        # concrete scope (no run-level scope exists in dynamic mode).
+        claim_files = sorted(p.name for p in tmp_path.glob("*.json"))
+        assert len(claim_files) == 1
+        claim_name = claim_files[0]
+        assert claim_name.endswith("__test-model.json")
+        # The label is sanitized into the stem (no raw '/' or space).
+        assert "/" not in claim_name
+        assert " " not in claim_name
+
+        claim_payload = json.loads((tmp_path / claim_name).read_text())
+        # Claim-level: label carries identity; scope/read_only are empty arrays.
+        assert claim_payload["scope_label"] == "persist label/v1"
+        assert claim_payload["scope"] == []
+        assert claim_payload["read_only"] == []
+        assert claim_payload["version"] == 2
+
+        subfolder = tmp_path / claim_name.removesuffix(".json")
+        assert subfolder.is_dir()
+        detail_files = sorted(subfolder.glob("*.json"))
+        assert len(detail_files) == 2
+
+        details_by_goal = {
+            json.loads(f.read_text())["task"]["goal"]: json.loads(f.read_text())
+            for f in detail_files
+        }
+        user_detail = details_by_goal[task_user.goal.description]
+        internal_detail = details_by_goal[task_internal.goal.description]
+
+        # The two detail files record DIFFERENT scopes (per-task truth).
+        assert user_detail["scope"] == ["user"]
+        assert internal_detail["scope"] == ["internal"]
+        assert user_detail["scope"] != internal_detail["scope"]
+        assert user_detail["read_only"] == []
+        assert internal_detail["read_only"] == []

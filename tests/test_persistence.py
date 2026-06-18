@@ -40,7 +40,7 @@ from superred.core.types.observable import Observable
 from superred.core.types.security_domain import Scope
 from superred.core.types.trajectory import Trajectory
 
-from .conftest import EXTERNAL_TAG, ROOT_TAG, StubTask
+from .conftest import EXTERNAL_TAG, INTERNAL_TAG, ROOT_TAG, StubTask
 
 # ---------------------------------------------------------------------------
 # Sanitization & filenames
@@ -606,3 +606,64 @@ def test_read_only_filename_differs_from_all_read_write(tmp_path: Path) -> None:
     parsed = json.loads(claim.read_text())
     assert parsed["scope"] == []
     assert parsed["read_only"] == ["external"]
+
+
+# ---------------------------------------------------------------------------
+# Dynamic per-task scope (offline one-shot writer)
+# ---------------------------------------------------------------------------
+
+
+def _dynamic_task_result(goal: str, scope: Scope) -> TaskResult:
+    """A TaskResult carrying its OWN per-task scope (the dynamic-mode shape:
+    the run-level ThreatModelResult.scope is empty, the truth is per task)."""
+    traj = Trajectory()
+    traj.emit(RunEndEvent(security_domain=next(iter(scope))))
+    primary = Score(value=0.5)
+    ev = EvaluationResult(success=False, primary_score=primary)
+    run = RunResult(trajectory=traj, evaluation=ev, llm_usage=LLMUsage())
+    return TaskResult(
+        task=StubTask(goal_text=goal),
+        runs=[run],
+        best_score=primary,
+        best_evaluation=ev,
+        success=False,
+        llm_usage=LLMUsage(),
+        stop_reason="done",
+        scope=scope,
+        read_only=frozenset(),
+    )
+
+
+def test_write_dynamic_threat_model_lays_out_by_label(tmp_path: Path) -> None:
+    """A hand-built dynamic ThreatModelResult (empty run-level scope, a
+    ``scope_label``, and TaskResults carrying differing per-task scopes) is
+    written offline: the layout is named by the label and each detail file
+    records its task's own resolved scope."""
+    tmr = ThreatModelResult(
+        scope=frozenset(),
+        read_only=frozenset(),
+        llm_config=LLMConfig(model="m", api_base="x", api_key="SECRET"),
+        task_results=[
+            _dynamic_task_result("ext", frozenset({EXTERNAL_TAG})),
+            _dynamic_task_result("int", frozenset({INTERNAL_TAG})),
+        ],
+        scope_label="mixed-bag",
+    )
+    claim = write_threat_model_result(tmr, tmp_path)
+
+    # Layout named by the label, not by any concrete scope.
+    assert claim == tmp_path / "mixed-bag__m.json"
+    subfolder = tmp_path / "mixed-bag__m"
+    assert subfolder.is_dir()
+
+    parsed = json.loads(claim.read_text())
+    assert parsed["scope_label"] == "mixed-bag"
+    assert parsed["scope"] == []
+    assert parsed["read_only"] == []
+
+    # Detail files (00001=ext, 00002=int) carry differing per-task scopes.
+    details = [json.loads(p.read_text()) for p in sorted(subfolder.glob("*.json"))]
+    assert {d["task"]["goal"]: d["scope"] for d in details} == {
+        "ext": ["external"],
+        "int": ["internal"],
+    }

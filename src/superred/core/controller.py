@@ -36,7 +36,7 @@ import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from superred.core.channel import EventChannel
 from superred.core.interfaces.optimizer import Optimizer
@@ -64,8 +64,30 @@ logger = logging.getLogger(__name__)
 # Type alias for optimizer factories.
 OptimizerFactory = Callable[[], Optimizer]
 
+# Type alias for a per-task scope resolver: given the Task about to run,
+# return the read & write Scope to enforce for it.  Pass one as ``scope`` to
+# the Controller (in place of a fixed ``Scope``) for dynamic per-task scoping;
+# resolvers must return the target's exported tag singletons (scope matching is
+# by identity).
+ScopeResolver = Callable[[Task[Target]], Scope]
+
 # Reason a task's run loop ended.
 StopReason = Literal["done", "max_runs", "budget_exhausted", "error"]
+
+
+@dataclass(frozen=True)
+class _TaskScope:
+    """The security scope enforced for one task (resolved once per task).
+
+    ``write`` is the read & write (injectable) scope, ``read_only`` the
+    visible-but-not-injectable tags, and ``visibility = write | read_only`` is
+    everything the optimizer can see.  In static-scope mode every task shares
+    the same value; with a per-task resolver ``write`` is resolved per task.
+    """
+
+    write: Scope
+    read_only: Scope
+    visibility: Scope
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +183,11 @@ class TaskResult:
             was raised by the LLM client.  ``"error"`` means an unexpected
             exception escaped the optimizer, target, or evaluator and the
             task was abandoned.
+        scope: The read & write scope actually enforced for this task.  In
+            static-scope mode it equals the controller's ``scope``; with a
+            per-task resolver it is the scope resolved for this task (the
+            source of truth, since ``ThreatModelResult.scope`` is empty then).
+        read_only: The visible-but-not-injectable tags enforced for this task.
         error: Formatted exception (type + message + traceback) when the
             task ended with ``stop_reason="error"``; ``None`` otherwise.
             Lands in the persisted JSON for offline debugging.
@@ -173,6 +200,8 @@ class TaskResult:
     success: bool
     llm_usage: LLMUsage
     stop_reason: StopReason
+    scope: Scope = frozenset()
+    read_only: Scope = frozenset()
     error: str | None = None
 
 
@@ -181,13 +210,18 @@ class ThreatModelResult:
     """Results for a single threat model (scope + LLM config combination).
 
     Attributes:
-        scope: The read & write scope tested (visible and injectable).
+        scope: The read & write scope tested (visible and injectable).  In
+            dynamic (per-task resolver) mode there is no single run scope, so
+            this is empty and ``scope_label`` carries the run identity; the
+            scope actually enforced per task lives on ``TaskResult.scope``.
         read_only: Extra visible-but-not-injectable tags (empty for an
-            all-read & write run).
+            all-read & write run, and empty in dynamic mode).
         llm_config: The LLM configuration used, or ``None`` when no LLM
             configs were provided.
         task_results: Results for each evaluated task.
         skipped_tasks: Tasks that raised NotApplicable during configure.
+        scope_label: Run identity when scope is resolved per task (the
+            ``scope_label`` passed to the Controller); ``None`` in static mode.
     """
 
     scope: Scope
@@ -195,6 +229,7 @@ class ThreatModelResult:
     llm_config: LLMConfig | None
     task_results: list[TaskResult]
     skipped_tasks: list[Task[Target]] = field(default_factory=list)
+    scope_label: str | None = None
 
 
 def _format_exception(exc: BaseException) -> str:
@@ -234,13 +269,17 @@ def _synthesize_empty_task_result(
     rationale: str,
     usage: LLMUsage = LLMUsage(),
     exc: BaseException | None = None,
+    scope: Scope = frozenset(),
+    read_only: Scope = frozenset(),
 ) -> TaskResult:
     """Build a zero-score TaskResult for a task whose run loop never produced a run.
 
     Used by the error and budget-exhausted paths that abandon a task before
     any run completes. When *exc* is provided its formatted traceback is
     stored on ``TaskResult.error`` so the failure is recoverable from the
-    persisted detail file.
+    persisted detail file.  *scope*/*read_only* record the scope that was (or
+    would have been) enforced for the task; they are empty when the failure
+    happened before the per-task scope could be resolved.
     """
     zero = Score(value=0.0, name="primary")
     return TaskResult(
@@ -256,6 +295,8 @@ def _synthesize_empty_task_result(
         success=False,
         llm_usage=usage,
         stop_reason=stop_reason,
+        scope=scope,
+        read_only=read_only,
         error=_format_exception(exc) if exc is not None else None,
     )
 
@@ -298,12 +339,17 @@ class Controller:
             declares how many tasks may run in parallel against
             independent instances (see :class:`TargetFactory`).
         security_claim: The collection of tasks to evaluate.
-        scope: The read & write security domain scope: the
-            ``frozenset[SecurityDomainTag]`` the attacker can both *see*
-            and *inject* into.  Controllables, observables, trajectory
-            entries, and feedback sub-scores under these tags (and their
-            descendants) are exposed to the optimizer, and its
-            controllable events are offered for injection.
+        scope: Either a fixed read & write security domain scope (a
+            ``frozenset[SecurityDomainTag]`` the attacker can both *see* and
+            *inject* into) applied to every task, OR a ``ScopeResolver``
+            (``Callable[[Task], Scope]``) resolved once per task to vary the
+            scope per task (e.g. grant only the task-relevant tool).  A
+            resolver MUST return the target's exported tag singletons (scope
+            matching is by identity), may raise ``NotApplicable`` to skip a
+            task, and requires ``scope_label`` (below).  Controllables,
+            observables, trajectory entries, and feedback sub-scores under the
+            (resolved) scope tags and their descendants are exposed to the
+            optimizer, and its controllable events are offered for injection.
         read_only: Extra tags the attacker can *see* but not inject into.
             Empty (default) means the whole ``scope`` is read & write
             (the classic behavior).  Tags here (and their descendants)
@@ -327,8 +373,15 @@ class Controller:
             the completed threat model is written atomically to
             ``{results_dir}/{scope}__{model}.json`` (plus a sibling
             subfolder with per-task detail files) when ``run()`` finishes.
+            In dynamic-scope mode the ``{scope}`` stem is the ``scope_label``
+            and each detail file records that task's own resolved scope.
             ``LLMConfig.api_key`` and ``api_base`` are excluded;
             trajectory contents are not scrubbed for secrets.
+        scope_label: Required (and only valid) when ``scope`` is a resolver:
+            a short path-safe name identifying the run, used for the persisted
+            filename stem and ``ThreatModelResult.scope_label`` (since no
+            single concrete scope names the run).  Must be ``None`` in static
+            mode.
     """
 
     DEFAULT_MAX_RUNS_PER_TASK = 100
@@ -338,22 +391,43 @@ class Controller:
         optimizer_factory: OptimizerFactory,
         target_factory: TargetFactory,
         security_claim: SecurityClaim[Target],
-        scope: Scope,
+        scope: Scope | ScopeResolver,
         read_only: Scope = frozenset(),
         llm_config: LLMConfig | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
+        scope_label: str | None = None,
     ) -> None:
-        # ``scope`` is the read & write surface (visible AND injectable);
-        # ``read_only`` adds tags that are visible but not injectable.
-        # By default ``read_only`` is empty, so the whole scope is
-        # read & write (the classic behavior).
-        self._write_scope: Scope = scope  # injectable
-        self._read_only: Scope = read_only  # visible but not injectable
-        self._visibility: Scope = scope | read_only  # everything the optimizer sees
-        if not self._visibility:
-            raise ValueError("scope and read_only cannot both be empty")
+        # ``scope`` is either a fixed read & write Scope (visible AND
+        # injectable; the classic behavior) or a Callable[[Task], Scope]
+        # resolved once per task (dynamic per-task scoping).  ``read_only``
+        # adds visible-but-not-injectable tags and is fixed for the whole run.
+        # ``scope_label`` names the persisted artifacts in dynamic mode (where
+        # no single concrete scope exists to name the run): required then,
+        # forbidden otherwise.
+        self._dynamic_scope: bool = callable(scope)
+        self._read_only: Scope = read_only
+        self._scope_label: str | None = scope_label
+        if self._dynamic_scope:
+            self._resolve_write_scope: ScopeResolver = cast("ScopeResolver", scope)
+            if not (scope_label and scope_label.strip()):
+                raise ValueError(
+                    "scope_label is required (non-empty) when scope is a callable resolver"
+                )
+            # No single run-level scope; each TaskResult.scope is the source of
+            # truth and the naming scope is empty.
+            self._naming_scope: Scope = frozenset()
+            self._naming_read_only: Scope = frozenset()
+        else:
+            static_scope = cast("Scope", scope)
+            if not (static_scope | read_only):
+                raise ValueError("scope and read_only cannot both be empty")
+            if scope_label is not None:
+                raise ValueError("scope_label is only valid when scope is a callable resolver")
+            self._resolve_write_scope = lambda _task: static_scope
+            self._naming_scope = static_scope
+            self._naming_read_only = read_only
         resolved_max_runs = (
             self.DEFAULT_MAX_RUNS_PER_TASK if max_runs_per_task is None else max_runs_per_task
         )
@@ -366,6 +440,24 @@ class Controller:
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
+
+    def _task_scope_for(self, task: Task[Target]) -> _TaskScope:
+        """Resolve the scope enforced for *task* (once per task).
+
+        In static mode this returns the fixed scope for every task; with a
+        per-task resolver it calls the resolver.  Raises ``ValueError`` if the
+        resolved visibility (``write | read_only``) is empty, so the dynamic
+        path keeps the same non-empty guarantee the static ``__init__`` check
+        gives.  The caller (``run_one``) contains this as a per-task error.
+        """
+        write = self._resolve_write_scope(task)
+        visibility = write | self._read_only
+        if not visibility:
+            raise ValueError(
+                "resolved scope and read_only cannot both be empty for task "
+                f"{task.goal.description!r}"
+            )
+        return _TaskScope(write=write, read_only=self._read_only, visibility=visibility)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -420,9 +512,15 @@ class Controller:
 
         subfolder: Path | None = None
         if self._results_dir is not None:
-            # Up-front so FileExistsError fires before any task runs.
+            # Up-front so FileExistsError fires before any task runs.  Naming
+            # uses the run-level scope (static mode) or the scope_label
+            # (dynamic mode); persistence derives the filename stem from these.
             subfolder = prepare_results_dir(
-                self._results_dir, self._write_scope, self._read_only, self._llm_config
+                self._results_dir,
+                self._naming_scope,
+                self._naming_read_only,
+                self._llm_config,
+                self._scope_label,
             )
 
         async def run_one(
@@ -438,52 +536,81 @@ class Controller:
             persistence is disabled or the task was skipped).
             """
             async with sem:
-                # ``factory.create()`` may itself raise (e.g. a target whose
-                # __init__ does network setup).  Contain it here so one
-                # bad task can't take down the rest of the threat model
-                # via ``asyncio.gather``'s first-exception behavior.
                 outcome: TaskResult | Task[Target]
+                # Resolve the per-task scope first (constant in static mode).
+                # A resolver may raise NotApplicable to skip the task, or fail
+                # / return an empty scope -> contained here as a per-task error
+                # so one bad task can't abort the threat model.
                 try:
-                    target = self._target_factory.create()
+                    task_scope = self._task_scope_for(task)
+                except NotApplicable:
+                    logger.info(
+                        "Task %r not applicable (scope resolver), skipping",
+                        task.goal.description,
+                    )
+                    return task, None
                 except Exception as exc:
                     logger.exception(
-                        "Task %r: target_factory.create() failed, recording as error",
+                        "Task %r: scope resolver failed, recording as error",
                         task.goal.description,
                     )
                     outcome = _synthesize_empty_task_result(
                         task,
                         stop_reason="error",
-                        rationale="Unexpected error before run loop started.",
+                        rationale="Scope resolver failed before run loop started.",
                         exc=exc,
                     )
                 else:
+                    # ``factory.create()`` may itself raise (e.g. a target whose
+                    # __init__ does network setup).  Contain it here so one
+                    # bad task can't take down the rest of the threat model
+                    # via ``asyncio.gather``'s first-exception behavior.
                     try:
+                        target = self._target_factory.create()
+                    except Exception as exc:
+                        logger.exception(
+                            "Task %r: target_factory.create() failed, recording as error",
+                            task.goal.description,
+                        )
+                        outcome = _synthesize_empty_task_result(
+                            task,
+                            stop_reason="error",
+                            rationale="Unexpected error before run loop started.",
+                            exc=exc,
+                            scope=task_scope.write,
+                            read_only=task_scope.read_only,
+                        )
+                    else:
                         try:
-                            outcome = await self._run_task(task, target)
-                        except NotApplicable:
-                            logger.info(
-                                "Task %r not applicable, skipping",
-                                task.goal.description,
-                            )
-                            outcome = task
-                        except Exception as exc:
-                            logger.exception(
-                                "Task %r: unexpected error before run loop, recording as error",
-                                task.goal.description,
-                            )
-                            outcome = _synthesize_empty_task_result(
-                                task,
-                                stop_reason="error",
-                                rationale="Unexpected error before run loop started.",
-                                exc=exc,
-                            )
-                    finally:
-                        # Released before the next task's semaphore slot opens.
-                        await _swallow(target.teardown(), "target.teardown post-task")
+                            try:
+                                outcome = await self._run_task(task, target, task_scope)
+                            except NotApplicable:
+                                logger.info(
+                                    "Task %r not applicable, skipping",
+                                    task.goal.description,
+                                )
+                                outcome = task
+                            except Exception as exc:
+                                logger.exception(
+                                    "Task %r: unexpected error before run loop, recording as error",
+                                    task.goal.description,
+                                )
+                                outcome = _synthesize_empty_task_result(
+                                    task,
+                                    stop_reason="error",
+                                    rationale="Unexpected error before run loop started.",
+                                    exc=exc,
+                                    scope=task_scope.write,
+                                    read_only=task_scope.read_only,
+                                )
+                        finally:
+                            # Released before the next task's semaphore slot opens.
+                            await _swallow(target.teardown(), "target.teardown post-task")
 
                 # Incremental write. Basename is computed up front so the
                 # summary can record the intended path even if the write
-                # itself raises; skipped tasks have no detail file.
+                # itself raises; skipped tasks have no detail file.  The detail
+                # file records the task's own enforced scope (read from outcome).
                 detail_basename: str | None = None
                 if subfolder is not None and isinstance(outcome, TaskResult):
                     detail_basename = task_detail_filename(index, outcome.task.goal.description)
@@ -492,8 +619,6 @@ class Controller:
                             subfolder,
                             detail_basename,
                             outcome,
-                            self._write_scope,
-                            self._read_only,
                             self._llm_config,
                         )
                     except Exception:
@@ -522,11 +647,12 @@ class Controller:
                 skipped_tasks.append(outcome)
 
         result = ThreatModelResult(
-            scope=self._write_scope,
-            read_only=self._read_only,
+            scope=self._naming_scope,
+            read_only=self._naming_read_only,
             llm_config=self._llm_config,
             task_results=task_results,
             skipped_tasks=skipped_tasks,
+            scope_label=self._scope_label,
         )
         return result, task_file_basenames
 
@@ -538,13 +664,15 @@ class Controller:
         self,
         task: Task[Target],
         target: Target,
+        task_scope: _TaskScope,
     ) -> TaskResult:
         """Run the optimizer loop for a single task.
 
         A fresh optimizer and :class:`LLMClient` are created for each call;
-        the caller (``_iterate_tasks``) supplies a fresh target and owns
-        its teardown after this returns.  Scope and LLM config are read
-        from ``self`` (constant for the threat model).
+        the caller (``_iterate_tasks``) supplies a fresh target and owns its
+        teardown after this returns.  *task_scope* is the scope enforced for
+        this task (resolved once by the caller); LLM config is read from
+        ``self`` (constant for the threat model).
         """
         # Configure target (NotApplicable propagates to caller)
         await task.configure_target(target)
@@ -561,20 +689,20 @@ class Controller:
         # in ``observables`` instead, so the list it can inject into is honest.
         all_controllables = target.get_controllables()
         controllables = [
-            c for c in all_controllables if scope_includes(self._write_scope, c.security_domain)
+            c for c in all_controllables if scope_includes(task_scope.write, c.security_domain)
         ]
         # Readable surfaces: in-visibility observables, plus read-only
         # controllables re-presented as observables.
         observables = [
             o
             for o in target.get_observables()
-            if scope_includes(self._visibility, o.observable.security_domain)
+            if scope_includes(task_scope.visibility, o.observable.security_domain)
         ]
         observables += [
             _controllable_as_observable(c)
             for c in all_controllables
-            if scope_includes(self._visibility, c.security_domain)
-            and not scope_includes(self._write_scope, c.security_domain)
+            if scope_includes(task_scope.visibility, c.security_domain)
+            and not scope_includes(task_scope.write, c.security_domain)
         ]
         try:
             await optimizer.initialize(
@@ -597,6 +725,8 @@ class Controller:
                 stop_reason="budget_exhausted",
                 rationale="LLM budget exhausted before first run completed.",
                 usage=llm_client.usage if llm_client else LLMUsage(),
+                scope=task_scope.write,
+                read_only=task_scope.read_only,
             )
         except Exception:
             # Tear down before re-raising so the optimizer doesn't leak;
@@ -629,7 +759,7 @@ class Controller:
             for run_number in range(1, self._max_runs_per_task + 1):
                 # Trajectory is owned by _run_task (not _run_single) so the
                 # partial trajectory survives any exception inside the run.
-                trajectory = Trajectory(filtered_scope=self._visibility)
+                trajectory = Trajectory(filtered_scope=task_scope.visibility)
                 try:
                     evaluation, done = await self._run_single(
                         task,
@@ -637,6 +767,7 @@ class Controller:
                         channel,
                         run_number,
                         trajectory,
+                        task_scope,
                     )
                 except BudgetExhaustedError:
                     logger.info(
@@ -758,6 +889,8 @@ class Controller:
             success=success,
             llm_usage=task_usage,
             stop_reason=stop_reason,
+            scope=task_scope.write,
+            read_only=task_scope.read_only,
             error=error_text,
         )
 
@@ -768,6 +901,7 @@ class Controller:
         channel: EventChannel,
         run_number: int,
         trajectory: Trajectory,
+        task_scope: _TaskScope,
     ) -> tuple[EvaluationResult, bool]:
         """Execute a single optimizer iteration (one target run + evaluation).
 
@@ -783,7 +917,7 @@ class Controller:
             A tuple of (evaluation, done) where done is True if the
             optimizer wants to stop.
         """
-        assert self._visibility, "scope must contain at least one tag"
+        assert task_scope.visibility, "scope must contain at least one tag"
 
         # Signal run start — optimizer gets filtered view
         await channel.send(RunStartEvent(trajectory=trajectory.filtered))
@@ -797,7 +931,7 @@ class Controller:
         # filtered trajectory view.
         send_event = compose(
             trajectory_recorder(trajectory),
-            security_domain_filter(self._write_scope),
+            security_domain_filter(task_scope.write),
         )(channel.send)
 
         # Target runs — events go through the pipeline
@@ -812,7 +946,7 @@ class Controller:
         filtered_sub = {
             k: v
             for k, v in evaluation.sub_scores.items()
-            if v.security_domain is None or scope_includes(self._visibility, v.security_domain)
+            if v.security_domain is None or scope_includes(task_scope.visibility, v.security_domain)
         }
         filtered_eval = EvaluationResult(
             success=evaluation.success,
@@ -826,7 +960,7 @@ class Controller:
         run_end_eval = filtered_eval if self._include_feedback else None
         run_end = RunEndEvent(
             evaluation=run_end_eval,
-            security_domain=next(iter(self._visibility)),
+            security_domain=next(iter(task_scope.visibility)),
         )
         trajectory.emit(run_end)
         end_response = await channel.send(run_end)
@@ -852,15 +986,19 @@ class Controller:
 
     def _print_summary(self, tmr: ThreatModelResult) -> None:
         """Print a human-readable summary of one threat model."""
-        scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(none)"
-        if tmr.read_only:
-            ro_names = ", ".join(sorted(t.name for t in tmr.read_only))
-            access = f" read_only=[{ro_names}]"
-        else:
-            access = ""
         model_name = tmr.llm_config.model if tmr.llm_config else "(no LLM)"
+        if tmr.scope_label is not None:
+            # Dynamic mode: no single run scope; show the label.
+            scope_desc = f"{tmr.scope_label} (per-task)"
+        else:
+            scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(none)"
+            if tmr.read_only:
+                ro_names = ", ".join(sorted(t.name for t in tmr.read_only))
+                scope_desc = f"[{scope_names}] read_only=[{ro_names}]"
+            else:
+                scope_desc = f"[{scope_names}]"
         print("\n" + "=" * 60)
-        print(f"Threat model: scope=[{scope_names}]{access} model={model_name}")
+        print(f"Threat model: scope={scope_desc} model={model_name}")
         print("=" * 60)
 
         for tr in tmr.task_results:
