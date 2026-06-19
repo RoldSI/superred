@@ -2,12 +2,13 @@
 
 ## v0.2.0 (unreleased)
 
-### Per-task scope: `scope` may be a `ScopeResolver` (additive)
+### Per-task scope: `scope` and `read_only` may be a `ScopeResolver` (additive)
 
-`Controller(scope=...)` now also accepts a `ScopeResolver` —
-`Callable[[Task], Scope]` (exported as `superred.core.ScopeResolver`) —
-resolved once per task, in addition to the classic fixed `Scope`. This is
-purely additive: passing a `frozenset` behaves exactly as before.
+`Controller(scope=...)` and `Controller(read_only=...)` now each also accept a
+`ScopeResolver` (`Callable[[Task], Scope]`, exported as
+`superred.core.ScopeResolver`), resolved once per task (independently of each
+other), in addition to the classic fixed `Scope`. This is purely additive:
+passing a `frozenset` behaves exactly as before.
 
 ```python
 from superred.core import ScopeResolver
@@ -22,12 +23,15 @@ controller = Controller(
 What's new:
 
 - **`scope_label: str | None = None`** new constructor arg. Required (non-empty
-  `str`) when `scope` is a callable; must be `None` when `scope` is a fixed
-  frozenset (else `ValueError`). The fixed-scope non-empty `(scope | read_only)`
-  check is unchanged.
-- The resolver may raise `NotApplicable` to skip a task (`skipped_tasks`). Any
-  other exception, or an empty resolved visibility, fails just that task
-  (`stop_reason="error"`) and leaves siblings running.
+  `str`) when **either** `scope` or `read_only` is a callable; must be `None`
+  when **both** are fixed frozensets (else `ValueError`). The fixed-scope
+  non-empty `(scope | read_only)` check is unchanged.
+- Either resolver may raise `NotApplicable`, which contributes an empty set for
+  its own dimension, exactly like returning `frozenset()`. The task is skipped
+  (`skipped_tasks`) when the resolved visibility (`scope | read_only`) is empty,
+  i.e. no tag is granted in either dimension; any tag (read or write, from
+  either resolver) means the task runs. A resolver raising any other exception
+  fails just that task (`stop_reason="error"`) and leaves siblings running.
 - **`TaskResult.scope` and `TaskResult.read_only`** new fields (default
   `frozenset()`) recording the scope enforced for that task. In static mode
   every `TaskResult.scope` equals the controller scope; with a resolver it is

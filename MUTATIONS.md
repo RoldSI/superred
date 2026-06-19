@@ -142,19 +142,19 @@ operation, or return value, consistent with the 100% line-and-branch coverage of
 the diff. The 37 `controller.py` survivors are all equivalent mutants of classes
 already documented above, spread over 25 distinct lines:
 
-- **Type alias, annotation, and `cast()` (6)** — `ScopeResolver = None`; the
+- **Type alias, annotation, and `cast()` (6)**: `ScopeResolver = None`; the
   `str & None` annotation on `error` / `scope_label` / `detail_basename`; and
   `cast("XX...XX", ...)`. Instance- and local-variable annotations are not
   evaluated at runtime (the `str & None` mutants survive instead of crashing
   import, which proves it), and `cast()`'s first argument is a runtime no-op.
-- **Error, log, and rationale strings (12)** — four validation `ValueError`
+- **Error, log, and rationale strings (12)**: four validation `ValueError`
   messages, the `_task_scope_for` empty-visibility message, five `logger` format
   strings, and the two synthesized-error `rationale=` strings. The validation
   tests already assert the correct error fired (`pytest.raises(..., match=<key
   phrase>)`); mutmut only wraps the message as `XX...XX`, which the interior
   substring match still satisfies, so the residual mutant is purely cosmetic.
-- **Cosmetic `_print_summary` output (17)** — `scope_label` / scope-name
+- **Cosmetic `_print_summary` output (17)**: `scope_label` / scope-name
   formatting and `"=" * 60` decoration in the dynamic-mode summary branch.
-- **Dataclass / local defaults (2)** — `error` and `detail_basename` `None -> ""`,
+- **Dataclass / local defaults (2)**: `error` and `detail_basename` `None -> ""`,
   observable only if no value is passed; `""` is falsy like `None` in the only
   context `detail_basename` is read.

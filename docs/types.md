@@ -244,10 +244,10 @@ Used in `RunResult.llm_usage` (cumulative snapshot after each run) and `TaskResu
 
 The result types (defined in `core/controller.py`, fully documented in [the Controller docs](controller.md#result-types)) carry the scope each task ran under:
 
-- `TaskResult.scope: Scope` (default `frozenset()`) — the read & write scope enforced for **this** task. In static mode it equals the controller `scope` for every task; with a `ScopeResolver` it is the per-task resolved scope.
-- `TaskResult.read_only: Scope` (default `frozenset()`) — the read-only scope for this task (the controller's fixed `read_only`).
-- `ThreatModelResult.scope: Scope` / `read_only: Scope` — the run-level scopes in static mode. **In dynamic mode (a `ScopeResolver`) both are empty frozensets** and the run identity lives on `scope_label` and each `TaskResult.scope`.
-- `ThreatModelResult.scope_label: str | None` (default `None`) — `None` in static mode; in dynamic mode it is the label passed to the controller.
+- `TaskResult.scope: Scope` (default `frozenset()`): the read & write scope enforced for **this** task. In static mode it equals the controller `scope` for every task; with a `ScopeResolver` it is the per-task resolved scope.
+- `TaskResult.read_only: Scope` (default `frozenset()`): the read-only scope for this task (the controller's fixed `read_only`).
+- `ThreatModelResult.scope: Scope` / `read_only: Scope`: the run-level scopes in static mode. **In dynamic mode (a `ScopeResolver`) both are empty frozensets** and the run identity lives on `scope_label` and each `TaskResult.scope`.
+- `ThreatModelResult.scope_label: str | None` (default `None`): `None` in static mode; in dynamic mode it is the label passed to the controller.
 
 ### BudgetExhaustedError (Exception)
 
@@ -287,7 +287,7 @@ Immutable after construction via `__setattr__`/`__delattr__` overrides.
 
 ### ScopeResolver (type alias)
 
-`ScopeResolver = Callable[[Task], Scope]` (exported from `superred.core`) — a function the controller calls **once per task** to compute that task's read & write `Scope`. The `Controller`'s `scope` argument accepts either a fixed `Scope` (applied to every task) or a `ScopeResolver` (resolved per task); `callable(scope)` is the discriminator. A resolver may raise `NotApplicable` to skip the task; it must return the target's exported `SecurityDomainTag` singletons, since scope matching is by identity. See [the Controller docs](controller.md#scope-may-be-a-fixed-scope-or-a-per-task-scoperesolver).
+`ScopeResolver = Callable[[Task], Scope]` (exported from `superred.core`): a function the controller calls **once per task** to compute that task's `Scope`. Both the `Controller`'s `scope` and `read_only` arguments accept either a fixed `Scope` (applied to every task) or a `ScopeResolver` (resolved per task, independently of each other); `callable(...)` is the discriminator. A resolver may raise `NotApplicable`, which contributes an empty set for its dimension (the same as returning `frozenset()`); the task is skipped when the resolved visibility (`scope | read_only`) is empty, i.e. no tag is granted in either dimension. Resolvers must return the target's exported `SecurityDomainTag` singletons, since scope matching is by identity. See [the Controller docs](controller.md#scope-may-be-a-fixed-scope-or-a-per-task-scoperesolver).
 
 ### scope_includes (function)
 

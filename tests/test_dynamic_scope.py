@@ -69,7 +69,7 @@ class _TaggedTask(StubTask):
 
 class TestResolverContract:
     async def test_resolver_called_once_per_task(self) -> None:
-        """The resolver runs exactly once per task — not per run, not at init."""
+        """The resolver runs exactly once per task, not per run, not at init."""
         calls: list[Task[Target]] = []
 
         def resolver(task: Task[Target]) -> Scope:
@@ -298,7 +298,7 @@ class TestDynamicScopeValidation:
             )
 
     def test_static_scope_with_label_raises(self) -> None:
-        with pytest.raises(ValueError, match="only valid when scope is a callable"):
+        with pytest.raises(ValueError, match="only valid when scope or read_only is a callable"):
             Controller(
                 scope=EXTERNAL_SCOPE,
                 scope_label="oops",
@@ -326,36 +326,32 @@ class TestDynamicScopeValidation:
 
 
 class TestResolverContainment:
-    async def test_resolver_empty_scope_is_contained_error(self) -> None:
-        """A resolver returning an empty scope (no visibility) makes THAT task a
-        contained per-task error; a sibling with a real scope still completes."""
+    async def test_resolver_empty_scope_skips_task(self) -> None:
+        """A resolver returning an empty scope (no visibility, default empty
+        read_only) SKIPS that task; a sibling with a real scope still runs."""
 
         def resolver(task: Task[Target]) -> Scope:
-            if task.goal.description == "bad":
+            if task.goal.description == "skip":
                 return frozenset()
             return EXTERNAL_SCOPE
 
-        bad = StubTask(goal_text="bad")
+        skip_me = StubTask(goal_text="skip")
         good = StubTask(goal_text="good")
         controller = Controller(
             scope=resolver,
             scope_label="dyn",
             optimizer_factory=lambda: StubOptimizer(done=True),
             target_factory=TargetFactory(create=StubTarget),
-            security_claim=SecurityClaim.from_tasks([bad, good]),
+            security_claim=SecurityClaim.from_tasks([skip_me, good]),
             llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
-        by_goal = {tr.task.goal.description: tr for tr in result.task_results}
-        assert by_goal["bad"].stop_reason == "error"
-        assert by_goal["bad"].error is not None
-        assert by_goal["bad"].success is False
-        # Sibling unaffected.
-        assert by_goal["good"].stop_reason == "done"
-        assert by_goal["good"].success is True
-        # The threat model was not aborted: both tasks present.
-        assert len(result.task_results) == 2
-        assert result.skipped_tasks == []
+        # Empty visibility -> skipped, not a contained error.
+        assert result.skipped_tasks == [skip_me]
+        # Sibling unaffected, runs normally.
+        assert [tr.task for tr in result.task_results] == [good]
+        assert result.task_results[0].stop_reason == "done"
+        assert result.task_results[0].success is True
 
     async def test_resolver_generic_exception_is_contained_error(self) -> None:
         """A resolver raising a non-NotApplicable exception becomes a per-task
@@ -386,15 +382,17 @@ class TestResolverContainment:
         assert by_goal["fine"].stop_reason == "done"
         assert result.skipped_tasks == []
 
-    async def test_resolver_not_applicable_skips_task(self) -> None:
-        """A resolver raising NotApplicable lands the task in skipped_tasks
-        (not task_results)."""
+    async def test_lone_scope_resolver_not_applicable_skips_task(self) -> None:
+        """A lone scope resolver raising NotApplicable (with the default empty
+        read_only) leaves the total visibility empty, so the task is SKIPPED.
+        NotApplicable is equivalent to returning an empty set: either way no tag
+        in any dimension means skip.  A sibling with a real scope still runs."""
 
-        skip_me = StubTask(goal_text="skip")
+        opt_out = StubTask(goal_text="opt_out")
         keep_me = StubTask(goal_text="keep")
 
         def resolver(task: Task[Target]) -> Scope:
-            if task is skip_me:
+            if task is opt_out:
                 raise NotApplicable("scope resolver opts out")
             return EXTERNAL_SCOPE
 
@@ -403,12 +401,13 @@ class TestResolverContainment:
             scope_label="dyn",
             optimizer_factory=lambda: StubOptimizer(done=True),
             target_factory=TargetFactory(create=StubTarget),
-            security_claim=SecurityClaim.from_tasks([skip_me, keep_me]),
+            security_claim=SecurityClaim.from_tasks([opt_out, keep_me]),
             llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
-        assert result.skipped_tasks == [skip_me]
+        assert result.skipped_tasks == [opt_out]
         assert [tr.task for tr in result.task_results] == [keep_me]
+        assert result.task_results[0].stop_reason == "done"
 
 
 # ---------------------------------------------------------------------------
@@ -576,3 +575,401 @@ class TestDynamicScopePersistence:
         await Controller(**kwargs).run()  # type: ignore[arg-type]
         with pytest.raises(FileExistsError):
             await Controller(**kwargs).run()  # type: ignore[arg-type]
+
+
+# ===========================================================================
+# read_only RESOLVER
+#
+# Symmetric to the scope (write) resolver: ``read_only`` also accepts a
+# ``Scope | ScopeResolver``.  A read_only resolver is called once per task and
+# produces that task's visible-but-not-injectable tags.  Its ``NotApplicable``
+# contributes an EMPTY read_only set; the task is skipped only when the write
+# resolver ALSO raises ``NotApplicable``.  These tests mirror the write-resolver
+# tests above and reuse the same fixtures.
+# ===========================================================================
+
+
+class _RWTask(StubTask):
+    """A StubTask carrying separate write and read_only wants for resolvers."""
+
+    def __init__(self, goal_text: str, write: Scope, read_only: Scope) -> None:
+        super().__init__(goal_text=goal_text)
+        self.write_want = write
+        self.read_only_want = read_only
+
+
+def _read_only_dispatch(task: Task[Target]) -> Scope:
+    """Resolve read_only from a _TaggedTask's declared want (mirrors the write
+    dispatcher ``_dispatch_resolver``)."""
+    assert isinstance(task, _TaggedTask)
+    return task.want
+
+
+# ---------------------------------------------------------------------------
+# read_only resolver gates a different read-only surface per task
+# ---------------------------------------------------------------------------
+
+
+class TestReadOnlyResolverGatingDiffers:
+    async def test_read_only_surface_differs_per_task(self) -> None:
+        """A read_only resolver re-presents a DIFFERENT visible-but-not-
+        injectable controllable per task.  Both tasks keep EXTERNAL injectable
+        (fixed write scope); the read_only resolver makes INTERNAL visible for
+        one task and nothing extra for the other.  The distinction shows in the
+        optimizer-facing FilteredTrajectory: the INTERNAL decline is visible
+        only for the task whose read_only resolved to INTERNAL; for the other
+        task INTERNAL is fully out-of-scope and hidden from the filtered view.
+        In both cases EXTERNAL is the only injectable surface, and
+        ``TaskResult.read_only`` equals the per-task resolved value."""
+        # write scope is fixed EXTERNAL for both; read_only varies per task.
+        ro_task = _TaggedTask("ro_internal", INTERNAL_SCOPE)
+        no_ro_task = _TaggedTask("no_ro", frozenset())
+
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            read_only=_read_only_dispatch,
+            scope_label="dyn-ro",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=_TwoChannelTarget),
+            security_claim=SecurityClaim.from_tasks([ro_task, no_ro_task]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        by_goal = {tr.task.goal.description: tr for tr in result.task_results}
+
+        # Per-task resolved read_only is recorded on the TaskResult.
+        assert by_goal["ro_internal"].read_only == INTERNAL_SCOPE
+        assert by_goal["no_ro"].read_only == frozenset()
+        # Write scope is the same fixed EXTERNAL for both.
+        assert by_goal["ro_internal"].scope == EXTERNAL_SCOPE
+        assert by_goal["no_ro"].scope == EXTERNAL_SCOPE
+
+        def injected_full(tr: object) -> list[str]:
+            snap = tr.runs[0].trajectory.snapshot()  # type: ignore[attr-defined]
+            return sorted(r.controllable.name for r in snap if isinstance(r, ControllableInjection))
+
+        def filtered_declined(tr: object) -> list[str]:
+            # The optimizer-facing view: read_only declines are visible here,
+            # out-of-scope declines are not.
+            snap = tr.runs[0].trajectory.filtered.snapshot()  # type: ignore[attr-defined]
+            return sorted(
+                r.controllable.name for r in snap if isinstance(r, ControllableNoInjection)
+            )
+
+        # Only EXTERNAL is injectable for both tasks (read_only is never
+        # injectable).
+        assert injected_full(by_goal["ro_internal"]) == ["external_input"]
+        assert injected_full(by_goal["no_ro"]) == ["external_input"]
+        # read_only=INTERNAL: the internal_input decline is re-presented in the
+        # filtered (optimizer-visible) trajectory.
+        assert filtered_declined(by_goal["ro_internal"]) == ["internal_input"]
+        # read_only=empty: INTERNAL is out-of-scope, so its decline is hidden
+        # from the optimizer's filtered view entirely.
+        assert filtered_declined(by_goal["no_ro"]) == []
+
+
+# ---------------------------------------------------------------------------
+# Construction validation (read_only resolver mirrors scope resolver)
+# ---------------------------------------------------------------------------
+
+
+class TestReadOnlyResolverValidation:
+    def test_callable_read_only_without_label_raises(self) -> None:
+        """A callable read_only (with a fixed scope) still requires scope_label."""
+        with pytest.raises(ValueError, match="scope_label is required"):
+            Controller(
+                scope=EXTERNAL_SCOPE,
+                read_only=lambda _t: INTERNAL_SCOPE,
+                optimizer_factory=lambda: StubOptimizer(),
+                target_factory=TargetFactory.singleton(StubTarget()),
+                security_claim=SecurityClaim.from_tasks([StubTask()]),
+                llm_config=STUB_LLM_CONFIG,
+            )
+
+    def test_callable_read_only_with_label_constructs(self) -> None:
+        """Fixed scope + callable read_only + scope_label constructs fine."""
+        Controller(
+            scope=EXTERNAL_SCOPE,
+            read_only=lambda _t: INTERNAL_SCOPE,
+            scope_label="dyn-ro",
+            optimizer_factory=lambda: StubOptimizer(),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+
+    def test_static_scope_static_read_only_with_label_raises(self) -> None:
+        """Two fixed scopes plus a scope_label is rejected: the label is only
+        valid when at least one of scope / read_only is a callable resolver."""
+        with pytest.raises(ValueError, match="only valid when scope or read_only is a callable"):
+            Controller(
+                scope=EXTERNAL_SCOPE,
+                read_only=INTERNAL_SCOPE,
+                scope_label="oops",
+                optimizer_factory=lambda: StubOptimizer(),
+                target_factory=TargetFactory.singleton(StubTarget()),
+                security_claim=SecurityClaim.from_tasks([StubTask()]),
+                llm_config=STUB_LLM_CONFIG,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Truth table rows driven through the read_only resolver
+# ---------------------------------------------------------------------------
+
+
+class TestReadOnlyResolverTruthTable:
+    async def test_row1_both_resolvers_not_applicable_skips_task(self) -> None:
+        """Row 1 (W=NA, R=NA): when BOTH the write and read_only resolvers raise
+        NotApplicable for a task, it is skipped (lands in skipped_tasks); a
+        sibling for which both resolve still runs."""
+        skip_me = StubTask(goal_text="skip")
+        keep_me = StubTask(goal_text="keep")
+
+        def write_resolver(task: Task[Target]) -> Scope:
+            if task is skip_me:
+                raise NotApplicable("write opts out")
+            return EXTERNAL_SCOPE
+
+        def read_only_resolver(task: Task[Target]) -> Scope:
+            if task is skip_me:
+                raise NotApplicable("read_only opts out")
+            return frozenset()
+
+        controller = Controller(
+            scope=write_resolver,
+            read_only=read_only_resolver,
+            scope_label="dyn",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=StubTarget),
+            security_claim=SecurityClaim.from_tasks([skip_me, keep_me]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        assert result.skipped_tasks == [skip_me]
+        assert [tr.task for tr in result.task_results] == [keep_me]
+
+    async def test_row2_write_na_read_only_nonempty_runs_with_empty_write(self) -> None:
+        """Row 2 (W=NA, R=nonempty): the task RUNS with an empty write scope (no
+        injectable controllable) but the read_only surface stays visible.  The
+        EXTERNAL controllable event is therefore auto-declined, never injected,
+        and TaskResult.scope is empty while read_only carries the resolved set."""
+        optimizer = StubOptimizer(done=True)
+        controller = Controller(
+            scope=lambda _t: (_ for _ in ()).throw(NotApplicable("no write")),
+            read_only=lambda _t: EXTERNAL_SCOPE,
+            scope_label="dyn",
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        tr = result.task_results[0]
+        assert tr.stop_reason == "done"
+        assert tr.scope == frozenset()
+        assert tr.read_only == EXTERNAL_SCOPE
+        # Nothing is injectable, so the optimizer is never offered the event.
+        offered = [e for e in optimizer.events_received if isinstance(e, ControllablePreCallEvent)]
+        assert offered == []
+        # The visible read_only event is recorded and auto-declined.
+        snap = tr.runs[0].trajectory.snapshot()
+        assert [r.controllable.name for r in snap if isinstance(r, ControllableInjection)] == []
+        assert [r.controllable.name for r in snap if isinstance(r, ControllableNoInjection)] == [
+            "user_input"
+        ]
+
+    async def test_row4_write_nonempty_read_only_na_runs_with_empty_read_only(self) -> None:
+        """Row 4 (W=nonempty, R=NA): the task RUNS with the resolved write scope
+        and an EMPTY read_only; TaskResult.read_only == frozenset() and the
+        in-scope controllable is injected normally."""
+        optimizer = StubOptimizer(done=True)
+        controller = Controller(
+            scope=lambda _t: EXTERNAL_SCOPE,
+            read_only=lambda _t: (_ for _ in ()).throw(NotApplicable("no read_only")),
+            scope_label="dyn",
+            optimizer_factory=lambda: optimizer,
+            target_factory=TargetFactory.singleton(StubTarget(tag=EXTERNAL_TAG)),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        tr = result.task_results[0]
+        assert tr.stop_reason == "done"
+        assert tr.scope == EXTERNAL_SCOPE
+        assert tr.read_only == frozenset()
+        # The write-scoped controllable was offered and injected.
+        snap = tr.runs[0].trajectory.snapshot()
+        assert [r.controllable.name for r in snap if isinstance(r, ControllableInjection)] == [
+            "user_input"
+        ]
+
+    async def test_row3_write_na_read_only_empty_skips_task(self) -> None:
+        """Row 3 (W=NA, R=empty -> visibility empty): no tag in either dimension,
+        so the task is SKIPPED (lands in skipped_tasks); a SIBLING with a real
+        write scope still completes."""
+        skip_me = StubTask(goal_text="skip")
+        good = StubTask(goal_text="good")
+
+        def write_resolver(task: Task[Target]) -> Scope:
+            if task is skip_me:
+                raise NotApplicable("no write for skip_me")
+            return EXTERNAL_SCOPE
+
+        controller = Controller(
+            scope=write_resolver,
+            read_only=lambda _t: frozenset(),  # always empty read_only
+            scope_label="dyn",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=StubTarget),
+            security_claim=SecurityClaim.from_tasks([skip_me, good]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        # skip_me: W=NA, R=empty -> visibility empty -> skipped.
+        assert result.skipped_tasks == [skip_me]
+        # good: W=EXTERNAL, R=empty -> runs.
+        assert [tr.task for tr in result.task_results] == [good]
+        assert result.task_results[0].stop_reason == "done"
+        assert result.task_results[0].success is True
+
+    async def test_row7_both_resolvers_empty_skips_task(self) -> None:
+        """Row 7 (W=empty, R=empty -> visibility empty): no tag in either
+        dimension, so the task is SKIPPED; a sibling whose write resolves
+        non-empty still succeeds.  Returning an empty set is equivalent to
+        raising NotApplicable."""
+        skip_me = StubTask(goal_text="skip")
+        good = StubTask(goal_text="good")
+
+        def write_resolver(task: Task[Target]) -> Scope:
+            if task is skip_me:
+                return frozenset()
+            return EXTERNAL_SCOPE
+
+        controller = Controller(
+            scope=write_resolver,
+            read_only=lambda _t: frozenset(),  # always empty read_only
+            scope_label="dyn",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=StubTarget),
+            security_claim=SecurityClaim.from_tasks([skip_me, good]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        # skip_me: visibility empty -> skipped.
+        assert result.skipped_tasks == [skip_me]
+        assert [tr.task for tr in result.task_results] == [good]
+        assert result.task_results[0].stop_reason == "done"
+        assert result.task_results[0].success is True
+
+
+# ---------------------------------------------------------------------------
+# Both scope AND read_only callable: both vary per task and both are recorded
+# ---------------------------------------------------------------------------
+
+
+class TestBothResolversCallable:
+    async def test_both_resolvers_vary_and_are_recorded(self) -> None:
+        """With BOTH scope and read_only as resolvers (and a scope_label), each
+        task's write scope and read_only set are resolved independently and both
+        land on the TaskResult.  Task A: write=EXTERNAL, read_only=INTERNAL;
+        Task B: write=INTERNAL, read_only=EXTERNAL (mirror image)."""
+        a = _RWTask("a", write=EXTERNAL_SCOPE, read_only=INTERNAL_SCOPE)
+        b = _RWTask("b", write=INTERNAL_SCOPE, read_only=EXTERNAL_SCOPE)
+
+        def write_resolver(task: Task[Target]) -> Scope:
+            assert isinstance(task, _RWTask)
+            return task.write_want
+
+        def read_only_resolver(task: Task[Target]) -> Scope:
+            assert isinstance(task, _RWTask)
+            return task.read_only_want
+
+        controller = Controller(
+            scope=write_resolver,
+            read_only=read_only_resolver,
+            scope_label="dyn-both",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=_TwoChannelTarget),
+            security_claim=SecurityClaim.from_tasks([a, b]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        by_goal = {tr.task.goal.description: tr for tr in result.task_results}
+
+        assert by_goal["a"].scope == EXTERNAL_SCOPE
+        assert by_goal["a"].read_only == INTERNAL_SCOPE
+        assert by_goal["b"].scope == INTERNAL_SCOPE
+        assert by_goal["b"].read_only == EXTERNAL_SCOPE
+
+        def surfaces(tr: object) -> tuple[list[str], list[str]]:
+            snap = tr.runs[0].trajectory.snapshot()  # type: ignore[attr-defined]
+            injected = sorted(
+                r.controllable.name for r in snap if isinstance(r, ControllableInjection)
+            )
+            declined = sorted(
+                r.controllable.name for r in snap if isinstance(r, ControllableNoInjection)
+            )
+            return injected, declined
+
+        # Task A injects its write (external), declines its read_only (internal).
+        assert surfaces(by_goal["a"]) == (["external_input"], ["internal_input"])
+        # Task B is the mirror image.
+        assert surfaces(by_goal["b"]) == (["internal_input"], ["external_input"])
+
+    async def test_both_resolvers_run_level_scope_empty_label_recorded(self) -> None:
+        """In dynamic mode (both resolvers) the run-level scope/read_only stay
+        empty and the scope_label carries the run identity."""
+        controller = Controller(
+            scope=lambda _t: EXTERNAL_SCOPE,
+            read_only=lambda _t: INTERNAL_SCOPE,
+            scope_label="both-run",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        assert result.scope_label == "both-run"
+        assert result.scope == frozenset()
+        assert result.read_only == frozenset()
+        assert result.task_results[0].scope == EXTERNAL_SCOPE
+        assert result.task_results[0].read_only == INTERNAL_SCOPE
+
+
+# ---------------------------------------------------------------------------
+# read_only resolver raising a non-NotApplicable exception -> contained error
+# ---------------------------------------------------------------------------
+
+
+class TestReadOnlyResolverContainment:
+    async def test_read_only_generic_exception_is_contained_error(self) -> None:
+        """A read_only resolver raising a non-NotApplicable exception becomes a
+        per-task error (not a NotApplicable skip, not a run crash); a sibling
+        whose read_only resolves cleanly still completes."""
+
+        def read_only_resolver(task: Task[Target]) -> Scope:
+            if task.goal.description == "boom":
+                raise RuntimeError("read_only resolver exploded")
+            return frozenset()
+
+        controller = Controller(
+            scope=lambda _t: EXTERNAL_SCOPE,
+            read_only=read_only_resolver,
+            scope_label="dyn",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=StubTarget),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="boom"), StubTask(goal_text="fine")]
+            ),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        by_goal = {tr.task.goal.description: tr for tr in result.task_results}
+        assert by_goal["boom"].stop_reason == "error"
+        assert by_goal["boom"].error is not None
+        assert "read_only resolver exploded" in by_goal["boom"].error
+        assert "RuntimeError" in by_goal["boom"].error
+        assert by_goal["boom"].runs == []
+        assert by_goal["fine"].stop_reason == "done"
+        assert result.skipped_tasks == []

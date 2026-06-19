@@ -345,8 +345,10 @@ class Controller:
             (``Callable[[Task], Scope]``) resolved once per task to vary the
             scope per task (e.g. grant only the task-relevant tool).  A
             resolver MUST return the target's exported tag singletons (scope
-            matching is by identity), may raise ``NotApplicable`` to skip a
-            task, and requires ``scope_label`` (below).  Controllables,
+            matching is by identity) and requires ``scope_label`` (below).  It
+            may raise ``NotApplicable`` (equivalent to returning an empty set),
+            contributing no write tags; the task is skipped only when this
+            leaves the total visibility (``scope | read_only``) empty.  Controllables,
             observables, trajectory entries, and feedback sub-scores under the
             (resolved) scope tags and their descendants are exposed to the
             optimizer, and its controllable events are offered for injection.
@@ -361,8 +363,13 @@ class Controller:
             injectable (e.g. ``scope={system_prompt}, read_only={system}``).
             A ``read_only`` tag already covered by ``scope`` has no effect:
             read & write overrules (only ``scope`` drives the injection
-            decision), so the tag stays injectable.  ``scope`` and
-            ``read_only`` cannot both be empty.
+            decision), so the tag stays injectable.  Two fixed scopes cannot
+            both be empty (a construction error).  Like ``scope``, ``read_only``
+            may instead be a ``ScopeResolver`` resolved once per task
+            (independently of ``scope``); it then requires ``scope_label`` and
+            its ``NotApplicable`` (or an empty return) contributes no read-only
+            tags.  A task is skipped only when the resolved visibility
+            (``scope | read_only``) is empty; any tag in either dimension runs it.
         llm_config: LLM access configuration for the optimizer, or
             ``None`` for non-LLM optimizers (in which case the optimizer
             receives a noop client that raises on any call).
@@ -377,11 +384,11 @@ class Controller:
             and each detail file records that task's own resolved scope.
             ``LLMConfig.api_key`` and ``api_base`` are excluded;
             trajectory contents are not scrubbed for secrets.
-        scope_label: Required (and only valid) when ``scope`` is a resolver:
-            a short path-safe name identifying the run, used for the persisted
-            filename stem and ``ThreatModelResult.scope_label`` (since no
-            single concrete scope names the run).  Must be ``None`` in static
-            mode.
+        scope_label: Required (and only valid) when ``scope`` or ``read_only``
+            is a resolver: a short path-safe name identifying the run, used for
+            the persisted filename stem and ``ThreatModelResult.scope_label``
+            (since no single concrete scope names the run).  Must be ``None``
+            when both are fixed scopes.
     """
 
     DEFAULT_MAX_RUNS_PER_TASK = 100
@@ -392,7 +399,7 @@ class Controller:
         target_factory: TargetFactory,
         security_claim: SecurityClaim[Target],
         scope: Scope | ScopeResolver,
-        read_only: Scope = frozenset(),
+        read_only: Scope | ScopeResolver = frozenset(),
         llm_config: LLMConfig | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
@@ -406,28 +413,41 @@ class Controller:
         # ``scope_label`` names the persisted artifacts in dynamic mode (where
         # no single concrete scope exists to name the run): required then,
         # forbidden otherwise.
-        self._dynamic_scope: bool = callable(scope)
-        self._read_only: Scope = read_only
+        scope_is_resolver = callable(scope)
+        read_only_is_resolver = callable(read_only)
+        self._dynamic_scope: bool = scope_is_resolver or read_only_is_resolver
         self._scope_label: str | None = scope_label
+        # Capture the fixed value for whichever of scope / read_only is not a
+        # resolver; the resolver path ignores these.
+        static_scope: Scope = frozenset() if scope_is_resolver else cast("Scope", scope)
+        static_read_only: Scope = frozenset() if read_only_is_resolver else cast("Scope", read_only)
+        self._resolve_write_scope: ScopeResolver = (
+            cast("ScopeResolver", scope) if scope_is_resolver else (lambda _task: static_scope)
+        )
+        self._resolve_read_only: ScopeResolver = (
+            cast("ScopeResolver", read_only)
+            if read_only_is_resolver
+            else (lambda _task: static_read_only)
+        )
         if self._dynamic_scope:
-            self._resolve_write_scope: ScopeResolver = cast("ScopeResolver", scope)
             if not (scope_label and scope_label.strip()):
                 raise ValueError(
-                    "scope_label is required (non-empty) when scope is a callable resolver"
+                    "scope_label is required (non-empty) when scope or read_only "
+                    "is a callable resolver"
                 )
-            # No single run-level scope; each TaskResult.scope is the source of
-            # truth and the naming scope is empty.
+            # No single run-level scope; each TaskResult records the resolved
+            # scope and the naming scope is empty.
             self._naming_scope: Scope = frozenset()
             self._naming_read_only: Scope = frozenset()
         else:
-            static_scope = cast("Scope", scope)
-            if not (static_scope | read_only):
+            if not (static_scope | static_read_only):
                 raise ValueError("scope and read_only cannot both be empty")
             if scope_label is not None:
-                raise ValueError("scope_label is only valid when scope is a callable resolver")
-            self._resolve_write_scope = lambda _task: static_scope
+                raise ValueError(
+                    "scope_label is only valid when scope or read_only is a callable resolver"
+                )
             self._naming_scope = static_scope
-            self._naming_read_only = read_only
+            self._naming_read_only = static_read_only
         resolved_max_runs = (
             self.DEFAULT_MAX_RUNS_PER_TASK if max_runs_per_task is None else max_runs_per_task
         )
@@ -444,20 +464,31 @@ class Controller:
     def _task_scope_for(self, task: Task[Target]) -> _TaskScope:
         """Resolve the scope enforced for *task* (once per task).
 
-        In static mode this returns the fixed scope for every task; with a
-        per-task resolver it calls the resolver.  Raises ``ValueError`` if the
-        resolved visibility (``write | read_only``) is empty, so the dynamic
-        path keeps the same non-empty guarantee the static ``__init__`` check
-        gives.  The caller (``run_one``) contains this as a per-task error.
+        In static mode this returns the fixed scope for every task; per-task
+        resolvers for ``scope`` and/or ``read_only`` are called here.  Either
+        resolver raising ``NotApplicable`` contributes an empty set for its
+        dimension, exactly like returning ``frozenset()``.  The task is SKIPPED
+        (``NotApplicable`` propagates to ``run_one``) when the resolved
+        visibility (``write | read_only``) is empty: no tag is granted in either
+        dimension, so the attacker has no surface at all.  Any tag in either
+        dimension (read or write, fixed or resolved) means the task runs.  A
+        resolver raising any other exception is not caught here and surfaces as
+        a per-task error in ``run_one``.
         """
-        write = self._resolve_write_scope(task)
-        visibility = write | self._read_only
+        try:
+            write = self._resolve_write_scope(task)
+        except NotApplicable:
+            write = frozenset()
+        try:
+            read_only = self._resolve_read_only(task)
+        except NotApplicable:
+            read_only = frozenset()
+        visibility = write | read_only
         if not visibility:
-            raise ValueError(
-                "resolved scope and read_only cannot both be empty for task "
-                f"{task.goal.description!r}"
+            raise NotApplicable(
+                f"no security domain tag resolved for task {task.goal.description!r}; skipping"
             )
-        return _TaskScope(write=write, read_only=self._read_only, visibility=visibility)
+        return _TaskScope(write=write, read_only=read_only, visibility=visibility)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -538,9 +569,9 @@ class Controller:
             async with sem:
                 outcome: TaskResult | Task[Target]
                 # Resolve the per-task scope first (constant in static mode).
-                # A resolver may raise NotApplicable to skip the task, or fail
-                # / return an empty scope -> contained here as a per-task error
-                # so one bad task can't abort the threat model.
+                # NotApplicable, or an empty resolved visibility, skips the
+                # task; any other resolver exception is contained here as a
+                # per-task error so one bad task can't abort the threat model.
                 try:
                     task_scope = self._task_scope_for(task)
                 except NotApplicable:

@@ -427,6 +427,16 @@ class TestDynamicScopePersistence:
             return EXTERNAL_SCOPE
         return INTERNAL_SCOPE
 
+    @staticmethod
+    def _per_goal_read_only(task: StubTask) -> Scope:
+        """Give the ``ro_internal`` task an INTERNAL read-only tag and the
+        ``ro_none`` task none. With a fixed (non-empty) write ``scope`` both
+        tasks still run, but their resolved ``read_only`` differs, which is
+        exactly what a per-task ``read_only`` resolver is for."""
+        if task.goal.description == "ro_internal":
+            return INTERNAL_SCOPE
+        return frozenset()
+
     async def test_scope_label_names_claim_file_and_subfolder(self, tmp_path: Path) -> None:
         """The ``scope_label`` (not any concrete scope) drives both the
         claim filename ``{label}__{model}.json`` and the subfolder
@@ -456,7 +466,7 @@ class TestDynamicScopePersistence:
         assert len(detail_files) == 2
 
     async def test_per_task_detail_records_own_resolved_scope(self, tmp_path: Path) -> None:
-        """Each per-task detail JSON records THAT task's own resolved scope —
+        """Each per-task detail JSON records THAT task's own resolved scope:
         the two files therefore disagree on ``scope`` (one external, one
         internal), which a single run-level scope could never express."""
         controller = Controller(
@@ -483,9 +493,49 @@ class TestDynamicScopePersistence:
         # No read-only tags configured for this run.
         assert all(d["read_only"] == [] for d in details)
 
+    async def test_per_task_detail_records_own_resolved_read_only(self, tmp_path: Path) -> None:
+        """A per-task ``read_only`` resolver is persisted per task: each detail
+        JSON records THAT task's own resolved ``read_only`` (one ``internal``,
+        one empty), so the two files disagree on ``read_only``, which a single
+        run-level ``read_only`` could never express. The write ``scope`` is a
+        fixed EXTERNAL set, so both tasks run regardless; only ``read_only``
+        varies. The claim file is still named by the ``scope_label`` stem."""
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            read_only=self._per_goal_read_only,
+            scope_label="ro-mixed",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=TwoTagTarget, concurrency=1),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="ro_internal"), StubTask(goal_text="ro_none")],
+            ),
+            llm_config=STUB_LLM_CONFIG,
+            results_dir=tmp_path,
+        )
+        await controller.run()
+
+        # The claim layout is named by the scope_label, not any concrete scope.
+        claim = tmp_path / "ro-mixed__test-model.json"
+        subfolder = tmp_path / "ro-mixed__test-model"
+        assert claim.exists()
+        assert subfolder.is_dir()
+
+        # Tasks land in input order: 00001 = ro_internal, 00002 = ro_none.
+        details = [json.loads(p.read_text()) for p in sorted(subfolder.glob("*.json"))]
+        assert len(details) == 2
+        read_onlys = [d["read_only"] for d in details]
+        # The two detail files disagree on read_only.
+        assert read_onlys[0] != read_onlys[1]
+        assert read_onlys == [["internal"], []]
+        # Goal-to-read_only correspondence is exact, not coincidental ordering.
+        by_goal = {d["task"]["goal"]: d["read_only"] for d in details}
+        assert by_goal == {"ro_internal": ["internal"], "ro_none": []}
+        # Write scope is the fixed EXTERNAL set for both, independent of read_only.
+        assert all(d["scope"] == ["external"] for d in details)
+
     async def test_claim_summary_carries_label_and_empty_scope(self, tmp_path: Path) -> None:
         """The claim-summary JSON records the ``scope_label`` and an EMPTY
-        top-level ``scope``/``read_only`` — the per-task truth lives in the
+        top-level ``scope``/``read_only``: the per-task truth lives in the
         detail files, not the claim summary."""
         controller = Controller(
             scope=self._per_goal_resolver,

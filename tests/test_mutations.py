@@ -959,7 +959,7 @@ class TestBudgetExhaustedStopsTask:
 
 
 # ---------------------------------------------------------------------------
-# Per-task dynamic scope — resolve-once and resolved-scope-replaces mutations
+# Per-task dynamic scope: resolve-once and resolved-scope-replaces mutations
 # ---------------------------------------------------------------------------
 
 
