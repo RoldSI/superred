@@ -379,8 +379,39 @@ class TestResolverContainment:
         assert "resolver exploded" in by_goal["boom"].error
         assert "RuntimeError" in by_goal["boom"].error
         assert by_goal["boom"].runs == []
+        # Resolution failed before any scope was known, so the synthesized error
+        # result records an empty scope (not a resolved one).
+        assert by_goal["boom"].scope == frozenset()
+        assert by_goal["boom"].read_only == frozenset()
         assert by_goal["fine"].stop_reason == "done"
         assert result.skipped_tasks == []
+
+    async def test_resolved_scope_recorded_on_post_resolution_error(self) -> None:
+        """When an error occurs AFTER the scope is resolved (here the target
+        factory raises), the synthesized error TaskResult records the task's
+        resolved scope and read_only, not empty. In dynamic mode the per-task
+        detail file is the only on-disk record of a failed task's enforced
+        scope, so this must not silently regress to empty."""
+
+        def boom_create() -> Target:
+            raise RuntimeError("target factory boom")
+
+        controller = Controller(
+            scope=lambda _t: EXTERNAL_SCOPE,
+            read_only=lambda _t: INTERNAL_SCOPE,
+            scope_label="dyn",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory(create=boom_create),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        tr = result.task_results[0]
+        assert tr.stop_reason == "error"
+        assert tr.error is not None and "target factory boom" in tr.error
+        # The resolved per-task scope is preserved on the error result.
+        assert tr.scope == EXTERNAL_SCOPE
+        assert tr.read_only == INTERNAL_SCOPE
 
     async def test_lone_scope_resolver_not_applicable_skips_task(self) -> None:
         """A lone scope resolver raising NotApplicable (with the default empty

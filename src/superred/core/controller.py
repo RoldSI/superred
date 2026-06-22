@@ -406,13 +406,13 @@ class Controller:
         results_dir: str | Path | None = None,
         scope_label: str | None = None,
     ) -> None:
-        # ``scope`` is either a fixed read & write Scope (visible AND
-        # injectable; the classic behavior) or a Callable[[Task], Scope]
-        # resolved once per task (dynamic per-task scoping).  ``read_only``
-        # adds visible-but-not-injectable tags and is fixed for the whole run.
-        # ``scope_label`` names the persisted artifacts in dynamic mode (where
-        # no single concrete scope exists to name the run): required then,
-        # forbidden otherwise.
+        # ``scope`` (read & write: visible AND injectable; the classic
+        # behavior) and ``read_only`` (visible-but-not-injectable tags) may
+        # EACH be a fixed Scope or a Callable[[Task], Scope] resolved once per
+        # task (dynamic per-task scoping), resolved independently.  The run is
+        # "dynamic" when EITHER is a resolver; ``scope_label`` then names the
+        # persisted artifacts (no single concrete scope exists to name the
+        # run): required then, forbidden when both are fixed.
         scope_is_resolver = callable(scope)
         read_only_is_resolver = callable(read_only)
         self._dynamic_scope: bool = scope_is_resolver or read_only_is_resolver
