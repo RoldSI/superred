@@ -240,6 +240,15 @@ Cumulative LLM usage counters. Fields: `calls: int` (default 0), `cost: float` (
 
 Used in `RunResult.llm_usage` (cumulative snapshot after each run) and `TaskResult.llm_usage` (total for the task).
 
+### Scope-carrying result fields
+
+The result types (defined in `core/controller.py`, fully documented in [the Controller docs](controller.md#result-types)) carry the scope each task ran under:
+
+- `TaskResult.scope: Scope` (default `frozenset()`): the read & write scope enforced for **this** task. In static mode it equals the controller `scope` for every task; with a `ScopeResolver` it is the per-task resolved scope.
+- `TaskResult.read_only: Scope` (default `frozenset()`): the read-only scope enforced for **this** task. In static mode it equals the controller `read_only` for every task; with a `ScopeResolver` it is the per-task resolved read-only scope.
+- `ThreatModelResult.scope: Scope` / `read_only: Scope`: the run-level scopes in static mode. **In dynamic mode (a `ScopeResolver`) both are empty frozensets** and the run identity lives on `scope_label` and each `TaskResult.scope`.
+- `ThreatModelResult.scope_label: str | None` (default `None`): `None` in static mode; in dynamic mode it is the label passed to the controller.
+
 ### BudgetExhaustedError (Exception)
 
 Raised by `LLMClient` when the cost budget is exhausted. Fields: `usage: LLMUsage` — the usage at the time of exhaustion. Inherits from `Exception`.
@@ -275,6 +284,10 @@ Immutable after construction via `__setattr__`/`__delattr__` overrides.
 ### Scope (type alias)
 
 `Scope = frozenset[SecurityDomainTag]` — a set of tags representing a multi-tag attack surface scope. The controller uses scopes to filter all optimizer inputs. `scope_includes(scope, tag)` returns `True` if any tag in the scope includes the target tag (via `SecurityDomainTag.includes()`).
+
+### ScopeResolver (type alias)
+
+`ScopeResolver = Callable[[Task], Scope]` (exported from `superred.core`): a function the controller calls **once per task** to compute that task's `Scope`. Both the `Controller`'s `scope` and `read_only` arguments accept either a fixed `Scope` (applied to every task) or a `ScopeResolver` (resolved per task, independently of each other); `callable(...)` is the discriminator. A resolver may raise `NotApplicable`, which contributes an empty set for its dimension (the same as returning `frozenset()`); the task is skipped when the resolved visibility (`scope | read_only`) is empty, i.e. no tag is granted in either dimension. Resolvers must return the target's exported `SecurityDomainTag` singletons, since scope matching is by identity. See [the Controller docs](controller.md#scope-may-be-a-fixed-scope-or-a-per-task-scoperesolver).
 
 ### scope_includes (function)
 

@@ -124,3 +124,43 @@ None of these represent behavioral risk.
 the exact mutation it kills in its docstring. These complement mutmut by
 covering patterns that require specific assertion strategies (tie-breaking,
 latching, defensive copies, exception-safe teardown).
+
+## Per-task scope resolver (2026-06-18)
+
+The per-task scope feature (`ScopeResolver`, `_TaskScope`, per-task resolution
+of BOTH `scope` and `read_only` in `run_one` / `_task_scope_for` with the
+empty-visibility skip rule, and the `scope_label` naming path) touches 246 lines
+in `controller.py` and 64 in `persistence.py`. A full-core mutmut run (783
+mutants) leaves the touched lines with:
+
+| File | Behavioral mutants killed | Survivors (all equivalent) | Adjusted |
+|------|---------------------------|----------------------------|----------|
+| persistence.py | 13 | 0 | 100% |
+| controller.py | 48 | 39 | 100% |
+
+No surviving mutant changes a branch condition, comparison, boolean, arithmetic
+operation, or return value. In particular the new behavioral logic is fully
+killed: the `if not visibility` skip branch, the two `except NotApplicable`
+handlers, and the `callable(scope) or callable(read_only)` discriminator all
+have their mutants caught by the skip/run/error tests, consistent with the 100%
+line-and-branch coverage of the diff. The 39 `controller.py` survivors (over 27
+distinct lines) are all equivalent mutants of classes already documented above:
+
+- **Type alias, annotation, and `cast()`**: `ScopeResolver = None`; the
+  `str & None` annotation on `error` / `scope_label` / `detail_basename` /
+  `static_scope` / `static_read_only`; and `cast("XX...XX", ...)`. Instance- and
+  local-variable annotations are not evaluated at runtime (the `str & None`
+  mutants survive instead of crashing import, which proves it), and `cast()`'s
+  first argument is a runtime no-op.
+- **Validation, skip, log, and rationale strings**: the three validation
+  `ValueError` messages, the `_task_scope_for` empty-visibility `NotApplicable`
+  message, the `logger` format strings, and the synthesized-error `rationale=`
+  strings. The validation tests assert the correct error fired
+  (`pytest.raises(..., match=<key phrase>)`); mutmut only wraps the message as
+  `XX...XX`, which the interior substring match still satisfies, so the residual
+  mutant is purely cosmetic.
+- **Cosmetic `_print_summary` output**: `scope_label` / scope-name formatting
+  and `"=" * 60` decoration in the dynamic-mode summary branch.
+- **Dataclass / local defaults**: `error` and `detail_basename` `None -> ""`,
+  observable only if no value is passed; `""` is falsy like `None` in the only
+  context `detail_basename` is read.

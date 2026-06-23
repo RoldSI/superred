@@ -24,7 +24,12 @@ The ``{scope}`` stem joins the sorted read & write tag names.  When the
 threat model also has read-only tags, those names are appended as a
 ``__ro_{read_only}`` component so threat models differing only in access
 mode don't collide; the full ``scope`` (read & write) and ``read_only``
-tag lists are also recorded as JSON fields in both file kinds.
+tag lists are also recorded as JSON fields in both file kinds.  In
+dynamic-scope mode (the Controller given a per-task scope resolver) there
+is no single run scope, so the ``{scope}`` stem is the run's
+``scope_label`` and each per-task detail file records that task's own
+resolved scope; the claim-level ``scope``/``read_only`` fields are then
+empty and ``scope_label`` carries the run identity.
 
 All files are written atomically (temp file + ``rename``).
 
@@ -38,6 +43,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -63,7 +69,7 @@ if TYPE_CHECKING:
     from superred.core.controller import RunResult, TaskResult, ThreatModelResult
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_-]")
 _TASK_FILENAME_MAX_GOAL = 50
@@ -79,15 +85,19 @@ def _sorted_names(scope: Scope) -> list[str]:
     return sorted(t.name for t in scope)
 
 
-def _scope_stem(scope: Scope, read_only: Scope) -> str:
-    """Filename stem encoding the read & write scope and (if any) read-only.
+def _scope_stem(scope: Scope, read_only: Scope, scope_label: str | None = None) -> str:
+    """Filename stem for a threat model's artifacts.
 
-    Sorted, ``.``-joined read & write tag names.  When ``read_only`` is
-    non-empty a ``__ro_{read_only}`` component is appended so two threat
-    models that differ only in access mode get distinct stems.  With no
-    read-only tags the stem is just the scope (so the common all-read &
-    write filenames are unchanged from a no-access-control run).
+    In dynamic-scope mode *scope_label* names the run (no single concrete scope
+    exists) and is used verbatim (sanitized).  Otherwise the stem is the
+    sorted, ``.``-joined read & write tag names; when ``read_only`` is
+    non-empty a ``__ro_{read_only}`` component is appended so two threat models
+    that differ only in access mode get distinct stems.  With no read-only tags
+    the stem is just the scope (so the common all-read & write filenames are
+    unchanged from a no-access-control run).
     """
+    if scope_label is not None:
+        return _sanitize_segment(scope_label)
     scope_part = ".".join(_sanitize_segment(n) for n in _sorted_names(scope))
     if not read_only:
         return scope_part
@@ -95,23 +105,27 @@ def _scope_stem(scope: Scope, read_only: Scope) -> str:
     return f"{scope_part}__ro_{ro_part}"
 
 
-def _filename_for(scope: Scope, read_only: Scope, llm_config: LLMConfig | None) -> str:
-    """Deterministic filename for the (scope, read_only, llm_config) claim file.
+def _filename_for(
+    scope: Scope, read_only: Scope, llm_config: LLMConfig | None, scope_label: str | None = None
+) -> str:
+    """Deterministic filename for the claim-level file.
 
     Format: ``{scope_stem}__{sanitized_model}.json`` (see :func:`_scope_stem`
-    for the scope/read_only encoding). ``llm_config is None`` becomes
-    ``no-llm``.
+    for the stem, including the dynamic-mode ``scope_label``). ``llm_config is
+    None`` becomes ``no-llm``.
     """
     model_part = _sanitize_segment(llm_config.model) if llm_config is not None else "no-llm"
-    return f"{_scope_stem(scope, read_only)}__{model_part}.json"
+    return f"{_scope_stem(scope, read_only, scope_label)}__{model_part}.json"
 
 
-def _subfolder_for(scope: Scope, read_only: Scope, llm_config: LLMConfig | None) -> str:
+def _subfolder_for(
+    scope: Scope, read_only: Scope, llm_config: LLMConfig | None, scope_label: str | None = None
+) -> str:
     """Deterministic name of the per-task subfolder for a threat model.
 
     Same stem as :func:`_filename_for` minus the ``.json`` suffix.
     """
-    return _filename_for(scope, read_only, llm_config).removesuffix(".json")
+    return _filename_for(scope, read_only, llm_config, scope_label).removesuffix(".json")
 
 
 def _task_filename(index: int, goal_description: str) -> str:
@@ -291,23 +305,22 @@ def _serialize_task_summary(tr: TaskResult, task_file_relpath: str) -> dict[str,
 
 def _serialize_full_task(
     tr: TaskResult,
-    scope: Scope,
-    read_only: Scope,
     llm_config: LLMConfig | None,
 ) -> dict[str, Any]:
     """Self-contained per-task detail (the file in the subfolder).
 
-    Includes the threat-model context (scope, read_only, llm_config) so a
-    single detail file is meaningful in isolation, without needing the
-    claim-level file.  When the task failed, ``error`` holds the
-    formatted exception (type + message + traceback) and the last
-    entry in ``runs`` carries the partial trajectory accumulated
-    before the failure.
+    Includes the threat-model context (the task's own enforced ``scope`` /
+    ``read_only`` plus ``llm_config``) so a single detail file is meaningful
+    in isolation, without needing the claim-level file.  In dynamic-scope mode
+    these are the scope resolved for THIS task (and so may differ per file).
+    When the task failed, ``error`` holds the formatted exception (type +
+    message + traceback) and the last entry in ``runs`` carries the partial
+    trajectory accumulated before the failure.
     """
     return {
         "version": SCHEMA_VERSION,
-        "scope": _sorted_names(scope),
-        "read_only": _sorted_names(read_only),
+        "scope": _sorted_names(tr.scope),
+        "read_only": _sorted_names(tr.read_only),
         "llm_config": _serialize_llm_config(llm_config),
         "task": {"goal": tr.task.goal.description},
         "success": tr.success,
@@ -334,6 +347,7 @@ def _serialize_claim_level(
         "completed_at": datetime.now(UTC).isoformat(),
         "scope": _sorted_names(tmr.scope),
         "read_only": _sorted_names(tmr.read_only),
+        "scope_label": tmr.scope_label,
         "llm_config": _serialize_llm_config(tmr.llm_config),
         "summary": _compute_summary(tmr),
         "task_results": task_summaries,
@@ -358,11 +372,14 @@ def prepare_results_dir(
     scope: Scope,
     read_only: Scope,
     llm_config: LLMConfig | None,
+    scope_label: str | None = None,
 ) -> Path:
     """Create *results_dir* and the per-threat-model subfolder.
 
     Called once at the start of a threat model, before any task runs,
     so that the layout is ready to receive incremental per-task writes.
+    In dynamic-scope mode pass *scope_label* (and empty ``scope``/``read_only``)
+    so the layout is named by the label.
 
     Raises:
         FileExistsError: if either the claim-level file or the task
@@ -373,8 +390,8 @@ def prepare_results_dir(
         The path to the per-task subfolder.
     """
     results_dir.mkdir(parents=True, exist_ok=True)
-    claim_file = results_dir / _filename_for(scope, read_only, llm_config)
-    subfolder = results_dir / _subfolder_for(scope, read_only, llm_config)
+    claim_file = results_dir / _filename_for(scope, read_only, llm_config, scope_label)
+    subfolder = results_dir / _subfolder_for(scope, read_only, llm_config, scope_label)
     if claim_file.exists():
         raise FileExistsError(f"Claim-level output already exists: {claim_file}")
     if subfolder.exists():
@@ -397,8 +414,6 @@ def write_task_detail(
     subfolder: Path,
     basename: str,
     tr: TaskResult,
-    scope: Scope,
-    read_only: Scope,
     llm_config: LLMConfig | None,
 ) -> None:
     """Write one task's detail file to ``subfolder/basename``.
@@ -407,7 +422,8 @@ def write_task_detail(
     error, or budget-exhausted) so a controller that aborts mid-iteration
     leaves the completed task on disk. *basename* should come from
     :func:`task_detail_filename` so the controller can record the
-    intended name even when this write raises.
+    intended name even when this write raises.  The task's own enforced
+    scope is read from ``tr`` (``TaskResult.scope`` / ``read_only``).
 
     The file is written via temp file + ``rename`` so a partial write
     cannot leave malformed JSON behind. When the task failed, the file
@@ -415,7 +431,7 @@ def write_task_detail(
     ``error`` field and the partial trajectory as the last entry in
     ``runs`` — both are persisted *outside* the trajectory itself.
     """
-    _atomic_write_json(subfolder / basename, _serialize_full_task(tr, scope, read_only, llm_config))
+    _atomic_write_json(subfolder / basename, _serialize_full_task(tr, llm_config))
 
 
 def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path:
@@ -427,11 +443,21 @@ def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path
     scripts, and any caller that already has the complete result in
     hand.  Returns the path to the claim-level file.
     """
-    subfolder = prepare_results_dir(results_dir, tmr.scope, tmr.read_only, tmr.llm_config)
+    subfolder = prepare_results_dir(
+        results_dir, tmr.scope, tmr.read_only, tmr.llm_config, tmr.scope_label
+    )
     basenames: list[str] = []
     for i, tr in enumerate(tmr.task_results, start=1):
         basename = task_detail_filename(i, tr.task.goal.description)
-        write_task_detail(subfolder, basename, tr, tmr.scope, tmr.read_only, tmr.llm_config)
+        # A hand-built TaskResult may omit its per-task scope; fall back to the
+        # threat-model scope so the offline detail file stays complete (the
+        # controller path always populates TaskResult.scope itself).
+        detail_tr = (
+            tr
+            if (tr.scope or tr.read_only)
+            else replace(tr, scope=tmr.scope, read_only=tmr.read_only)
+        )
+        write_task_detail(subfolder, basename, detail_tr, tmr.llm_config)
         basenames.append(basename)
     return write_claim_summary(results_dir, tmr, basenames)
 
@@ -451,8 +477,10 @@ def write_claim_summary(
     *task_file_basenames* lines up positionally with
     ``tmr.task_results`` (same length, same order).
     """
-    claim_file = results_dir / _filename_for(tmr.scope, tmr.read_only, tmr.llm_config)
-    subfolder_name = _subfolder_for(tmr.scope, tmr.read_only, tmr.llm_config)
+    claim_file = results_dir / _filename_for(
+        tmr.scope, tmr.read_only, tmr.llm_config, tmr.scope_label
+    )
+    subfolder_name = _subfolder_for(tmr.scope, tmr.read_only, tmr.llm_config, tmr.scope_label)
     summaries = [
         _serialize_task_summary(tr, f"{subfolder_name}/{fname}")
         for tr, fname in zip(tmr.task_results, task_file_basenames, strict=True)

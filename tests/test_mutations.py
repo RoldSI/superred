@@ -956,3 +956,72 @@ class TestBudgetExhaustedStopsTask:
         # BudgetExhaustedError and the loop should break, not continue.
         assert len(tr.runs) == 1
         assert run_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Per-task dynamic scope: resolve-once and resolved-scope-replaces mutations
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicScopeMutations:
+    async def test_resolver_called_once_per_task_not_per_run(self) -> None:
+        """Kills: the per-task scope resolved once per task moved inside the
+        per-run loop (called per run) or hoisted to __init__ (called once total).
+
+        Three tasks, three runs each: a correct controller calls the resolver
+        exactly 3 times (once per task). A per-run call would be 9; a
+        once-at-init call would be 1.
+        """
+        calls = {"n": 0}
+
+        def resolver(_task: object) -> Scope:
+            calls["n"] += 1
+            return EXTERNAL_SCOPE
+
+        controller = Controller(
+            scope=resolver,
+            scope_label="dyn",
+            optimizer_factory=lambda: StubOptimizer(done=False),
+            target_factory=TargetFactory(create=StubTarget),
+            security_claim=SecurityClaim.from_tasks(
+                [StubTask(goal_text="a"), StubTask(goal_text="b"), StubTask(goal_text="c")]
+            ),
+            llm_config=STUB_LLM_CONFIG,
+            max_runs_per_task=3,
+        )
+        await controller.run()
+        assert calls["n"] == 3
+
+    async def test_resolved_scope_replaces_not_unions_with_default(self) -> None:
+        """Kills: the resolved write scope OR-ed with a non-empty default (e.g.
+        ``write | EXTERNAL_SCOPE``) instead of replacing it.
+
+        The resolver grants ONLY INTERNAL. An INTERNAL controllable must be
+        injected (resolved scope used) and an EXTERNAL one declined. If the
+        resolved scope were unioned with an EXTERNAL default, the EXTERNAL
+        event would be wrongly injected too.
+        """
+        external = Controllable(name="external_input", security_domain=EXTERNAL_TAG)
+        internal = Controllable(name="internal_input", security_domain=INTERNAL_TAG)
+
+        class _TwoTagTarget(StubTarget):
+            async def run(self, emit, send_event):  # type: ignore[no-untyped-def]
+                self.run_count += 1
+                await send_event(ControllablePreCallEvent(controllable=external, request="ext"))
+                await send_event(ControllablePreCallEvent(controllable=internal, request="int"))
+
+        controller = Controller(
+            scope=lambda _t: frozenset({INTERNAL_TAG}),
+            scope_label="dyn",
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory.singleton(_TwoTagTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        snap = result.task_results[0].runs[0].trajectory.snapshot()
+        injected = {r.controllable.name for r in snap if isinstance(r, ControllableInjection)}
+        declined = {r.controllable.name for r in snap if isinstance(r, ControllableNoInjection)}
+        # Only INTERNAL injected; EXTERNAL declined (no default union widened it).
+        assert injected == {"internal_input"}
+        assert declined == {"external_input"}

@@ -2,6 +2,53 @@
 
 ## v0.2.0 (unreleased)
 
+### Per-task scope: `scope` and `read_only` may be a `ScopeResolver` (additive)
+
+`Controller(scope=...)` and `Controller(read_only=...)` now each also accept a
+`ScopeResolver` (`Callable[[Task], Scope]`, exported as
+`superred.core.ScopeResolver`), resolved once per task (independently of each
+other), in addition to the classic fixed `Scope`. This is purely additive:
+passing a `frozenset` behaves exactly as before.
+
+```python
+from superred.core import ScopeResolver
+
+controller = Controller(
+    scope=lambda task: frozenset({tag_for(task)}),  # resolver, called once per task
+    scope_label="per-goal",                          # required in this mode
+    ...,
+)
+```
+
+What's new:
+
+- **`scope_label: str | None = None`** new constructor arg. Required (non-empty
+  `str`) when **either** `scope` or `read_only` is a callable; must be `None`
+  when **both** are fixed frozensets (else `ValueError`). The fixed-scope
+  non-empty `(scope | read_only)` check is unchanged.
+- Either resolver may raise `NotApplicable`, which contributes an empty set for
+  its own dimension, exactly like returning `frozenset()`. The task is skipped
+  (`skipped_tasks`) when the resolved visibility (`scope | read_only`) is empty,
+  i.e. no tag is granted in either dimension; any tag (read or write, from
+  either resolver) means the task runs. A resolver raising any other exception
+  fails just that task (`stop_reason="error"`) and leaves siblings running.
+- **`TaskResult.scope` and `TaskResult.read_only`** new fields (default
+  `frozenset()`) recording the scope enforced for that task. In static mode
+  every `TaskResult.scope` equals the controller scope; with a resolver it is
+  the per-task resolved scope.
+- **`ThreatModelResult.scope_label: str | None`** new field (default `None`).
+  In static mode `scope`/`read_only` stay the concrete frozensets and
+  `scope_label` is `None` (unchanged). In dynamic mode `ThreatModelResult.scope`
+  and `read_only` are **empty** frozensets and `scope_label` carries the run
+  identity (the per-task truth lives on each `TaskResult.scope`).
+- **Persistence**: in dynamic mode the filename stem is the sanitized
+  `scope_label` (`{label}__{model}.json` + `{label}__{model}/`); the claim
+  summary gains a `scope_label` field (with empty `scope`/`read_only` arrays),
+  and each per-task detail file records that task's own resolved
+  `scope`/`read_only`. Static-mode filenames are unchanged.
+- **`SCHEMA_VERSION` bumped `1` → `2`**: persisted JSON now carries `scope_label`
+  and per-task scopes in detail files.
+
 ### Read-only access via a `read_only` Controller argument (replaces `ReadOnly`/`ScopeSpec`)
 
 `scope` keeps its original meaning — the read & write surface (visible AND
