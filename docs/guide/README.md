@@ -35,14 +35,14 @@ against one claim.
 
 ## Contents
 
-1. [Quick Start](/guide/quick-start.html) - install and run an evaluation end to end
-2. [Core Concepts](/guide/core-concepts.html) - the components and the run loop
-3. [Writing a Target](/guide/writing-a-target.html) - wrap your AI system
-4. [Writing an Optimizer](/guide/writing-an-optimizer.html) - build an attacker
-5. [Writing Tasks and Security Claims](/guide/writing-tasks.html) - define what to test
-6. [Running Evaluations](/guide/running-evaluations.html) - the Controller, results, persistence
-7. [Security Domains](/guide/security-domains.html) - model real trust boundaries and scope what the attacker sees
-8. [Advanced Patterns](/guide/advanced-patterns.html) - multi-turn, parallelism, packaging, sweeps
+1. [Quick Start](/guide/quick-start) - install and run an evaluation end to end
+2. [Core Concepts](/guide/core-concepts) - the components and the run loop
+3. [Writing a Target](/guide/writing-a-target) - wrap your AI system
+4. [Writing an Optimizer](/guide/writing-an-optimizer) - build an attacker
+5. [Writing Tasks and Security Claims](/guide/writing-tasks) - define what to test
+6. [Running Evaluations](/guide/running-evaluations) - the Controller, results, persistence
+7. [Security Domains](/guide/security-domains) - model real trust boundaries and scope what the attacker sees
+8. [Advanced Patterns](/guide/advanced-patterns) - multi-turn, parallelism, packaging, sweeps
 
 ## How the pieces are packaged
 
@@ -51,5 +51,5 @@ The framework itself is the `superred` package. Everything you plug into it
 installable packages** in the `superred-modules/` repository, and the scripts
 that wire specific combinations together live in `superred-experiments/`. You
 will usually `pip install -e` the framework plus whichever modules you need,
-then write a short experiment script. The [Quick Start](/guide/quick-start.html) shows
+then write a short experiment script. The [Quick Start](/guide/quick-start) shows
 the smallest version of this.

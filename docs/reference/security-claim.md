@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "SecurityClaim"
-permalink: /reference/security-claim.html
+permalink: /reference/security-claim
 ---
 
 # SecurityClaim
@@ -10,7 +10,7 @@ Composable, re-iterable collection of tasks.
 
 ## Construction
 
-Two factory methods — never mixed:
+Two factory methods, never mixed:
 
 ```python
 # From tasks directly
@@ -20,7 +20,7 @@ claim = SecurityClaim.from_tasks([task_a, task_b])
 combined = SecurityClaim.from_claims([claim_1, claim_2])
 ```
 
-`__init__` raises `TypeError` — must use factory methods.
+`__init__` raises `TypeError`, must use factory methods.
 
 ## Composition model
 

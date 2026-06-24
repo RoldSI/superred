@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "Target Interface"
-permalink: /reference/target.html
+permalink: /reference/target
 ---
 
 # Target Interface
@@ -10,7 +10,7 @@ The AI system under test. Exposes five surfaces and a lifecycle.
 
 ## Manual values (constructor)
 
-API keys, credentials, and other user-provided secrets are passed directly to the target's constructor — not through the framework. This keeps the Target ABC clean and makes instantiation explicit:
+API keys, credentials, and other user-provided secrets are passed directly to the target's constructor, not through the framework. This keeps the Target ABC clean and makes instantiation explicit:
 
 ```python
 target = MyDockerTarget(api_key="sk-...", image="my-app:latest")
@@ -18,15 +18,15 @@ target = MyDockerTarget(api_key="sk-...", image="my-app:latest")
 
 ## Pre-run configuration (task-set)
 
-- `config_specs -> list[ConfigSpec]` — declares named text-valued config slots with security domains.
-- `set_config(name, value)` — accepts a config value before a run.
+- `config_specs -> list[ConfigSpec]`, declares named text-valued config slots with security domains.
+- `set_config(name, value)`, accepts a config value before a run.
 
-Used by tasks to set up initial state. The description on each ConfigSpec documents the accepted format — that is the contract between task and target.
+Used by tasks to set up initial state. The description on each ConfigSpec documents the accepted format, that is the contract between task and target.
 
 ## Post-run queries (evaluator uses)
 
-- `query_specs -> list[QuerySpec]` — declares available post-run interactions (name, description, optional params).
-- `query(name, **params) -> str` — executes a post-run query. May be a simple getter (no params) or a parameterized action.
+- `query_specs -> list[QuerySpec]`, declares available post-run interactions (name, description, optional params).
+- `query(name, **params) -> str`, executes a post-run query. May be a simple getter (no params) or a parameterized action.
 
 Config and query are **intentionally distinct**:
 - Config = task-set pre-run state, set per task.
@@ -34,20 +34,20 @@ Config and query are **intentionally distinct**:
 
 ## Security domain
 
-- `security_domain -> SecurityDomain` — the security domain forest defined by this target. Classifies controllables and observables into a hierarchy of trust boundaries. Used by the controller to filter events by scope.
+- `security_domain -> SecurityDomain`, the security domain forest defined by this target. Classifies controllables and observables into a hierarchy of trust boundaries. Used by the controller to filter events by scope.
 
 ## Runtime surfaces
 
-- `get_controllables() -> list[Controllable]` — injection points the optimizer can manipulate during a run. Each has a `security_domain` tag.
-- `get_observables() -> list[ObservableValue]` — static context about the system (system prompts, source code, configs). Each has a `security_domain` tag.
+- `get_controllables() -> list[Controllable]`, injection points the optimizer can manipulate during a run. Each has a `security_domain` tag.
+- `get_observables() -> list[ObservableValue]`, static context about the system (system prompts, source code, configs). Each has a `security_domain` tag.
 
 ## Execution
 
-- `run(emit, send_event)` — execute one run. Emit events via `emit(event)` (an `EventHandler = Callable[[Event], None]`, typically `emit(ObservableEvent(observable=..., content=...))`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object — only the emit function.
-- `reset_ephemeral_state()` — reset ephemeral (per-run) state after each evaluation, before the next run (clear the active conversation or last response, reset containers, etc.). Durable state (e.g. an accumulated memory bank) must survive this call; it is discarded only when a fresh `TargetFactory` instance is obtained between tasks. Must be implemented even if a no-op.
-- `teardown()` — release resources when all evaluation is done.
+- `run(emit, send_event)`, execute one run. Emit events via `emit(event)` (an `EventHandler = Callable[[Event], None]`, typically `emit(ObservableEvent(observable=..., content=...))`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object, only the emit function.
+- `reset_ephemeral_state()`, reset ephemeral (per-run) state after each evaluation, before the next run (clear the active conversation or last response, reset containers, etc.). Durable state (e.g. an accumulated memory bank) must survive this call; it is discarded only when a fresh `TargetFactory` instance is obtained between tasks. Must be implemented even if a no-op.
+- `teardown()`, release resources when all evaluation is done.
 
-`EventResponseHandler = Callable[[Event], Awaitable[EventResponse]]` — the `send_event` callback type. The controller wraps it to bridge to the EventChannel with security domain filtering. The target doesn't know or care what's on the other end.
+`EventResponseHandler = Callable[[Event], Awaitable[EventResponse]]`, the `send_event` callback type. The controller wraps it to bridge to the EventChannel with security domain filtering. The target doesn't know or care what's on the other end.
 
 ## Internal parallelism
 

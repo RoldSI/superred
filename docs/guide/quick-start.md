@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "Quick Start"
-permalink: /guide/quick-start.html
+permalink: /guide/quick-start
 ---
 
 # Quick Start
@@ -130,7 +130,7 @@ Everything you do later is a variation on the five steps above:
 
 ## What to read next
 
-- [Core Concepts](/guide/core-concepts.html) for the vocabulary and the run loop.
-- [Writing a Target](/guide/writing-a-target.html) to wrap your own system.
-- [Security Domains](/guide/security-domains.html) for the most important design
+- [Core Concepts](/guide/core-concepts) for the vocabulary and the run loop.
+- [Writing a Target](/guide/writing-a-target) to wrap your own system.
+- [Security Domains](/guide/security-domains) for the most important design
   decision you will make: how to model trust boundaries.

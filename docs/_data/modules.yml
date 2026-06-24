@@ -1,4 +1,4 @@
-# Catalogue of available modules, rendered on /modules.html.
+# Catalogue of available modules, rendered on /modules.
 # Blurbs are condensed from each module's own package description.
 optimizers:
   - { name: PAIR,            blurb: "Iterative prompt refinement with an attacker LLM" }

@@ -31,7 +31,7 @@ superred is a modular framework for red-teaming AI systems. It models the intera
 
 ## Concurrency Model
 
-The controller bridges the target and optimizer through an `EventChannel`. The target and optimizer run as independent concurrent asyncio tasks on a single event loop. Communication is cooperative — coroutines yield at `await` points, and the event loop scheduler interleaves them.
+The controller bridges the target and optimizer through an `EventChannel`. The target and optimizer run as independent concurrent asyncio tasks on a single event loop. Communication is cooperative, coroutines yield at `await` points, and the event loop scheduler interleaves them.
 
 ```
 Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
@@ -73,7 +73,7 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
         → sets pre-run config via target.set_config()
         → raises NotApplicable if incompatible (task skipped)
 
-     b. Create LLMClient from llm_config — fresh per task (budget is per-task)
+     b. Create LLMClient from llm_config, fresh per task (budget is per-task)
         Create fresh optimizer via optimizer_factory()
         Filter controllables and observables by scope
         optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)
@@ -94,14 +94,14 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
           → RunEndEvent is persisted to the trajectory
           → optimizer responds with RunEndResponse(done=True/False)
         Close the trajectory
-        target.reset_ephemeral_state() — resets ephemeral target state for next run within this task
+        target.reset_ephemeral_state(), resets ephemeral target state for next run within this task
         If done=True, break
         On exception: preserve partial trajectory + zero-score evaluation;
                       capture exception traceback on TaskResult.error; break
 
      e. channel.close() → optimizer.run() exits
         await optimizer_task, optimizer.teardown()
-        target.reset_ephemeral_state() (final) and target.teardown() — instance is discarded
+        target.reset_ephemeral_state() (final) and target.teardown(), instance is discarded
 
    3. Per-task detail files were written incrementally as each task
       finished (when results_dir set).  Write the claim-level summary
@@ -153,7 +153,7 @@ The controller does not create its own event loop. This allows embedding in larg
 
 14. **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format contract. The target interprets the text.
 
-15. **LLM access is part of the threat model**: The controller controls which model the optimizer can use and tracks budget (calls, USD cost). The `LLMConfig` (model, API base, API key, `max_cost`) is set at the experiment level. Budget enforcement is cost-based: `litellm.completion_cost()` computes USD per call from model pricing; pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches `max_cost`. The optimizer receives a constrained `LLMClient` that locks the model and credentials — it cannot choose a different model. Budget is per-task (fresh `LLMClient` per task). Uses litellm internally for OpenAI-compatible chat completions.
+15. **LLM access is part of the threat model**: The controller controls which model the optimizer can use and tracks budget (calls, USD cost). The `LLMConfig` (model, API base, API key, `max_cost`) is set at the experiment level. Budget enforcement is cost-based: `litellm.completion_cost()` computes USD per call from model pricing; pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches `max_cost`. The optimizer receives a constrained `LLMClient` that locks the model and credentials, it cannot choose a different model. Budget is per-task (fresh `LLMClient` per task). Uses litellm internally for OpenAI-compatible chat completions.
 
 ## File Map
 
@@ -192,9 +192,9 @@ src/superred/core/
 
 ## Detailed Component Documentation
 
-- [Controller](/reference/controller.html) -- the orchestrator: event bridging, filtering, evaluation
-- [Optimizer](/reference/optimizer.html) -- the optimizer interface: actor model, consumption choices
-- [Target](/reference/target.html) -- target interface, config/query separation
-- [Task](/reference/task.html) -- task generics, stateless design
-- [SecurityClaim](/reference/security-claim.html) -- composable task collections
-- [Types Reference](/reference/types.html) -- all core types, design decisions, relationships
+- [Controller](/reference/controller) -- the orchestrator: event bridging, filtering, evaluation
+- [Optimizer](/reference/optimizer) -- the optimizer interface: actor model, consumption choices
+- [Target](/reference/target) -- target interface, config/query separation
+- [Task](/reference/task) -- task generics, stateless design
+- [SecurityClaim](/reference/security-claim) -- composable task collections
+- [Types Reference](/reference/types) -- all core types, design decisions, relationships

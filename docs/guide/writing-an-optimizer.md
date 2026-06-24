@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "Writing an Optimizer"
-permalink: /guide/writing-an-optimizer.html
+permalink: /guide/writing-an-optimizer
 ---
 
 # Writing an Optimizer
@@ -93,7 +93,7 @@ A bare `EventResponse` is accepted only by events that allow it, such as
 with `stop_reason="error"`. The worked examples below inject once per run and
 omit the post-call branch because their targets are single-shot; a target that
 emits `ControllablePostCallEvent` (see
-[Advanced Patterns](/guide/advanced-patterns.html#multi-turn-targets)) needs it.
+[Advanced Patterns](/guide/advanced-patterns#multi-turn-targets)) needs it.
 
 ## The event sequence
 

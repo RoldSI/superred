@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "Breaking Changes"
-permalink: /reference/breaking-changes.html
+permalink: /reference/breaking-changes
 ---
 
 # Breaking Changes
@@ -57,7 +57,7 @@ What's new:
 
 ### Read-only access via a `read_only` Controller argument (replaces `ReadOnly`/`ScopeSpec`)
 
-`scope` keeps its original meaning — the read & write surface (visible AND
+`scope` keeps its original meaning, the read & write surface (visible AND
 injectable). A new optional `read_only` argument adds tags that are visible but
 not injectable. `read_only` defaults to empty, so the whole `scope` is read &
 write, identical to the previous behavior; existing `Controller(scope=...)`
@@ -82,7 +82,7 @@ runs with read-only tags get a `__ro_{read_only}` filename component.
 
 At `optimizer.initialize()`, the `controllables` list now means exactly "the
 surfaces the optimizer can inject into" (filtered by the read & write `scope`).
-A read-only controllable — visible but not injectable — is no longer in that
+A read-only controllable, visible but not injectable, is no longer in that
 list; it is re-presented in `observables` (as an `ObservableValue` with
 `content=None`). For an all-read & write run this changes nothing (no read-only
 controllables exist).
@@ -92,7 +92,7 @@ controllables exist).
 The controller was previously a fan-out: it iterated the Cartesian
 product of `scopes` × `llm_configs` and returned a `ControllerResult`
 wrapping a list of `ThreatModelResult`.  It now models exactly one
-threat model — a single `(scope, llm_config)` combination — and
+threat model, a single `(scope, llm_config)` combination, and
 returns a `ThreatModelResult` directly.  Sweeping multiple threat
 models is the caller's job.
 
@@ -161,7 +161,7 @@ Migration:
 
 ### Optimizer.initialize() signature change
 
-The `llm_client` parameter on `Optimizer.initialize()` is now required (`LLMClient`, not `LLMClient | None`). The base class stores the client — subclasses must call `super().initialize(...)` for `self.llm` to work.
+The `llm_client` parameter on `Optimizer.initialize()` is now required (`LLMClient`, not `LLMClient | None`). The base class stores the client, subclasses must call `super().initialize(...)` for `self.llm` to work.
 
 ```python
 # Before
@@ -211,7 +211,7 @@ The `llm_config` parameter on `Controller` is now required (no longer optional).
 
 ### New core dependency: litellm
 
-The `superred` package now depends on `litellm>=1.0`. This is pulled in automatically via pip. No action needed unless you pin dependencies — add `litellm` to your pins.
+The `superred` package now depends on `litellm>=1.0`. This is pulled in automatically via pip. No action needed unless you pin dependencies, add `litellm` to your pins.
 
 ### Cost-based budget enforcement
 
@@ -247,10 +247,10 @@ controller = Controller(
 
 ### New types: Scope, scope_includes, ThreatModelResult, OptimizerFactory
 
-- `Scope = frozenset[SecurityDomainTag]` — type alias for multi-tag attack surface scope.
-- `scope_includes(scope, tag)` — returns `True` if any tag in the scope includes the target tag.
-- `ThreatModelResult` — frozen dataclass grouping results for one (scope, llm_config) combination.
-- `OptimizerFactory = Callable[[], Optimizer]` — type alias for optimizer factories.
+- `Scope = frozenset[SecurityDomainTag]`, type alias for multi-tag attack surface scope.
+- `scope_includes(scope, tag)`, returns `True` if any tag in the scope includes the target tag.
+- `ThreatModelResult`, frozen dataclass grouping results for one (scope, llm_config) combination.
+- `OptimizerFactory = Callable[[], Optimizer]`, type alias for optimizer factories.
 
 All are exported from `superred.core` and `superred.core.types`.
 
@@ -260,7 +260,7 @@ Three interrelated changes to how feedback flows to the optimizer:
 
 **1. RunEndEvent carries evaluation, not trajectory**
 
-`RunEndEvent.trajectory` has been replaced with `RunEndEvent.evaluation: EvaluationResult | None` (default `None`). The optimizer no longer receives the trajectory through RunEndEvent — use `self.current_trajectory` instead (available via `_dispatch`).
+`RunEndEvent.trajectory` has been replaced with `RunEndEvent.evaluation: EvaluationResult | None` (default `None`). The optimizer no longer receives the trajectory through RunEndEvent, use `self.current_trajectory` instead (available via `_dispatch`).
 
 ```python
 # Before
@@ -287,11 +287,11 @@ if isinstance(event, RunEndEvent):
 
 `Controller.__init__` accepts `include_feedback: bool = True`. When `True`, `RunEndEvent.evaluation` carries the filtered `EvaluationResult`; when `False`, `evaluation` is `None`. The optimizer reads feedback from `event.evaluation` on `RunEndEvent`, or from past trajectories (since `RunEndEvent` is persisted).
 
-**Impact**: Optimizers that accessed `RunEndEvent.trajectory` must switch to `self.current_trajectory` or `event.evaluation`. `FeedbackEvent` has been removed entirely — remove any imports or `isinstance` checks for it. Read feedback from `event.evaluation` on `RunEndEvent` or from the trajectory instead.
+**Impact**: Optimizers that accessed `RunEndEvent.trajectory` must switch to `self.current_trajectory` or `event.evaluation`. `FeedbackEvent` has been removed entirely, remove any imports or `isinstance` checks for it. Read feedback from `event.evaluation` on `RunEndEvent` or from the trajectory instead.
 
 **Migration**:
 1. Replace `event.trajectory` on `RunEndEvent` with `self.current_trajectory` or `event.evaluation`.
-2. Remove all `FeedbackEvent` imports and handlers — the type no longer exists.
+2. Remove all `FeedbackEvent` imports and handlers, the type no longer exists.
 3. To read feedback, use `event.evaluation` on `RunEndEvent` or query past trajectories.
 
 ### Target.cleanup() renamed to reset_ephemeral_state()

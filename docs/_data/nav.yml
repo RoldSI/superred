@@ -4,37 +4,37 @@
     - title: Overview
       url: /guide/
     - title: Quick Start
-      url: /guide/quick-start.html
+      url: /guide/quick-start
     - title: Core Concepts
-      url: /guide/core-concepts.html
+      url: /guide/core-concepts
     - title: Writing a Target
-      url: /guide/writing-a-target.html
+      url: /guide/writing-a-target
     - title: Writing an Optimizer
-      url: /guide/writing-an-optimizer.html
+      url: /guide/writing-an-optimizer
     - title: Writing Tasks
-      url: /guide/writing-tasks.html
+      url: /guide/writing-tasks
     - title: Running Evaluations
-      url: /guide/running-evaluations.html
+      url: /guide/running-evaluations
     - title: Security Domains
-      url: /guide/security-domains.html
+      url: /guide/security-domains
     - title: Advanced Patterns
-      url: /guide/advanced-patterns.html
+      url: /guide/advanced-patterns
 
 - title: Reference
   items:
     - title: Architecture Overview
       url: /reference/
     - title: Controller
-      url: /reference/controller.html
+      url: /reference/controller
     - title: Optimizer
-      url: /reference/optimizer.html
+      url: /reference/optimizer
     - title: Target
-      url: /reference/target.html
+      url: /reference/target
     - title: Task
-      url: /reference/task.html
+      url: /reference/task
     - title: SecurityClaim
-      url: /reference/security-claim.html
+      url: /reference/security-claim
     - title: Core Types
-      url: /reference/types.html
+      url: /reference/types
     - title: Breaking Changes
-      url: /reference/breaking-changes.html
+      url: /reference/breaking-changes

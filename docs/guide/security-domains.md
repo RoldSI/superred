@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "Security Domains"
-permalink: /guide/security-domains.html
+permalink: /guide/security-domains
 ---
 
 # Security Domains
@@ -59,7 +59,7 @@ user.includes(user)       # True  - a tag includes itself
 ## Access levels: read-only surfaces
 
 `scope` is what the attacker can **read and write** (see and inject into). A
-second, optional Controller argument — `read_only` — adds tags it can **only
+second, optional Controller argument, `read_only`, adds tags it can **only
 read**. `read_only` defaults to empty, so the whole `scope` is read & write (the
 classic behavior). Tags listed under `read_only` stay visible (their events are
 recorded on the trajectory and shown through every filtered surface), but the
@@ -92,7 +92,7 @@ Controller.
 How the optimizer sees the split: at `initialize()` it gets a `controllables`
 list (exactly the surfaces it can inject into) and an `observables` list (what
 it can read). A read-only controllable is therefore **shown to the optimizer as
-an observable**, not a controllable — honest by construction, since for this run
+an observable**, not a controllable, honest by construction, since for this run
 it is a thing you read, not a thing you inject. Its runtime values still arrive
 on the trajectory as its (declined) controllable events.
 
@@ -119,7 +119,7 @@ one tag per surface, emit the information once, and grant weaker attackers
 visibility by listing the tag under `read_only` instead of `scope`. "Can read
 the system prompt but not change it" is `read_only={system_prompt, ...}`; "can
 override it" is `scope={system_prompt, ...}`. (The chatbot target predates this
-mechanism and still ships dedicated `*_readable` child tags — that pattern works
+mechanism and still ships dedicated `*_readable` child tags, that pattern works
 too, but forces
 the target to emit the same information twice and duplicates trajectory
 entries when both tags end up in scope.)
@@ -218,7 +218,7 @@ Notice the principles at work:
   `tool_catalogue` grants the weaker register-only capability automatically.
 - **Read-only access lives in the scope, not in a tag**: "can see the prompt but
   not change it" is `prompt` under `read_only` rather than `scope`. The
-  `agent_trace` tree stays — it is pure observation with no write counterpart,
+  `agent_trace` tree stays, it is pure observation with no write counterpart,
   a genuine surface of its own.
 - **Knowledge isolated** as `model_identity`.
 - **A provenance grid** under `tools`. The most realistic prompt-injection
@@ -362,5 +362,5 @@ for scope in domain.distinct_combinations():
 
 Each `scope` is already the `frozenset` the Controller wants. Building one
 Controller per scope is the intended pattern; see
-[Running Evaluations](/guide/running-evaluations.html#sweeping-multiple-threat-models)
+[Running Evaluations](/guide/running-evaluations#sweeping-multiple-threat-models)
 for the in-script-loop and one-process-per-cell styles people actually use.

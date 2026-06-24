@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "Writing a Target"
-permalink: /guide/writing-a-target.html
+permalink: /guide/writing-a-target
 ---
 
 # Writing a Target
@@ -13,7 +13,7 @@ build for a new system.
 The single most important habit: **make the target general and reusable.** A
 target should model *a kind of system* (any chatbot, the AgentDojo agent, a RAG
 pipeline), not one benchmark. Everything benchmark-specific (which prompts, what
-counts as success) belongs in a [SecurityClaim](/guide/writing-tasks.html), not here.
+counts as success) belongs in a [SecurityClaim](/guide/writing-tasks), not here.
 The payoff is that one target serves many claims, and one claim can run against
 many targets.
 
@@ -27,7 +27,7 @@ You subclass `superred.core.interfaces.target.Target` and implement:
 | `set_config(name, value)` | method | accept one config value |
 | `query_specs` | property | the named questions an evaluator may ask after a run |
 | `query(name, **params)` | method | answer one query |
-| `security_domain` | property | the trust-boundary forest (see [doc 7](/guide/security-domains.html)) |
+| `security_domain` | property | the trust-boundary forest (see [doc 7](/guide/security-domains)) |
 | `get_controllables()` | method | the injection points, each tagged with a domain |
 | `get_observables()` | method | static facts the attacker may read, each tagged |
 | `run(emit, send_event)` | async method | execute one interaction |
@@ -321,7 +321,7 @@ comfortably use 8 or more; a target that boots a sandbox or holds a heavy
 resource should usually stay at `1` unless it pools internally. Because each
 task gets its own instance, you do not need locks for cross-task safety. (Within
 a single run, a target *may* fan out into concurrent branches; see
-[Advanced Patterns](/guide/advanced-patterns.html).)
+[Advanced Patterns](/guide/advanced-patterns).)
 
 ## Multiple controllables at different boundaries
 
@@ -356,7 +356,7 @@ Scoped to `{user}`, the attacker controls `user_query` while `db_result` is
 auto-declined: you are testing "can the attacker win through queries alone?".
 Scoped to `{system}` (a root that includes both), the attacker controls both:
 "what if they can also poison the database?". Designing these boundaries is the
-subject of [Security Domains](/guide/security-domains.html).
+subject of [Security Domains](/guide/security-domains).
 
 ## Worked examples in the repository
 

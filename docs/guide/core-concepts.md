@@ -1,7 +1,7 @@
 ---
 layout: doc
 title: "Core Concepts"
-permalink: /guide/core-concepts.html
+permalink: /guide/core-concepts
 ---
 
 # Core Concepts
@@ -45,7 +45,7 @@ many attacks. A target exposes:
 The guiding principle: **build the target to be general and reusable**, and keep
 benchmark-specific logic out of it. The chatbot target wraps "any LLM"; the
 AgentDojo target wraps "the AgentDojo agent". The specifics of a given benchmark
-live in the SecurityClaim, not the target. See [Writing a Target](/guide/writing-a-target.html).
+live in the SecurityClaim, not the target. See [Writing a Target](/guide/writing-a-target).
 
 ### Optimizer
 
@@ -65,7 +65,7 @@ The optimizer:
   granted it an LLM. The model and the spending budget are chosen by the
   experiment, not by the optimizer: that is part of the threat model.
 
-See [Writing an Optimizer](/guide/writing-an-optimizer.html).
+See [Writing an Optimizer](/guide/writing-an-optimizer).
 
 ### Task
 
@@ -78,7 +78,7 @@ One adversarial objective. A task:
 
 Tasks are **stateless**: they never store a reference to the target. They get
 the target handed to them in `configure_target` and again in `evaluate`. This is
-what lets a claim be iterated many times. See [Writing Tasks](/guide/writing-tasks.html).
+what lets a claim be iterated many times. See [Writing Tasks](/guide/writing-tasks).
 
 ### SecurityClaim
 
@@ -97,7 +97,7 @@ combined = SecurityClaim.from_claims([claim_1, claim_2])
 In practice you rarely build claims by hand: a module ships a **factory
 function** (e.g. `harmbench_claim(...)`, `sorry_bench_claim(...)`) that loads a
 dataset and produces one task per prompt. See [Writing Tasks and Security
-Claims](/guide/writing-tasks.html).
+Claims](/guide/writing-tasks).
 
 ### Controller = one threat model
 
@@ -112,8 +112,8 @@ is captured by two things:
 **One `Controller` instance evaluates one claim under one `(scope, llm_config)`
 threat model.** To compare several threat models (a weak attacker vs a strong
 one, with feedback vs without), you build several Controllers. That is covered
-in [Running Evaluations](/guide/running-evaluations.html) and
-[Advanced Patterns](/guide/advanced-patterns.html).
+in [Running Evaluations](/guide/running-evaluations) and
+[Advanced Patterns](/guide/advanced-patterns).
 
 The Controller never shares a target between concurrent tasks: it gets each task
 a fresh target from the `TargetFactory` and a fresh optimizer from the
@@ -217,7 +217,7 @@ optimizer can see or touch** to that boundary:
 This is how you ask precise questions like *"what can an attacker achieve if they
 control only the user message, and nothing else?"* Choosing these boundaries
 well, based on the real trust structure of the system, is the most important
-modelling decision you make. [Security Domains](/guide/security-domains.html) is
+modelling decision you make. [Security Domains](/guide/security-domains) is
 devoted to it.
 
 ## Scores
