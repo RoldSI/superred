@@ -3,54 +3,142 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Superred</title>
+  <title>Superred — AI red-teaming and AI system security framework</title>
+  <meta name="description" content="Superred is a modular framework for red-teaming AI systems: point an automated attacker at any AI system and measure whether it can be made to misbehave, under a precisely defined level of access.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;500&display=swap" rel="stylesheet">
-  <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-    }
-    body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      background: #ffffff;
-      font-family: Garamond, "EB Garamond", "Adobe Garamond Pro", "Times New Roman", serif;
-      text-align: center;
-      padding: 1.5rem;
-      box-sizing: border-box;
-    }
-    .title {
-      color: #000000;
-      font-size: clamp(2.75rem, 9vw, 5rem);
-      font-weight: 500;
-      line-height: 1.1;
-      letter-spacing: 0.01em;
-    }
-    .subline {
-      color: #808080;
-      font-size: clamp(1rem, 3vw, 1.5rem);
-      font-weight: 400;
-      margin-top: 0.5rem;
-    }
-    .enter {
-      margin-top: 2rem;
-      font-size: 1.1rem;
-      color: #111111;
-      text-decoration: none;
-      border-bottom: 1px solid #808080;
-      padding-bottom: 2px;
-    }
-    .enter:hover { border-bottom-color: #111111; }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/home.css">
 </head>
 <body>
-  <div class="title">Superred</div>
-  <div class="subline">AI red-teaming and AI system security framework</div>
-  <a class="enter" href="/guide/">Documentation</a>
+
+  <!-- ===== HEADER ===== -->
+  <header class="site-header">
+    <a class="wordmark" href="/">Superred</a>
+    <nav class="site-nav">
+      <a href="/guide/">Guide</a>
+      <a href="/reference/">Reference</a>
+      <a href="https://github.com/RoldSI/superred">GitHub</a>
+    </nav>
+  </header>
+
+  <!-- ===== HERO ===== -->
+  <section class="hero">
+    <h1>Superred</h1>
+    <p class="tagline">AI red-teaming and AI system security framework</p>
+    <p class="lead">Point an automated attacker at any AI system and measure whether it can be made to misbehave &mdash; under a precisely defined level of access.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="/guide/quick-start.html">Get started</a>
+      <a class="btn btn-secondary" href="/guide/">Read the guide</a>
+    </div>
+    <p class="scroll-hint">Scroll to learn more</p>
+  </section>
+
+  <!-- ===== WHY: the gap it closes ===== -->
+  <section class="section" id="why">
+    <p class="eyebrow">Why superred</p>
+    <h2>Attacks, systems, and benchmarks no longer live in separate worlds</h2>
+    <p>Published attacks on AI systems and the benchmarks that measure them are scattered across one-off codebases. Each attack is wired to the system it was first demonstrated on; each benchmark ships its own runner. Answering a simple question &mdash; <em>does this attack beat that system, and how much access does it take?</em> &mdash; usually means re-implementing one against the other by hand.</p>
+    <p>Superred makes the three moving parts independent and composable. The attacker (an <strong>optimizer</strong>), the system under test (a <strong>target</strong>), and the definition of success (a <strong>security claim</strong>) are separate, interchangeable modules. Any attacker can be pointed at any target and scored by any claim &mdash; under a threat model you state explicitly.</p>
+  </section>
+
+  <!-- ===== VALUE PROPOSITION ===== -->
+  <section class="section" id="who">
+    <p class="eyebrow">Who it is for</p>
+    <div class="two-col">
+      <div class="col">
+        <h3>For red-teamers</h3>
+        <p>A growing library of faithful re-implementations of published attacks &mdash; AutoDAN-Turbo, PAIR, TAP, Crescendo, GPTFuzzer, many-shot, and more &mdash; ready to run against any target and scored by real safety benchmarks such as HarmBench, StrongREJECT, and AgentDojo. A fixed model and a fixed budget per attempt keep every comparison fair.</p>
+      </div>
+      <div class="col">
+        <h3>For system builders</h3>
+        <p>Describe your system once: its trust boundaries, the points an attacker could influence, and the facts they could read. Superred then measures exactly which attacks succeed at each level of access &mdash; so you learn not just whether your system can be broken, but how much an attacker must control before it is.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FEATURES ===== -->
+  <section class="section" id="features">
+    <p class="eyebrow">High-level features</p>
+    <h2>What the framework gives you</h2>
+    <div class="features">
+      <div class="feature">
+        <h3>Mix and match</h3>
+        <p>Any optimizer, any target, any security claim. Components are independent packages that combine freely.</p>
+      </div>
+      <div class="feature">
+        <h3>Precise threat models</h3>
+        <p>Attacker access is scoped to a forest of trust boundaries, so you measure behavior under exactly the access a real attacker would hold.</p>
+      </div>
+      <div class="feature">
+        <h3>Event-driven by design</h3>
+        <p>Attackers act only through declared injection points and observe only through declared signals and the run trajectory &mdash; no hidden coupling to the target.</p>
+      </div>
+      <div class="feature">
+        <h3>Faithful to the source</h3>
+        <p>Ported attacks and benchmarks stay byte-identical to their upstream prompts and data wherever possible, with every deviation recorded.</p>
+      </div>
+      <div class="feature">
+        <h3>Fair and reproducible</h3>
+        <p>A fixed model and a cost budget per task bound every attacker equally, and results are written to disk for later analysis.</p>
+      </div>
+      <div class="feature">
+        <h3>Built to scale</h3>
+        <p>Run many threat models in parallel, each against its own independent instance of the system under test.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ONE-LINER / CONCEPTS ===== -->
+  <section class="section oneliner" id="how">
+    <p class="eyebrow">In one sentence</p>
+    <p>A controller runs an optimizer against a target to pursue an adversarial goal from a security claim, while enforcing a security scope &mdash; recording every event and response along the way.</p>
+    <p class="muted"><a href="/guide/core-concepts.html">Learn the core concepts &mdash; models and events &rarr;</a></p>
+  </section>
+
+  <!-- ===== GETTING STARTED ===== -->
+  <section class="section start" id="start">
+    <p class="eyebrow">Easy to get started</p>
+    <h2>Install, wire three pieces together, run an evaluation</h2>
+    <p>Install the framework and whichever modules you want to combine, connect an optimizer, a target, and a claim in a short script, and run an evaluation end to end.</p>
+    <pre><code><span class="comment"># install the framework and the pieces you want to combine</span>
+pip install -e ./superred
+pip install -e ./superred-modules/optimizers/pair             <span class="comment"># an attacker</span>
+pip install -e ./superred-modules/targets/chatbot             <span class="comment"># a system to test</span>
+pip install -e ./superred-modules/security_claims/harmbench   <span class="comment"># what counts as broken</span>
+
+<span class="comment"># wire them together in a short script, then run</span>
+python run.py</code></pre>
+    <p class="muted" style="margin-top:1.2rem"><a href="/guide/quick-start.html">Run your first evaluation &mdash; the Quick Start &rarr;</a></p>
+  </section>
+
+  <!-- ===== DOCUMENTATION ===== -->
+  <section class="section" id="docs">
+    <p class="eyebrow">Documentation</p>
+    <h2>Two ways in</h2>
+    <div class="doc-cards">
+      <a class="card" href="/guide/">
+        <h3>Guide</h3>
+        <p>Hands-on and example-driven: getting started, the core concepts of models and events, and worked examples. Start here.</p>
+        <span class="go">Open the guide &rarr;</span>
+      </a>
+      <a class="card" href="/reference/">
+        <h3>Reference</h3>
+        <p>The framework interfaces in technical detail: the controller, optimizer, target, task, security claim, and core types.</p>
+        <span class="go">Open the reference &rarr;</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="site-footer">
+    <span>Superred &middot; v0.1.0 (alpha) &middot; APIs may change</span>
+    <span>
+      <a href="/guide/">Guide</a> &nbsp;&middot;&nbsp;
+      <a href="/reference/">Reference</a> &nbsp;&middot;&nbsp;
+      <a href="https://github.com/RoldSI/superred">GitHub</a>
+    </span>
+  </footer>
+
 </body>
 </html>

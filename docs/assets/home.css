@@ -1,0 +1,224 @@
+/* Superred landing page — same design language as the docs: Garamond, black on
+   white, restrained grays. Kept deliberately plain. */
+
+:root {
+  --ink: #111111;
+  --gray: #808080;
+  --line: #e6e6e6;
+  --code-bg: #f6f6f6;
+  --serif: Garamond, "EB Garamond", "Adobe Garamond Pro", "Times New Roman", serif;
+  --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --page: 860px;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: #ffffff;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 20px;
+  line-height: 1.65;
+}
+
+a { color: var(--ink); }
+
+/* ---- sticky header ---- */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.5rem;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: saturate(180%) blur(6px);
+  border-bottom: 1px solid var(--line);
+}
+.site-header .wordmark {
+  font-size: 1.4rem;
+  font-weight: 500;
+  text-decoration: none;
+  letter-spacing: 0.01em;
+}
+.site-nav {
+  display: flex;
+  gap: 1.4rem;
+  font-size: 1rem;
+}
+.site-nav a {
+  color: var(--gray);
+  text-decoration: none;
+}
+.site-nav a:hover { color: var(--ink); }
+
+/* ---- shared section frame ---- */
+.section {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 4.5rem 1.5rem;
+  border-top: 1px solid var(--line);
+}
+.eyebrow {
+  margin: 0 0 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.section h2 {
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  font-weight: 500;
+  line-height: 1.2;
+  margin: 0 0 1rem;
+}
+.section p { margin: 0 0 1rem; max-width: 64ch; }
+.section p:last-child { margin-bottom: 0; }
+.muted { color: var(--gray); }
+
+/* ---- hero ---- */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 84vh;
+  padding: 3rem 1.5rem 4rem;
+}
+.hero h1 {
+  font-size: clamp(3rem, 11vw, 6rem);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+.hero .tagline {
+  color: var(--gray);
+  font-size: clamp(1.1rem, 3.2vw, 1.6rem);
+  margin: 0.6rem 0 0;
+}
+.hero .lead {
+  max-width: 40ch;
+  font-size: 1.2rem;
+  margin: 1.8rem auto 0;
+}
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  justify-content: center;
+  margin-top: 2.2rem;
+}
+.btn {
+  display: inline-block;
+  padding: 0.55rem 1.4rem;
+  font-family: inherit;
+  font-size: 1.05rem;
+  text-decoration: none;
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+}
+.btn-primary { background: var(--ink); color: #fff; }
+.btn-primary:hover { background: #000; }
+.btn-secondary { background: #fff; color: var(--ink); }
+.btn-secondary:hover { background: var(--code-bg); }
+.scroll-hint {
+  margin-top: 3rem;
+  color: var(--gray);
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ---- two-column value props ---- */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2.5rem;
+}
+.two-col h3 { font-size: 1.25rem; font-weight: 500; margin: 0 0 0.6rem; }
+.two-col p { margin: 0; }
+
+/* ---- features grid ---- */
+.features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem 2.5rem;
+}
+.feature { padding-top: 1rem; border-top: 1px solid var(--line); }
+.feature h3 { font-size: 1.1rem; font-weight: 500; margin: 0 0 0.4rem; }
+.feature p { margin: 0; font-size: 0.98rem; color: #333; }
+
+/* ---- one-liner ---- */
+.oneliner {
+  text-align: center;
+}
+.oneliner p {
+  max-width: 58ch;
+  margin: 0 auto 1.2rem;
+  font-size: 1.25rem;
+}
+
+/* ---- getting started ---- */
+.start pre {
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  margin: 1.4rem 0 0;
+}
+.start code {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.start .comment { color: var(--gray); }
+
+/* ---- documentation cards ---- */
+.doc-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+.card {
+  display: block;
+  padding: 1.6rem 1.6rem 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--ink);
+}
+.card:hover { border-color: var(--gray); }
+.card h3 { font-size: 1.25rem; font-weight: 500; margin: 0 0 0.5rem; }
+.card p { margin: 0 0 0.9rem; font-size: 0.98rem; color: #333; }
+.card .go { color: var(--gray); font-size: 0.95rem; }
+
+/* ---- footer ---- */
+.site-footer {
+  max-width: var(--page);
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 3.5rem;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.6rem;
+  color: var(--gray);
+  font-size: 0.95rem;
+}
+.site-footer a { color: var(--gray); text-decoration: none; }
+.site-footer a:hover { color: var(--ink); }
+
+/* ---- responsive ---- */
+@media (max-width: 720px) {
+  body { font-size: 19px; }
+  .two-col, .features, .doc-cards { grid-template-columns: 1fr; }
+  .section { padding: 3.2rem 1.25rem; }
+}
