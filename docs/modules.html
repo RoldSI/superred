@@ -1,0 +1,33 @@
+---
+layout: page
+title: Modules
+permalink: /modules.html
+---
+<section class="section">
+  <p class="eyebrow">Modules</p>
+  <h2>Attacks, targets, and benchmarks</h2>
+  <p>Every module is an independently installable package that plugs into the framework, and any combination can be run together: any attacker against any target, scored by any claim. The attacks and benchmarks are faithful ports of published work, each with its assumptions recorded. New modules are added regularly.</p>
+
+  <h3 class="cat">Attackers <span class="count">{{ site.data.modules.optimizers | size }} optimizers</span></h3>
+  <ul class="mod-list">
+    {% for m in site.data.modules.optimizers %}
+    <li><span class="mod-name">{{ m.name }}</span> <span class="mod-desc">{{ m.blurb }}</span></li>
+    {% endfor %}
+  </ul>
+
+  <h3 class="cat">Targets <span class="count">{{ site.data.modules.targets | size }} systems under test</span></h3>
+  <ul class="mod-list">
+    {% for m in site.data.modules.targets %}
+    <li><span class="mod-name">{{ m.name }}</span> <span class="mod-desc">{{ m.blurb }}</span></li>
+    {% endfor %}
+  </ul>
+
+  <h3 class="cat">Security claims <span class="count">{{ site.data.modules.security_claims | size }} benchmarks</span></h3>
+  <ul class="mod-list">
+    {% for m in site.data.modules.security_claims %}
+    <li><span class="mod-name">{{ m.name }}</span> <span class="mod-desc">{{ m.blurb }}</span></li>
+    {% endfor %}
+  </ul>
+
+  <p class="muted">Want to add your own? The <a href="/guide/">guide</a> walks through writing a target, an optimizer, and a security claim.</p>
+</section>

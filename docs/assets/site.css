@@ -45,6 +45,7 @@
 
 .site-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 1.4rem;
   font-size: 1rem;
   white-space: nowrap;
@@ -56,9 +57,16 @@
 .site-nav a:hover { color: var(--ink); }
 .site-nav a.active { color: var(--ink); }
 
-/* Hide the subtitle on narrow screens so the nav always fits. */
+/* On narrow screens drop the subtitle and stack the brand above the nav so
+   the links never overflow. */
 @media (max-width: 640px) {
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
   .site-header .tagline { display: none; }
+  .site-nav { gap: 1rem 1.2rem; }
 }
 
 /* A section placed directly under the header (e.g. standalone pages) should

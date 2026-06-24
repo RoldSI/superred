@@ -61,6 +61,39 @@ a { color: var(--ink); }
 }
 .people li { margin: 0.35rem 0; }
 
+/* module catalogue (modules.html) */
+.cat {
+  margin: 2.6rem 0 0.4rem;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+.cat .count {
+  margin-left: 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.mod-list {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 2.5rem;
+}
+.mod-list li {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+  font-size: 0.98rem;
+}
+.mod-name { font-weight: 500; }
+.mod-desc { color: var(--gray); }
+@media (max-width: 640px) {
+  .mod-list { grid-template-columns: 1fr; }
+}
+
 /* ---- hero ---- */
 .hero {
   display: flex;

@@ -1,0 +1,35 @@
+# Catalogue of available modules, rendered on /modules.html.
+# Blurbs are condensed from each module's own package description.
+optimizers:
+  - { name: PAIR,            blurb: "Iterative prompt refinement with an attacker LLM" }
+  - { name: TAP,             blurb: "Tree-of-attacks with pruning" }
+  - { name: AutoDAN-Turbo,   blurb: "Lifelong strategy-discovery jailbreak" }
+  - { name: Crescendo,       blurb: "Gradual multi-turn escalation" }
+  - { name: GPTFuzzer,       blurb: "Mutation-based jailbreak fuzzing" }
+  - { name: Many-Shot,       blurb: "Many in-context demonstrations" }
+  - { name: GOAT,            blurb: "Generative offensive agent tester (multi-turn)" }
+  - { name: FlipAttack,      blurb: "Single-turn flip-based obfuscation" }
+  - { name: CodeChameleon,   blurb: "Code-encryption obfuscation jailbreak" }
+  - { name: DRA,             blurb: "Disguise-and-reconstruction attack" }
+  - { name: Bijection Learning, blurb: "Bijection-cipher jailbreak" }
+  - { name: FITD,            blurb: "Foot-in-the-door multi-turn escalation" }
+  - { name: GEPA,            blurb: "Reflective prompt evolution" }
+  - { name: GEPA (agentic),  blurb: "Reflective prompt evolution for agent targets" }
+  - { name: AgentVigil,      blurb: "Indirect prompt injection for agent targets" }
+  - { name: MINJA,           blurb: "Memory-injection attack for agent targets" }
+  - { name: PoisonedRAG,     blurb: "Knowledge-base / RAG corruption" }
+
+targets:
+  - { name: Chatbot,             blurb: "Any LLM as a single- or multi-turn chatbot" }
+  - { name: AgentDojo,           blurb: "Tool-using agent across all four AgentDojo suites" }
+  - { name: Agent Security Bench, blurb: "Plan-then-execute agent loop (ASB)" }
+  - { name: Inspect agent,       blurb: "General inspect-ai tool-calling agent" }
+
+security_claims:
+  - { name: HarmBench,           blurb: "Standardized red-teaming benchmark" }
+  - { name: StrongREJECT,        blurb: "Jailbreak benchmark (Souly et al., 2024)" }
+  - { name: SORRY-Bench,         blurb: "Fine-grained safety-refusal benchmark" }
+  - { name: AgentHarm,           blurb: "Harmful agent-behavior benchmark (176 behaviors)" }
+  - { name: AgentDojo,           blurb: "Prompt-injection tasks + purpose-violation goals" }
+  - { name: Agent Security Bench, blurb: "Attack-success / utility / refusal tasks" }
+  - { name: Chatbot suite,       blurb: "HarmBench + SORRY-Bench + StrongREJECT combined" }
