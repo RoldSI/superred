@@ -1,0 +1,8 @@
+title: Superred
+description: AI red-teaming and AI system security framework
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+# We ship our own layout in _layouts/; no remote theme is used.

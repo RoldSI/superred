@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Quick Start"
+permalink: /guide/quick-start.html
+---
+
 # Quick Start
 
 This walks through a complete, runnable evaluation: a fixed-prompt attacker
@@ -124,7 +130,7 @@ Everything you do later is a variation on the five steps above:
 
 ## What to read next
 
-- [Core Concepts](02-core-concepts.md) for the vocabulary and the run loop.
-- [Writing a Target](03-writing-a-target.md) to wrap your own system.
-- [Security Domains](07-security-domains.md) for the most important design
+- [Core Concepts](/guide/core-concepts.html) for the vocabulary and the run loop.
+- [Writing a Target](/guide/writing-a-target.html) to wrap your own system.
+- [Security Domains](/guide/security-domains.html) for the most important design
   decision you will make: how to model trust boundaries.

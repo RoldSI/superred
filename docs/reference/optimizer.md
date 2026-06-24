@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Optimizer Interface"
+permalink: /reference/optimizer.html
+---
+
 # Optimizer Interface
 
 The optimizer is the attacker agent in superred. It runs as a concurrent actor, receiving events through an `EventChannel` and deciding what to inject at controllable points.

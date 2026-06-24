@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Architecture Overview"
+permalink: /reference/
+---
+
 # Architecture Overview
 
 superred is a modular framework for red-teaming AI systems. It models the interaction between an **optimizer** (the attacker), a **target** (the AI system under test), and **tasks** (adversarial objectives), orchestrated by a **controller** through an event-driven, channel-based architecture.
@@ -186,9 +192,9 @@ src/superred/core/
 
 ## Detailed Component Documentation
 
-- [Controller](controller.md) -- the orchestrator: event bridging, filtering, evaluation
-- [Optimizer](optimizer.md) -- the optimizer interface: actor model, consumption choices
-- [Target](target.md) -- target interface, config/query separation
-- [Task](task.md) -- task generics, stateless design
-- [SecurityClaim](security_claim.md) -- composable task collections
-- [Types Reference](types.md) -- all core types, design decisions, relationships
+- [Controller](/reference/controller.html) -- the orchestrator: event bridging, filtering, evaluation
+- [Optimizer](/reference/optimizer.html) -- the optimizer interface: actor model, consumption choices
+- [Target](/reference/target.html) -- target interface, config/query separation
+- [Task](/reference/task.html) -- task generics, stateless design
+- [SecurityClaim](/reference/security-claim.html) -- composable task collections
+- [Types Reference](/reference/types.html) -- all core types, design decisions, relationships

@@ -1,0 +1,40 @@
+# Sidebar navigation. Section titles are labels; items are pages, in order.
+- title: User Guide
+  items:
+    - title: Overview
+      url: /guide/
+    - title: Quick Start
+      url: /guide/quick-start.html
+    - title: Core Concepts
+      url: /guide/core-concepts.html
+    - title: Writing a Target
+      url: /guide/writing-a-target.html
+    - title: Writing an Optimizer
+      url: /guide/writing-an-optimizer.html
+    - title: Writing Tasks
+      url: /guide/writing-tasks.html
+    - title: Running Evaluations
+      url: /guide/running-evaluations.html
+    - title: Security Domains
+      url: /guide/security-domains.html
+    - title: Advanced Patterns
+      url: /guide/advanced-patterns.html
+
+- title: Reference
+  items:
+    - title: Architecture Overview
+      url: /reference/
+    - title: Controller
+      url: /reference/controller.html
+    - title: Optimizer
+      url: /reference/optimizer.html
+    - title: Target
+      url: /reference/target.html
+    - title: Task
+      url: /reference/task.html
+    - title: SecurityClaim
+      url: /reference/security-claim.html
+    - title: Core Types
+      url: /reference/types.html
+    - title: Breaking Changes
+      url: /reference/breaking-changes.html

@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Task Interface"
+permalink: /reference/task.html
+---
+
 # Task Interface
 
 A task defines an adversarial objective against a target. Tasks are stateless and generic over the target type.

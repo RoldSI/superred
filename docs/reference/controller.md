@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Controller"
+permalink: /reference/controller.html
+---
+
 # Controller
 
 The controller is the main orchestrator for red-teaming evaluations. One `Controller` instance evaluates one security claim against one threat model — a single `(scope, llm_config)` combination. Sweeping multiple threat models is the caller's job: instantiate one `Controller` per combination and run them sequentially or via `asyncio.gather`.

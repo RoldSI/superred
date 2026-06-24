@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Writing an Optimizer"
+permalink: /guide/writing-an-optimizer.html
+---
+
 # Writing an Optimizer
 
 An optimizer is the attacker. It receives events as the target runs and decides
@@ -87,7 +93,7 @@ A bare `EventResponse` is accepted only by events that allow it, such as
 with `stop_reason="error"`. The worked examples below inject once per run and
 omit the post-call branch because their targets are single-shot; a target that
 emits `ControllablePostCallEvent` (see
-[Advanced Patterns](08-advanced-patterns.md#multi-turn-targets)) needs it.
+[Advanced Patterns](/guide/advanced-patterns.html#multi-turn-targets)) needs it.
 
 ## The event sequence
 
