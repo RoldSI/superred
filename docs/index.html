@@ -19,7 +19,6 @@
     <nav class="site-nav">
       <a href="/guide/">Guide</a>
       <a href="/reference/">Reference</a>
-      <a href="/credits.html">Credits</a>
       <a href="https://github.com/RoldSI/superred">GitHub</a>
     </nav>
   </header>
@@ -28,7 +27,7 @@
   <section class="hero">
     <h1>Superred</h1>
     <p class="tagline">AI red-teaming and AI system security framework</p>
-    <p class="lead">Point an automated attacker at any AI system and measure whether it can be made to misbehave &mdash; under a precisely defined level of access.</p>
+    <p class="lead">Point an automated attacker at any AI system under a precisely defined level of access.</p>
     <div class="cta">
       <a class="btn btn-primary" href="/guide/quick-start.html">Get started</a>
       <a class="btn btn-secondary" href="/guide/">Read the guide</a>
@@ -58,22 +57,22 @@
     <p class="eyebrow">Why superred</p>
     <h2>Attacks, systems, and benchmarks no longer live in separate worlds</h2>
     <p>Published attacks on AI systems and the benchmarks that measure them are scattered across one-off codebases. Each attack is wired to the system it was first demonstrated on; each benchmark ships its own runner. Answering a simple question &mdash; <em>does this attack beat that system, and how much access does it take?</em> &mdash; usually means re-implementing one against the other by hand.</p>
-    <p>Superred makes the three moving parts independent and composable. The attacker (an <strong>optimizer</strong>), the system under test (a <strong>target</strong>), and the definition of success (a <strong>security claim</strong>) are separate, interchangeable modules. Any attacker can be pointed at any target and scored by any claim &mdash; under a threat model you state explicitly.</p>
+    <p>Superred makes the three moving parts independent and composable. The attacker (an <strong>optimizer</strong>), the system under test (a <strong>target</strong>), and the definition of success (a <strong>security claim</strong>) are separate, interchangeable modules. Any attacker can be pointed at any target and scored by any claim &mdash; under a flexible threat model you state explicitly.</p>
   </section>
 
   <!-- ===== VALUE PROPOSITION ===== -->
   <section class="section" id="who">
     <p class="eyebrow">A meeting point</p>
-    <h2>Attackers and targets are both first-class citizens</h2>
-    <p>To superred, an attack and a system under test are the same kind of object: an interchangeable module you plug into one harness. Hold the system fixed to evaluate an attack, or hold the attack fixed to evaluate a system &mdash; the same machinery answers both. So this is common ground where red-teamers and system builders meet: every attack contributed makes every system easier to test, and every system contributed gives every attack something new to probe. Everyone contributes, and everyone benefits.</p>
-    <div class="two-col" style="margin-top: 2.6rem">
+    <h2>Attackers and targets are both first-class</h2>
+    <p>An attack and a system under test are the same kind of thing here: interchangeable modules. Fix one to evaluate the other, so red-teamers and system builders share a single toolbox where every contribution strengthens both sides.</p>
+    <div class="two-col" style="margin-top: 2.4rem">
       <div class="col">
         <h3>For red-teamers</h3>
-        <p>A growing library of faithful re-implementations of published attacks &mdash; AutoDAN-Turbo, PAIR, TAP, Crescendo, GPTFuzzer, many-shot, and more &mdash; ready to run against any target and scored by real safety benchmarks such as HarmBench, StrongREJECT, and AgentDojo. A fixed model and a fixed budget per attempt keep every comparison fair.</p>
+        <p>A library of published attacks, ready to run against any target and scored by real benchmarks. A fixed model and budget keep comparisons fair.</p>
       </div>
       <div class="col">
         <h3>For system builders</h3>
-        <p>Describe your system once: its trust boundaries, the points an attacker could influence, and the facts they could read. Superred then measures exactly which attacks succeed at each level of access &mdash; so you learn not just whether your system can be broken, but how much an attacker must control before it is.</p>
+        <p>Declare your system's trust boundaries once, then see exactly which attacks succeed at each level of access.</p>
       </div>
     </div>
   </section>
@@ -84,16 +83,12 @@
     <h2>What the framework gives you</h2>
     <div class="features">
       <div class="feature">
-        <h3>Attack capabilities</h3>
-        <p>Every point an attacker could control &mdash; a system prompt, a tool result, a memory carried across runs &mdash; is a distinct capability. Together they span the threat-model space, and each run fixes exactly which capabilities the attacker holds, so every one is considered independently.</p>
+        <h3>Flexible threat models</h3>
+        <p>Decide exactly what an attacker may do, and change it freely between runs. A threat model is just the set of attacker capabilities you switch on, one per surface the attacker could control, from a single injected prompt up to full compromise.</p>
       </div>
       <div class="feature">
         <h3>Mix and match</h3>
         <p>Any optimizer, any target, any security claim. Components are independent packages that combine freely.</p>
-      </div>
-      <div class="feature">
-        <h3>Event-driven by design</h3>
-        <p>Attackers act only through declared injection points and observe only through declared signals and the run trajectory &mdash; no hidden coupling to the target.</p>
       </div>
       <div class="feature">
         <h3>Fair and reproducible</h3>
@@ -120,39 +115,16 @@
     <p>Install the framework and whichever modules you want to combine:</p>
     <pre><code>pip install superred pair-optimizer chatbot-target secclaim-harmbench</code></pre>
     <p>Then point an attacker at a target, choose what counts as broken, and say what the attacker is allowed to control:</p>
-    <pre><code><span class="comment"># run.py</span>
-import asyncio, os
+    <pre><code>chatbot = lambda: ChatbotTarget(model="gpt-4o-mini", api_key=key)
 
-from superred.core.controller import Controller, TargetFactory
-from superred.core.types.llm import LLMConfig
-from chatbot_target import ChatbotTarget, USER_TAG
-from pair_optimizer import PAIROptimizer
-from secclaim_harmbench import harmbench_claim
-
-key = os.environ["OPENAI_API_KEY"]
-
-
-async def main():
-    controller = Controller(
-        <span class="comment"># the attacker</span>
-        optimizer_factory=lambda: PAIROptimizer(),
-        <span class="comment"># the system under test</span>
-        target_factory=TargetFactory(
-            create=lambda: ChatbotTarget(model="gpt-4o-mini", api_key=key)
-        ),
-        <span class="comment"># what counts as broken</span>
-        security_claim=harmbench_claim(judge_api_key=key),
-        <span class="comment"># what the attacker is allowed to control</span>
-        scope=frozenset({USER_TAG}),
-        <span class="comment"># the attacker's own model and budget</span>
-        llm_config=LLMConfig(model="gpt-4o", api_key=key, max_cost=5.0),
-    )
-    result = await controller.run()
-    for task in result.task_results:
-        print(task.task.goal.description, "->", task.success)
-
-
-asyncio.run(main())</code></pre>
+controller = Controller(
+    optimizer_factory=lambda: PAIROptimizer(),  <span class="comment"># the attacker</span>
+    target_factory=TargetFactory(create=chatbot),  <span class="comment"># the system under test</span>
+    security_claim=harmbench_claim(),  <span class="comment"># what counts as broken</span>
+    scope=frozenset({USER_TAG}),  <span class="comment"># the attacker's capabilities</span>
+    llm_config=LLMConfig(model="gpt-4o", api_key=key, max_cost=5.0),  <span class="comment"># model + budget</span>
+)
+await controller.run()</code></pre>
     <p class="muted" style="margin-top:1.2rem"><a href="/guide/quick-start.html">A full walk-through &mdash; the Quick Start &rarr;</a></p>
   </section>
 
@@ -182,7 +154,6 @@ asyncio.run(main())</code></pre>
       <a href="/reference/">Reference</a> &nbsp;&middot;&nbsp;
       <a href="/modules.html">Modules</a> &nbsp;&middot;&nbsp;
       <a href="/portfolio.html">Portfolio</a> &nbsp;&middot;&nbsp;
-      <a href="/credits.html">Credits</a> &nbsp;&middot;&nbsp;
       <a href="https://github.com/RoldSI/superred">GitHub</a>
     </span>
   </footer>
