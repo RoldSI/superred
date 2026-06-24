@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }} · Superred</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href="/">Superred</a>
+    <span class="tagline">AI red-teaming and AI system security framework</span>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <details class="nav-disclosure" open>
+        <summary>Menu</summary>
+        <nav>
+          {% for section in site.data.nav %}
+          <p class="nav-section">{{ section.title }}</p>
+          <ul>
+            {% for item in section.items %}
+            <li>
+              <a href="{{ item.url }}"{% if item.url == page.url %} class="active" aria-current="page"{% endif %}>{{ item.title }}</a>
+            </li>
+            {% endfor %}
+          </ul>
+          {% endfor %}
+        </nav>
+      </details>
+    </aside>
+
+    <main class="content">
+      {{ content }}
+    </main>
+  </div>
+</body>
+</html>

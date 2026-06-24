@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "User Guide"
+permalink: /guide/
+---
+
 # superred User Guide
 
 superred is a framework for **red-teaming AI systems**: you point an automated
@@ -12,7 +18,7 @@ attack, and run evaluations. It assumes you can read Python and have seen
 
 If you instead want the internal design rationale (concurrency model, thread
 safety, why each interface looks the way it does), read the design docs under
-[`../docs/`](../docs/architecture.md). This guide and those docs describe the
+[`../docs/`](/reference/). This guide and those docs describe the
 same code from two angles: this one is "how do I build something", that one is
 "how and why does it work".
 
@@ -29,14 +35,14 @@ against one claim.
 
 ## Contents
 
-1. [Quick Start](01-quick-start.md) - install and run an evaluation end to end
-2. [Core Concepts](02-core-concepts.md) - the components and the run loop
-3. [Writing a Target](03-writing-a-target.md) - wrap your AI system
-4. [Writing an Optimizer](04-writing-an-optimizer.md) - build an attacker
-5. [Writing Tasks and Security Claims](05-writing-tasks.md) - define what to test
-6. [Running Evaluations](06-running-evaluations.md) - the Controller, results, persistence
-7. [Security Domains](07-security-domains.md) - model real trust boundaries and scope what the attacker sees
-8. [Advanced Patterns](08-advanced-patterns.md) - multi-turn, parallelism, packaging, sweeps
+1. [Quick Start](/guide/quick-start.html) - install and run an evaluation end to end
+2. [Core Concepts](/guide/core-concepts.html) - the components and the run loop
+3. [Writing a Target](/guide/writing-a-target.html) - wrap your AI system
+4. [Writing an Optimizer](/guide/writing-an-optimizer.html) - build an attacker
+5. [Writing Tasks and Security Claims](/guide/writing-tasks.html) - define what to test
+6. [Running Evaluations](/guide/running-evaluations.html) - the Controller, results, persistence
+7. [Security Domains](/guide/security-domains.html) - model real trust boundaries and scope what the attacker sees
+8. [Advanced Patterns](/guide/advanced-patterns.html) - multi-turn, parallelism, packaging, sweeps
 
 ## How the pieces are packaged
 
@@ -45,5 +51,5 @@ The framework itself is the `superred` package. Everything you plug into it
 installable packages** in the `superred-modules/` repository, and the scripts
 that wire specific combinations together live in `superred-experiments/`. You
 will usually `pip install -e` the framework plus whichever modules you need,
-then write a short experiment script. The [Quick Start](01-quick-start.md) shows
+then write a short experiment script. The [Quick Start](/guide/quick-start.html) shows
 the smallest version of this.

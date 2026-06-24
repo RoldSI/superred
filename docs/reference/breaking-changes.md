@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Breaking Changes"
+permalink: /reference/breaking-changes.html
+---
+
 # Breaking Changes
 
 ## v0.2.0 (unreleased)

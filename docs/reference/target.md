@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Target Interface"
+permalink: /reference/target.html
+---
+
 # Target Interface
 
 The AI system under test. Exposes five surfaces and a lifecycle.

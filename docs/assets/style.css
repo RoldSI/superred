@@ -1,0 +1,196 @@
+/* Superred docs — simple, Garamond, black on white. */
+
+:root {
+  --ink: #111111;
+  --gray: #808080;
+  --line: #e6e6e6;
+  --accent: #111111;
+  --code-bg: #f6f6f6;
+  --serif: Garamond, "EB Garamond", "Adobe Garamond Pro", "Times New Roman", serif;
+  --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --content-width: 760px;
+  --sidebar-width: 250px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: #ffffff;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 1.6;
+}
+
+/* ---- top bar ---- */
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.wordmark {
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: #000;
+  text-decoration: none;
+  letter-spacing: 0.01em;
+}
+.tagline {
+  color: var(--gray);
+  font-size: 0.95rem;
+}
+
+/* ---- layout ---- */
+.layout {
+  display: flex;
+  align-items: flex-start;
+  max-width: calc(var(--sidebar-width) + var(--content-width) + 6rem);
+  margin: 0 auto;
+}
+
+/* ---- sidebar ---- */
+.sidebar {
+  width: var(--sidebar-width);
+  flex: 0 0 var(--sidebar-width);
+  padding: 1.75rem 1.25rem;
+}
+.sidebar nav { font-size: 0.98rem; }
+.nav-section {
+  margin: 1.4rem 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.nav-section:first-child { margin-top: 0; }
+.sidebar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sidebar li { margin: 0.15rem 0; }
+.sidebar a {
+  display: block;
+  padding: 0.12rem 0;
+  color: var(--ink);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  padding-left: 0.7rem;
+  margin-left: -0.7rem;
+}
+.sidebar a:hover { color: #000; text-decoration: underline; }
+.sidebar a.active {
+  font-weight: 500;
+  border-left-color: var(--ink);
+}
+
+/* JS-free disclosure: collapsible on mobile, always open on desktop. */
+.nav-disclosure > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+
+/* ---- content ---- */
+.content {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: var(--content-width);
+  padding: 1.75rem 1.5rem 5rem;
+}
+.content h1, .content h2, .content h3, .content h4 {
+  line-height: 1.25;
+  font-weight: 500;
+}
+.content h1 { font-size: 2.1rem; margin: 0.2rem 0 1.2rem; }
+.content h2 {
+  font-size: 1.5rem;
+  margin: 2.4rem 0 0.8rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.content h3 { font-size: 1.2rem; margin: 1.8rem 0 0.6rem; }
+.content p, .content li { color: var(--ink); }
+.content a { color: var(--accent); text-underline-offset: 2px; }
+.content a:hover { text-decoration: none; }
+
+/* code */
+.content code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+.content pre {
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.9rem 1.1rem;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+.content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.8rem;
+}
+
+/* tables */
+.content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.2rem 0;
+  font-size: 0.95rem;
+}
+.content th, .content td {
+  border: 1px solid var(--line);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+.content th { background: #fafafa; font-weight: 500; }
+
+/* blockquotes */
+.content blockquote {
+  margin: 1.2rem 0;
+  padding: 0.2rem 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--gray);
+}
+
+.content hr { border: none; border-top: 1px solid var(--line); margin: 2rem 0; }
+
+/* ---- responsive ---- */
+@media (min-width: 800px) {
+  .sidebar {
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    max-height: 100vh;
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+  }
+  /* On desktop the nav is always shown; hide the disclosure toggle. */
+  .nav-disclosure > summary { display: none; }
+  .nav-disclosure > nav { display: block !important; }
+}
+
+@media (max-width: 799px) {
+  .layout { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    flex-basis: auto;
+    border-bottom: 1px solid var(--line);
+    padding-top: 1rem;
+  }
+  .content { padding-top: 1.25rem; }
+}

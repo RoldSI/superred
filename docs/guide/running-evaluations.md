@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Running Evaluations"
+permalink: /guide/running-evaluations.html
+---
+
 # Running Evaluations
 
 The `Controller` wires a target, an attacker, and a claim together and runs one
@@ -61,7 +67,7 @@ Two things people get wrong coming from older versions:
   single-boundary scope is `frozenset({tag})`. By default everything in `scope`
   is read & write; pass a **`read_only`** set to add tags the attacker can see
   but not inject into — see
-  [Security Domains](07-security-domains.md#access-levels-read-only-surfaces).
+  [Security Domains](/guide/security-domains.html#access-levels-read-only-surfaces).
 
 For tests or a single expensive instance, `TargetFactory.singleton(target)`
 wraps one instance and locks `concurrency` to 1. The Controller still calls
@@ -311,4 +317,4 @@ asyncio.run(main())
 ```
 
 For the design rationale behind all of this (per-task lifecycle, the middleware
-pipeline, exact persistence format), see [`../docs/controller.md`](../docs/controller.md).
+pipeline, exact persistence format), see the [Controller reference](/reference/controller.html).

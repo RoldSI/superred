@@ -3,7 +3,7 @@
 A modular framework for red-teaming AI systems. You point an automated attacker (an **optimizer**) at an AI system (a **target**) and measure whether it can make the system misbehave according to the adversarial goal of a **security claim**, under a precisely defined level of access (a **security domain scope**).
 
 > APIs may change;
-> see [`docs/breaking-changes.md`](docs/breaking-changes.md).
+> see [`docs/reference/breaking-changes.md`](docs/reference/breaking-changes.md).
 
 
 ## Overview
@@ -132,7 +132,9 @@ own `pip install -e ./superred-modules/<kind>/<name>`)
 
 ## Documentation
 
-- **[User Guide](docs-user/README.md)** - start here if you want to *use* the framework: write targets, optimizers, tasks, and run evaluations
-  - [Quick Start](docs-user/01-quick-start.md) runs an evaluation end to end
-- **[Design Docs](docs/architecture.md)** - the internal design and rationale: The [Controller](docs/controller.md), [Optimizer](docs/optimizer.md), [Target](docs/target.md), [Task](docs/task.md), [SecurityClaim](docs/security_claim.md), and [Types](docs/types.md)
+The documentation is published as a website at **[superred.simonsure.com](https://superred.simonsure.com/)**. The same pages live as Markdown under [`docs/`](docs/):
+
+- **[User Guide](docs/guide/README.md)** - start here if you want to *use* the framework: write targets, optimizers, tasks, and run evaluations
+  - [Quick Start](docs/guide/quick-start.md) runs an evaluation end to end
+- **[Design Docs](docs/reference/architecture.md)** - the internal design and rationale: The [Controller](docs/reference/controller.md), [Optimizer](docs/reference/optimizer.md), [Target](docs/reference/target.md), [Task](docs/reference/task.md), [SecurityClaim](docs/reference/security-claim.md), and [Types](docs/reference/types.md)
 - **[TESTING.md](TESTING.md)** - the test suite, coverage targets, and mutation testing. [MUTATIONS.md](MUTATIONS.md) contains notes on surviving mutants.

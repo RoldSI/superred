@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "SecurityClaim"
+permalink: /reference/security-claim.html
+---
+
 # SecurityClaim
 
 Composable, re-iterable collection of tasks.

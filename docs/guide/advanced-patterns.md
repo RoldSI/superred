@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Advanced Patterns"
+permalink: /guide/advanced-patterns.html
+---
+
 # Advanced Patterns
 
 Patterns you reach for once the basics are in place. Each is independent; read
@@ -105,7 +111,7 @@ for tr in result.task_results:
 ## Testing several scopes
 
 Run the same claim under different scopes to chart the attack surface. Build a
-fresh Controller per scope (see [Running Evaluations](06-running-evaluations.md#sweeping-multiple-threat-models)):
+fresh Controller per scope (see [Running Evaluations](/guide/running-evaluations.html#sweeping-multiple-threat-models)):
 
 ```python
 scopes = {"user": frozenset({USER_TAG}),
@@ -179,7 +185,7 @@ The filter receives the read & write **`scope`** (not the wider visibility
 scope that also includes `read_only` tags), so it declines both out-of-scope
 controllable events and in-scope events under `read_only` tags (the latter stay
 recorded and visible; see
-[Security Domains](07-security-domains.md#access-levels-read-only-surfaces)).
+[Security Domains](/guide/security-domains.html#access-levels-read-only-surfaces)).
 When `read_only` is empty the read & write scope equals the full visibility scope.
 
 `compose(a, b)(handler)` applies `a` outermost, then `b`, then the inner handler,
@@ -193,5 +199,5 @@ reading the Controller. Note, though, that wiring custom middleware into a run i
 internally. If you need extra behaviour (rate limiting, tracing), the supported
 places to put it are inside your target's `run()` or your optimizer's
 `on_event()`. For the design rationale, see
-[`../docs/architecture.md`](../docs/architecture.md) and
-[`../docs/controller.md`](../docs/controller.md).
+the [Architecture Overview](/reference/) and
+[Controller reference](/reference/controller.html).

@@ -1,3 +1,9 @@
+---
+layout: doc
+title: "Security Domains"
+permalink: /guide/security-domains.html
+---
+
 # Security Domains
 
 A security domain is a **trust boundary**: a labelled surface that an attacker
@@ -356,5 +362,5 @@ for scope in domain.distinct_combinations():
 
 Each `scope` is already the `frozenset` the Controller wants. Building one
 Controller per scope is the intended pattern; see
-[Running Evaluations](06-running-evaluations.md#sweeping-multiple-threat-models)
+[Running Evaluations](/guide/running-evaluations.html#sweeping-multiple-threat-models)
 for the in-script-loop and one-process-per-cell styles people actually use.
