@@ -9,15 +9,17 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/home.css">
+  <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
 
   <!-- ===== HEADER ===== -->
   <header class="site-header">
-    <a class="wordmark" href="/">Superred</a>
+    <div class="brand"><a class="wordmark" href="/">Superred</a></div>
     <nav class="site-nav">
       <a href="/guide/">Guide</a>
       <a href="/reference/">Reference</a>
+      <a href="/credits.html">Credits</a>
       <a href="https://github.com/RoldSI/superred">GitHub</a>
     </nav>
   </header>
@@ -31,7 +33,6 @@
       <a class="btn btn-primary" href="/guide/quick-start.html">Get started</a>
       <a class="btn btn-secondary" href="/guide/">Read the guide</a>
     </div>
-    <p class="scroll-hint">Scroll to learn more</p>
   </section>
 
   <!-- ===== WHY: the gap it closes ===== -->
@@ -44,8 +45,10 @@
 
   <!-- ===== VALUE PROPOSITION ===== -->
   <section class="section" id="who">
-    <p class="eyebrow">Who it is for</p>
-    <div class="two-col">
+    <p class="eyebrow">A meeting point</p>
+    <h2>Attackers and targets are both first-class citizens</h2>
+    <p>To superred, an attack and a system under test are the same kind of object: an interchangeable module you plug into one harness. Hold the system fixed to evaluate an attack, or hold the attack fixed to evaluate a system &mdash; the same machinery answers both. So this is common ground where red-teamers and system builders meet: every attack contributed makes every system easier to test, and every system contributed gives every attack something new to probe. Everyone contributes, and everyone benefits.</p>
+    <div class="two-col" style="margin-top: 2.6rem">
       <div class="col">
         <h3>For red-teamers</h3>
         <p>A growing library of faithful re-implementations of published attacks &mdash; AutoDAN-Turbo, PAIR, TAP, Crescendo, GPTFuzzer, many-shot, and more &mdash; ready to run against any target and scored by real safety benchmarks such as HarmBench, StrongREJECT, and AgentDojo. A fixed model and a fixed budget per attempt keep every comparison fair.</p>
@@ -63,20 +66,16 @@
     <h2>What the framework gives you</h2>
     <div class="features">
       <div class="feature">
+        <h3>Attack capabilities</h3>
+        <p>Every point an attacker could control &mdash; a system prompt, a tool result, a memory carried across runs &mdash; is a distinct capability. Together they span the threat-model space, and each run fixes exactly which capabilities the attacker holds, so every one is considered independently.</p>
+      </div>
+      <div class="feature">
         <h3>Mix and match</h3>
         <p>Any optimizer, any target, any security claim. Components are independent packages that combine freely.</p>
       </div>
       <div class="feature">
-        <h3>Precise threat models</h3>
-        <p>Attacker access is scoped to a forest of trust boundaries, so you measure behavior under exactly the access a real attacker would hold.</p>
-      </div>
-      <div class="feature">
         <h3>Event-driven by design</h3>
         <p>Attackers act only through declared injection points and observe only through declared signals and the run trajectory &mdash; no hidden coupling to the target.</p>
-      </div>
-      <div class="feature">
-        <h3>Faithful to the source</h3>
-        <p>Ported attacks and benchmarks stay byte-identical to their upstream prompts and data wherever possible, with every deviation recorded.</p>
       </div>
       <div class="feature">
         <h3>Fair and reproducible</h3>
@@ -99,17 +98,44 @@
   <!-- ===== GETTING STARTED ===== -->
   <section class="section start" id="start">
     <p class="eyebrow">Easy to get started</p>
-    <h2>Install, wire three pieces together, run an evaluation</h2>
-    <p>Install the framework and whichever modules you want to combine, connect an optimizer, a target, and a claim in a short script, and run an evaluation end to end.</p>
-    <pre><code><span class="comment"># install the framework and the pieces you want to combine</span>
-pip install -e ./superred
-pip install -e ./superred-modules/optimizers/pair             <span class="comment"># an attacker</span>
-pip install -e ./superred-modules/targets/chatbot             <span class="comment"># a system to test</span>
-pip install -e ./superred-modules/security_claims/harmbench   <span class="comment"># what counts as broken</span>
+    <h2>Install, write a short script, run an evaluation</h2>
+    <p>Install the framework and whichever modules you want to combine:</p>
+    <pre><code>pip install superred pair-optimizer chatbot-target secclaim-harmbench</code></pre>
+    <p>Then point an attacker at a target, choose what counts as broken, and say what the attacker is allowed to control:</p>
+    <pre><code><span class="comment"># run.py</span>
+import asyncio, os
 
-<span class="comment"># wire them together in a short script, then run</span>
-python run.py</code></pre>
-    <p class="muted" style="margin-top:1.2rem"><a href="/guide/quick-start.html">Run your first evaluation &mdash; the Quick Start &rarr;</a></p>
+from superred.core.controller import Controller, TargetFactory
+from superred.core.types.llm import LLMConfig
+from chatbot_target import ChatbotTarget, USER_TAG
+from pair_optimizer import PAIROptimizer
+from secclaim_harmbench import harmbench_claim
+
+key = os.environ["OPENAI_API_KEY"]
+
+
+async def main():
+    controller = Controller(
+        <span class="comment"># the attacker</span>
+        optimizer_factory=lambda: PAIROptimizer(),
+        <span class="comment"># the system under test</span>
+        target_factory=TargetFactory(
+            create=lambda: ChatbotTarget(model="gpt-4o-mini", api_key=key)
+        ),
+        <span class="comment"># what counts as broken</span>
+        security_claim=harmbench_claim(judge_api_key=key),
+        <span class="comment"># what the attacker is allowed to control</span>
+        scope=frozenset({USER_TAG}),
+        <span class="comment"># the attacker's own model and budget</span>
+        llm_config=LLMConfig(model="gpt-4o", api_key=key, max_cost=5.0),
+    )
+    result = await controller.run()
+    for task in result.task_results:
+        print(task.task.goal.description, "->", task.success)
+
+
+asyncio.run(main())</code></pre>
+    <p class="muted" style="margin-top:1.2rem"><a href="/guide/quick-start.html">A full walk-through &mdash; the Quick Start &rarr;</a></p>
   </section>
 
   <!-- ===== DOCUMENTATION ===== -->
@@ -132,10 +158,11 @@ python run.py</code></pre>
 
   <!-- ===== FOOTER ===== -->
   <footer class="site-footer">
-    <span>Superred &middot; v0.1.0 (alpha) &middot; APIs may change</span>
+    <span>Superred</span>
     <span>
       <a href="/guide/">Guide</a> &nbsp;&middot;&nbsp;
       <a href="/reference/">Reference</a> &nbsp;&middot;&nbsp;
+      <a href="/credits.html">Credits</a> &nbsp;&middot;&nbsp;
       <a href="https://github.com/RoldSI/superred">GitHub</a>
     </span>
   </footer>

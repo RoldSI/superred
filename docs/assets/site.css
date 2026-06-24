@@ -1,0 +1,67 @@
+/* Shared site chrome (header) used by every page: the landing page, the docs
+   layout, and standalone pages. Relies on the design tokens (--ink, --gray,
+   --line) declared in whichever base stylesheet the page also loads
+   (home.css or style.css). Single source of truth so all headers match. */
+
+:root {
+  --header-h: 3.5rem;
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.5rem;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: saturate(180%) blur(6px);
+  border-bottom: 1px solid var(--line);
+}
+
+.site-header .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  min-width: 0;
+}
+.site-header .wordmark {
+  font-size: 1.4rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.site-header .tagline {
+  color: var(--gray);
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.site-nav {
+  display: flex;
+  gap: 1.4rem;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+.site-nav a {
+  color: var(--gray);
+  text-decoration: none;
+}
+.site-nav a:hover { color: var(--ink); }
+.site-nav a.active { color: var(--ink); }
+
+/* Hide the subtitle on narrow screens so the nav always fits. */
+@media (max-width: 640px) {
+  .site-header .tagline { display: none; }
+}
+
+/* A section placed directly under the header (e.g. standalone pages) should
+   not draw its own top rule against the header's bottom rule. */
+.site-header + .section { border-top: none; }
+

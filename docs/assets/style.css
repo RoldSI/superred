@@ -25,25 +25,7 @@ body {
   line-height: 1.6;
 }
 
-/* ---- top bar ---- */
-.topbar {
-  display: flex;
-  align-items: baseline;
-  gap: 0.9rem;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--line);
-}
-.wordmark {
-  font-size: 1.5rem;
-  font-weight: 500;
-  color: #000;
-  text-decoration: none;
-  letter-spacing: 0.01em;
-}
-.tagline {
-  color: var(--gray);
-  font-size: 0.95rem;
-}
+/* Header lives in site.css (shared across all pages). */
 
 /* ---- layout ---- */
 .layout {
@@ -173,9 +155,9 @@ body {
 @media (min-width: 800px) {
   .sidebar {
     position: sticky;
-    top: 0;
+    top: var(--header-h);
     align-self: flex-start;
-    max-height: 100vh;
+    max-height: calc(100vh - var(--header-h));
     overflow-y: auto;
     border-right: 1px solid var(--line);
   }
