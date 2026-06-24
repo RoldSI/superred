@@ -66,23 +66,38 @@ a { color: var(--ink); }
   text-transform: uppercase;
   color: var(--gray);
 }
-.mod-list {
-  list-style: none;
+.mod-table {
+  width: 100%;
+  border-collapse: collapse;
   margin: 0.8rem 0 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 2.5rem;
-}
-.mod-list li {
-  padding: 0.5rem 0;
-  border-top: 1px solid var(--line);
   font-size: 0.98rem;
 }
-.mod-name { font-weight: 500; }
-.mod-desc { color: var(--gray); }
+.mod-table th,
+.mod-table td {
+  text-align: left;
+  vertical-align: baseline;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--line);
+}
+.mod-table th {
+  width: 34%;
+  padding-right: 1.5rem;
+  font-weight: 500;
+}
+.mod-table td { color: var(--gray); }
+.mod-tag {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.7rem;
+  color: var(--gray);
+  background: var(--code-bg);
+  border-radius: 5px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 @media (max-width: 640px) {
-  .mod-list { grid-template-columns: 1fr; }
+  .mod-table th { width: 42%; }
 }
 
 /* ---- hero ---- */

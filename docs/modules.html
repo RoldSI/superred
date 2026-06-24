@@ -9,25 +9,31 @@ permalink: /modules.html
   <p>Every module is an independently installable package that plugs into the framework, and any combination can be run together: any attacker against any target, scored by any claim.</p>
 
   <h3 class="cat">Attackers <span class="count">{{ site.data.modules.optimizers | size }} optimizers</span></h3>
-  <ul class="mod-list">
+  <table class="mod-table">
+    <tbody>
     {% for m in site.data.modules.optimizers %}
-    <li><span class="mod-name">{{ m.name }}</span> <span class="mod-desc">{{ m.blurb }}</span></li>
+      <tr><th scope="row">{{ m.name }}</th><td>{{ m.blurb }}{% if m.tag %} <span class="mod-tag">{{ m.tag }}</span>{% endif %}</td></tr>
     {% endfor %}
-  </ul>
+    </tbody>
+  </table>
 
   <h3 class="cat">Targets <span class="count">{{ site.data.modules.targets | size }} systems under test</span></h3>
-  <ul class="mod-list">
+  <table class="mod-table">
+    <tbody>
     {% for m in site.data.modules.targets %}
-    <li><span class="mod-name">{{ m.name }}</span> <span class="mod-desc">{{ m.blurb }}</span></li>
+      <tr><th scope="row">{{ m.name }}</th><td>{{ m.blurb }}{% if m.tag %} <span class="mod-tag">{{ m.tag }}</span>{% endif %}</td></tr>
     {% endfor %}
-  </ul>
+    </tbody>
+  </table>
 
   <h3 class="cat">Security claims <span class="count">{{ site.data.modules.security_claims | size }} benchmarks</span></h3>
-  <ul class="mod-list">
+  <table class="mod-table">
+    <tbody>
     {% for m in site.data.modules.security_claims %}
-    <li><span class="mod-name">{{ m.name }}</span> <span class="mod-desc">{{ m.blurb }}</span></li>
+      <tr><th scope="row">{{ m.name }}</th><td>{{ m.blurb }}{% if m.tag %} <span class="mod-tag">{{ m.tag }}</span>{% endif %}</td></tr>
     {% endfor %}
-  </ul>
+    </tbody>
+  </table>
 
   <p class="muted">Built your own attack, target, or benchmark on Superred? Reach out to have your implementation featured here.</p>
 </section>

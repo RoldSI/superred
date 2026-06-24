@@ -20,7 +20,7 @@ optimizers:
   - { name: PoisonedRAG,     blurb: "Knowledge-base / RAG corruption" }
 
 targets:
-  - { name: Chatbot,             blurb: "Any LLM as a single- or multi-turn chatbot" }
+  - { name: Chatbot,             blurb: "Any LLM as a single- or multi-turn chatbot", tag: "First-party provided" }
   - { name: AgentDojo,           blurb: "Tool-using agent across all four AgentDojo suites" }
   - { name: Agent Security Bench, blurb: "Plan-then-execute agent loop (ASB)" }
   - { name: Inspect agent,       blurb: "General inspect-ai tool-calling agent" }
