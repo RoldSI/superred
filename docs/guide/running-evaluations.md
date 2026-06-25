@@ -316,5 +316,20 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Running on AWS Bedrock
+
+Both the attacker `LLMConfig` and the target accept any litellm model id, so you
+can point them at Bedrock (`bedrock/...`) or Bedrock Mantle (`bedrock_mantle/...`)
+models. Two requirements:
+
+- **`litellm>=1.89.0`** (the framework already pins this). OpenAI models on
+  Bedrock Mantle (`bedrock_mantle/openai.gpt-5.4`, `gpt-5.5`) are served through
+  the Responses API; older litellm crashes routing them. With 1.89.0+ litellm
+  bridges Chat Completions to the Responses API transparently.
+- **The AWS SDK**: `pip install "superred[bedrock]"` (pulls in `boto3`).
+  Authenticate with AWS credentials, or `BEDROCK_MANTLE_API_KEY` for Mantle
+  OpenAI models, per the
+  [litellm Bedrock docs](https://docs.litellm.ai/docs/providers/bedrock_mantle).
+
 For the design rationale behind all of this (per-task lifecycle, the middleware
 pipeline, exact persistence format), see the [Controller reference](/reference/controller).

@@ -85,6 +85,10 @@ class LLMClient:
 
         self._check_budget_pre_call()
 
+        # acompletion handles every provider, including models litellm routes
+        # through the Responses API (e.g. OpenAI gpt-5.x on Bedrock Mantle):
+        # litellm (>=1.89.0) bridges chat<->responses internally and returns a
+        # normal ModelResponse with usage, so we never branch on the model here.
         response = cast(
             ModelResponse,
             await acompletion(

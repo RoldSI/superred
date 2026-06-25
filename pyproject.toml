@@ -13,7 +13,11 @@ authors = [
     { name = "Super Red-teaming Team" },
 ]
 dependencies = [
-    "litellm>=1.0",
+    # >=1.89.0: earlier releases crash on models that litellm routes through the
+    # Responses API (e.g. OpenAI gpt-5.x on AWS Bedrock Mantle, mode="responses")
+    # because the chat<->responses bridge is circular. 1.89.0 fixes it, so the
+    # constrained LLMClient can drive those models with no special-casing.
+    "litellm>=1.89.0",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -27,6 +31,10 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# AWS Bedrock provider support. litellm needs the AWS SDK to sign Bedrock /
+# Bedrock Mantle requests; it only ships boto3 in its own `proxy` extra, so we
+# expose it here for experiments whose optimizer model is a Bedrock model.
+bedrock = ["boto3>=1.40"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
