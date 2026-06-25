@@ -262,6 +262,12 @@ stripped if you pass them). Every other litellm kwarg works (`temperature`,
 `max_tokens`, `tools`, `response_format`, ...). `self.llm` is available after you
 call `super().initialize(...)`.
 
+`complete()` always returns a chat-shaped `ModelResponse`
+(`response.choices[0].message.content`), even when the experiment's model is one
+that litellm serves through the Responses API rather than Chat Completions (for
+example OpenAI `gpt-5.x` on AWS Bedrock Mantle). litellm bridges the two
+transparently, so your optimizer reads the same shape regardless of provider.
+
 The model and budget are deliberately experiment-level settings, not your
 choice: they are part of the threat model, so that two attack strategies can be
 compared at equal cost.
