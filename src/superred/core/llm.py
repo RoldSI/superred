@@ -70,7 +70,8 @@ class LLMClient:
             **kwargs: Additional parameters forwarded to litellm
                 (e.g. ``temperature``, ``max_tokens``, ``stop``).
                 ``model``, ``api_base``, and ``api_key`` cannot be
-                overridden.
+                overridden. ``drop_params`` defaults to ``True`` (see below)
+                but may be overridden by the caller.
 
         Returns:
             A ``litellm.ModelResponse`` (OpenAI ``ChatCompletion`` format).
@@ -82,6 +83,16 @@ class LLMClient:
         kwargs.pop("model", None)
         kwargs.pop("api_base", None)
         kwargs.pop("api_key", None)
+
+        # Drop provider-unsupported sampling params instead of raising. An
+        # optimizer is general-purpose: it does not know which model it is
+        # pointed at, so a paper-faithful attacker that sends OpenAI-style
+        # params (e.g. ``top_p``) must not crash when the locked model rejects
+        # them. Anthropic Claude on AWS Bedrock, for instance, raises
+        # ``UnsupportedParamsError`` on ``top_p``; with ``drop_params`` litellm
+        # silently drops it and keeps it where it is supported. Caller may
+        # override (pass ``drop_params=False``) to opt into strict behaviour.
+        drop_params = kwargs.pop("drop_params", True)
 
         self._check_budget_pre_call()
 
@@ -96,6 +107,7 @@ class LLMClient:
                 messages=messages,
                 api_base=self._api_base,
                 api_key=self._api_key,
+                drop_params=drop_params,
                 **kwargs,
             ),
         )

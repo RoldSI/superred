@@ -120,8 +120,47 @@ class TestLLMClient:
             messages=messages,
             api_base="http://localhost",
             api_key="sk-test",
+            drop_params=True,
             temperature=0.5,
         )
+
+    @patch("superred.core.llm.completion_cost", return_value=0.001)
+    @patch("superred.core.llm.acompletion")
+    async def test_complete_drops_unsupported_params_by_default(
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
+    ) -> None:
+        """By default litellm is told to drop provider-unsupported params.
+
+        Regression test for the Bedrock/Claude ``top_p`` failure: a paper-
+        faithful attacker sends ``top_p``; the locked model may reject it; the
+        client must not crash. ``drop_params=True`` makes litellm drop the
+        unsupported param instead of raising ``UnsupportedParamsError``.
+        """
+        mock_acompletion.return_value = _make_mock_response()
+        client = LLMClient(self._make_config())
+
+        await client.complete([{"role": "user", "content": "x"}], top_p=0.9)
+
+        assert mock_acompletion.call_args.kwargs["drop_params"] is True
+        # The optimizer's param is still forwarded; litellm decides per-model.
+        assert mock_acompletion.call_args.kwargs["top_p"] == 0.9
+
+    @patch("superred.core.llm.completion_cost", return_value=0.001)
+    @patch("superred.core.llm.acompletion")
+    async def test_complete_drop_params_overridable(
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
+    ) -> None:
+        """A caller may opt into strict behaviour with drop_params=False."""
+        mock_acompletion.return_value = _make_mock_response()
+        client = LLMClient(self._make_config())
+
+        await client.complete([{"role": "user", "content": "x"}], drop_params=False)
+
+        assert mock_acompletion.call_args.kwargs["drop_params"] is False
 
     @patch("superred.core.llm.completion_cost", return_value=0.001)
     @patch("superred.core.llm.acompletion")
