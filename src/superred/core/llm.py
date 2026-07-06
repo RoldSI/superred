@@ -16,9 +16,17 @@ from __future__ import annotations
 import threading
 from typing import Any, cast
 
-from litellm import ModelResponse, acompletion, completion_cost
+from litellm import BadRequestError, ModelResponse, acompletion, completion_cost
 
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
+
+
+def _is_temperature_top_p_conflict(exc: Exception) -> bool:
+    """True if *exc* is the provider's "temperature and top_p cannot both be
+    specified" 400. Anthropic- and Google-backed models enforce this mutual
+    exclusion even when reached through an OpenAI-compatible gateway."""
+    msg = str(exc).lower()
+    return "top_p" in msg and "temperature" in msg and ("both" in msg or "only one" in msg)
 
 
 class LLMClient:
@@ -100,17 +108,36 @@ class LLMClient:
         # through the Responses API (e.g. OpenAI gpt-5.x on Bedrock Mantle):
         # litellm (>=1.89.0) bridges chat<->responses internally and returns a
         # normal ModelResponse with usage, so we never branch on the model here.
-        response = cast(
-            ModelResponse,
-            await acompletion(
-                model=self._model,
-                messages=messages,
-                api_base=self._api_base,
-                api_key=self._api_key,
-                drop_params=drop_params,
-                **kwargs,
-            ),
-        )
+        async def _call(call_kwargs: dict[str, Any]) -> ModelResponse:
+            return cast(
+                ModelResponse,
+                await acompletion(
+                    model=self._model,
+                    messages=messages,
+                    api_base=self._api_base,
+                    api_key=self._api_key,
+                    drop_params=drop_params,
+                    **call_kwargs,
+                ),
+            )
+
+        try:
+            response = await _call(kwargs)
+        except Exception as exc:  # noqa: BLE001
+            # Some models (Anthropic / Google-backed) reject temperature AND top_p
+            # together. drop_params can't fix a mutual-exclusion constraint (both are
+            # individually valid for the provider). The OpenAI-compat gateway reports it
+            # explicitly ("cannot both be specified"); the native Anthropic passthrough
+            # returns only a generic 400. So when BOTH params were sent, retry once
+            # dropping top_p -- on the explicit conflict message OR any BadRequestError.
+            # Safe: models that accept both never reach this path (no error), and if a
+            # 400 had a different cause the retry fails again and that error surfaces.
+            both = "temperature" in kwargs and "top_p" in kwargs
+            if both and (_is_temperature_top_p_conflict(exc) or isinstance(exc, BadRequestError)):
+                retry_kwargs = {k: v for k, v in kwargs.items() if k != "top_p"}
+                response = await _call(retry_kwargs)
+            else:
+                raise
 
         self._record_usage(response)
         return response
