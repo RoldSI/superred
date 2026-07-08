@@ -93,7 +93,11 @@ class LLMClient:
         # silently drops it and keeps it where it is supported. Caller may
         # override (pass ``drop_params=False``) to opt into strict behaviour.
         drop_params = kwargs.pop("drop_params", True)
+        if "temperature" in kwargs and "top_p" in kwargs and "anthropic" in self._model.lower():
+            kwargs.pop("temperature", None)
 
+        if "temperature" in kwargs and "gpt-5" in self._model.lower():
+            kwargs.pop("temperature", None)
         self._check_budget_pre_call()
 
         # acompletion handles every provider, including models litellm routes
