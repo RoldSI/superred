@@ -1,0 +1,113 @@
+name: Release
+
+# Publishes the package to PyPI when you publish a GitHub Release.
+# Manually running this workflow (Actions tab -> Release -> Run workflow) does a
+# dry run to TestPyPI instead, so you can rehearse the whole pipeline safely.
+#
+# Authentication uses PyPI Trusted Publishing (OIDC): there are no API tokens or
+# secrets to store. See RELEASING.md for the one-time PyPI/GitHub setup.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      testpypi:
+        description: "Dry run: build and publish to TestPyPI instead of PyPI"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade build twine
+
+      - name: Check that __version__ matches the release tag
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os, re, pathlib, sys
+
+          text = pathlib.Path("src/superred/__init__.py").read_text()
+          match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', text)
+          version = match.group(1) if match else None
+          tag = os.environ["RELEASE_TAG"].lstrip("v")
+          print(f"Package version (src/superred/__init__.py): {version}")
+          print(f"Release tag:                                {tag}")
+          if version != tag:
+              print(
+                  f"::error::__version__ ({version}) does not match the release "
+                  f"tag ({tag}). Bump src/superred/__init__.py, then re-create the "
+                  f"release/tag."
+              )
+              sys.exit(1)
+          PY
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Verify metadata renders on PyPI
+        run: python -m twine check dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/superred/
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    name: Publish to TestPyPI (dry run)
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.testpypi
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/superred/
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

@@ -4,13 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "superred"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A modular framework for comprehensive red-teaming of AI systems"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    { name = "Super Red-teaming Team" },
+    { name = "SuperRed Team" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "adversarial",
+    "jailbreak",
 ]
 dependencies = [
     # >=1.89.0: earlier releases crash on models that litellm routes through the
@@ -45,6 +54,17 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.4",
 ]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred"
+Issues = "https://github.com/RoldSI/superred/issues"
+
+# Single source of truth for the version: src/superred/__init__.py (__version__).
+# The release workflow checks the git tag matches this value before publishing.
+[tool.hatch.version]
+path = "src/superred/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/superred"]
