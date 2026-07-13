@@ -21,7 +21,7 @@ body {
   background: #ffffff;
   color: var(--ink);
   font-family: var(--serif);
-  font-size: 19px;
+  font-size: var(--fs-body);
   line-height: 1.6;
 }
 
@@ -31,20 +31,18 @@ body {
 .layout {
   display: flex;
   align-items: flex-start;
-  max-width: calc(var(--sidebar-width) + var(--content-width) + 6rem);
-  margin: 0 auto;
 }
 
 /* ---- sidebar ---- */
 .sidebar {
   width: var(--sidebar-width);
   flex: 0 0 var(--sidebar-width);
-  padding: 1.75rem 1.25rem;
+  padding: 1.75rem 1.25rem 1.75rem var(--gutter);
 }
-.sidebar nav { font-size: 0.98rem; }
+.sidebar nav { font-size: var(--fs-body); }
 .nav-section {
   margin: 1.4rem 0 0.4rem;
-  font-size: 0.78rem;
+  font-size: var(--fs-body);
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -75,7 +73,7 @@ body {
 /* JS-free disclosure: collapsible on mobile, always open on desktop. */
 .nav-disclosure > summary {
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--fs-body);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--gray);
@@ -85,21 +83,20 @@ body {
 .content {
   flex: 1 1 auto;
   min-width: 0;
-  max-width: var(--content-width);
-  padding: 1.75rem 1.5rem 5rem;
+  padding: 1.75rem var(--gutter) 5rem 2.5rem;
 }
 .content h1, .content h2, .content h3, .content h4 {
   line-height: 1.25;
   font-weight: 500;
 }
-.content h1 { font-size: 2.1rem; margin: 0.2rem 0 1.2rem; }
+.content h1 { font-size: var(--fs-head); margin: 0.2rem 0 1.2rem; }
 .content h2 {
-  font-size: 1.5rem;
+  font-size: var(--fs-head);
   margin: 2.4rem 0 0.8rem;
   padding-bottom: 0.25rem;
   border-bottom: 1px solid var(--line);
 }
-.content h3 { font-size: 1.2rem; margin: 1.8rem 0 0.6rem; }
+.content h3 { font-size: var(--fs-body); margin: 1.8rem 0 0.6rem; }
 .content p, .content li { color: var(--ink); }
 .content a { color: var(--accent); text-underline-offset: 2px; }
 .content a:hover { text-decoration: none; }
@@ -107,7 +104,7 @@ body {
 /* code */
 .content code {
   font-family: var(--mono);
-  font-size: 0.82em;
+  font-size: var(--fs-body);
   background: var(--code-bg);
   padding: 0.1em 0.35em;
   border-radius: 3px;
@@ -123,7 +120,7 @@ body {
 .content pre code {
   background: none;
   padding: 0;
-  font-size: 0.8rem;
+  font-size: var(--fs-body);
 }
 
 /* tables */
@@ -131,7 +128,7 @@ body {
   border-collapse: collapse;
   width: 100%;
   margin: 1.2rem 0;
-  font-size: 0.95rem;
+  font-size: var(--fs-body);
 }
 .content th, .content td {
   border: 1px solid var(--line);

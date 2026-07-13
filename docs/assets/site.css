@@ -5,6 +5,14 @@
 
 :root {
   --header-h: 3.5rem;
+  /* Full-width gutter and the site's only two font sizes (the hero title is
+     the single exception). */
+  --gutter: clamp(1.25rem, 3vw, 3rem);
+  --fs-body: 1.125rem;
+  --fs-head: 1.6rem;
+}
+@media (max-width: 640px) {
+  :root { --fs-body: 1.05rem; --fs-head: 1.4rem; }
 }
 
 .site-header {
@@ -15,7 +23,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.9rem 1.5rem;
+  padding: 0.9rem var(--gutter);
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: saturate(180%) blur(6px);
   border-bottom: 1px solid var(--line);
@@ -28,7 +36,7 @@
   min-width: 0;
 }
 .site-header .wordmark {
-  font-size: 1.4rem;
+  font-size: var(--fs-head);
   font-weight: 500;
   letter-spacing: 0.01em;
   text-decoration: none;
@@ -37,7 +45,7 @@
 }
 .site-header .tagline {
   color: var(--gray);
-  font-size: 0.95rem;
+  font-size: var(--fs-body);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -47,7 +55,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 1.4rem;
-  font-size: 1rem;
+  font-size: var(--fs-body);
   white-space: nowrap;
 }
 .site-nav a {
