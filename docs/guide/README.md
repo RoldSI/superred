@@ -43,10 +43,10 @@ pip install basic-prompt-list-optimizer  # ⚠️
 pip install basic-secret-leak-claim      # ⚠️
 ```
 
-The target calls a real LLM through [litellm](https://docs.litellm.ai/), so set
-an API key for any litellm-compatible endpoint. The attacker in this example
-does no inference of its own, though most attackers are themselves LLM-driven and
-call models through litellm too.
+The target reaches the model through [litellm](https://docs.litellm.ai/), so it
+works with any litellm-compatible endpoint: you give it a base URL and an API
+key. The attacker in this example does no inference of its own, though most
+attackers are themselves LLM-driven and call models through litellm too.
 
 ## A first evaluation, step by step
 
@@ -54,12 +54,14 @@ The example is a complete, runnable evaluation: a fixed-prompt attacker trying
 to make a chatbot leak a secret planted in its system prompt. We will build it
 one piece at a time.
 
-Read your API key from the environment:
+Point at any litellm-compatible endpoint by reading its base URL and key from
+the environment:
 
 ```python
 import os
 
-key = os.environ["OPENAI_API_KEY"]
+api_base = os.environ["LLM_API_BASE"]
+api_key = os.environ["LLM_API_KEY"]
 ```
 
 **The target: the system under test.** The controller builds a fresh target for
@@ -72,7 +74,9 @@ from superred.core.controller import TargetFactory
 from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
 
 target = TargetFactory(
-    create=lambda: BasicLLMChatTarget(model="gpt-4o-mini", api_key=key),
+    create=lambda: BasicLLMChatTarget(
+        model="gpt-4o-mini", api_base=api_base, api_key=api_key
+    ),
 )
 ```
 

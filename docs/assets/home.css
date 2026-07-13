@@ -327,7 +327,11 @@ a { color: var(--ink); }
 }
 .cta-and { color: var(--gray); }
 .btn {
-  display: inline-block;
+  /* Same box model as .hero-pip so the CTA pill and button render at an
+     identical height: same display, alignment, line-height, padding, border. */
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.65;
   padding: 0.55rem 1.4rem;
   font-family: inherit;
   font-size: var(--fs-body);
