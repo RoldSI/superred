@@ -5,6 +5,8 @@
       url: /guide/
     - title: Core Concepts
       url: /guide/core-concepts
+    - title: Using a Module
+      url: /guide/using-modules
     - title: Writing a Target
       url: /guide/writing-a-target
     - title: Writing an Optimizer

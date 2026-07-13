@@ -114,17 +114,120 @@ a { color: var(--ink); }
   grid-template-columns: max-content 1fr;
   align-items: baseline;
 }
-.mod-grid > .mod-name,
-.mod-grid > .mod-desc {
-  padding: 0.5rem 0;
+.mod-row { display: contents; }
+.mod-grid .mod-name,
+.mod-grid .mod-desc {
+  padding: 0.55rem 0;
   border-top: 1px solid var(--line);
 }
-.mod-grid > .mod-name {
-  font-weight: 500;
-  white-space: nowrap;
+.mod-grid .mod-name {
   padding-right: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
 }
-.mod-grid > .mod-desc { color: var(--gray); }
+.mod-title { font-weight: 500; white-space: nowrap; }
+.mod-meta { display: flex; align-items: center; gap: 0.4rem; }
+.mod-meta .mod-suit, .mod-meta .mod-tag { margin-left: 0; }
+.mod-grid .mod-desc { color: var(--gray); }
+.mod-pip {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--gray);
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.08rem 0.45rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.mod-pip:hover { color: var(--ink); border-color: var(--gray); }
+
+/* custom filter dropdowns (tag-styled options) */
+.mod-filters { margin-left: auto; display: flex; gap: 0.5rem; }
+.dropdown { position: relative; }
+.dropdown-toggle {
+  font-family: inherit;
+  font-size: var(--fs-small);
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.dropdown-toggle::after { content: "\25BE"; color: var(--gray); font-size: 0.7em; }
+.dropdown-toggle:hover { border-color: var(--gray); }
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 5px);
+  z-index: 30;
+  min-width: 100%;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09);
+  padding: 0.3rem;
+}
+.dropdown.open .dropdown-menu { display: block; }
+.dropdown-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: var(--fs-small);
+  color: var(--gray);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dropdown-menu button:hover { background: var(--code-bg); }
+.dropdown .mod-suit, .dropdown .mod-tag, .dropdown .mod-src { margin-left: 0; }
+.mod-src {
+  display: inline-block;
+  padding: 0.02rem 0.5rem;
+  font-size: var(--fs-small);
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.mod-src-first { color: #2c5aa0; background: #eef3fb; border: 1px solid #d6e0f0; }
+
+/* custom quick tooltip on tags */
+.hint { position: relative; display: inline-block; cursor: help; }
+.hint .tip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: max-content;
+  max-width: 22rem;
+  white-space: normal;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+  padding: 0.6rem 0.75rem;
+  font-family: var(--serif);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--ink);
+  cursor: default;
+}
+.hint:hover .tip { display: block; }
+.hint .tip b { font-weight: 600; }
 .mod-tag {
   display: inline-block;
   margin-left: 0.4rem;
@@ -141,9 +244,32 @@ a { color: var(--ink); }
 .mod-tag-port    { color: #8a5a1a; background: #f8efe2; border-color: #ecdcc4; }
 .mod-tag-first   { color: #2c5aa0; background: #eef3fb; border-color: #d6e0f0; }
 .mod-tag-agentic { color: #3f7d3f; background: #eef6ee; border-color: #d3e6d3; }
+/* suitability tag (chatbot / agentic / assistant), explained on hover */
+.mod-suit {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.02rem 0.55rem;
+  font-size: var(--fs-small);
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: help;
+}
+.mod-suit-chatbot   { color: #4f5560; background: #eef0f2; border: 1px solid #dfe3e7; }
+.mod-suit-agentic   { color: #6b3fa0; background: #f3eefb; border: 1px solid #e2d6f4; }
+.mod-suit-assistant { color: #a35a00; background: #fbf1e3; border: 1px solid #eeddc4; }
+/* pip package name, links to the guide section on using this kind of module */
+.mod-pip {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--gray);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.mod-pip:hover { color: var(--ink); text-decoration: underline; }
 @media (max-width: 640px) {
   .mod-grid { grid-template-columns: 1fr; }
-  .mod-grid > .mod-desc { border-top: none; padding-top: 0; padding-bottom: 0.7rem; }
+  .mod-grid .mod-desc { border-top: none; padding-top: 0; padding-bottom: 0.7rem; }
 }
 
 /* ---- hero ---- */
@@ -189,12 +315,15 @@ a { color: var(--ink); }
   margin-top: 2.2rem;
 }
 .hero-pip {
+  display: inline-flex;
+  align-items: center;
   font-family: var(--mono);
-  font-size: var(--fs-small);
+  font-size: var(--fs-body);
+  line-height: 1.65;
   background: var(--code-bg);
   border: 1px solid var(--line);
-  padding: 0.45rem 0.85rem;
-  border-radius: 5px;
+  padding: 0.55rem 1.4rem;
+  border-radius: 4px;
 }
 .cta-and { color: var(--gray); }
 .btn {

@@ -2,9 +2,22 @@
   <span><a href="/">SuperRed</a></span>
   <span class="footer-links">
     <a href="/guide/">Guide</a>
-    <a href="/reference/">Reference</a>
     <a href="/modules">Modules</a>
     <a href="/research">Research</a>
+    <a href="/reference/">Reference</a>
     <a href="https://github.com/RoldSI/superred" target="_blank" rel="noopener noreferrer">GitHub</a>
   </span>
 </footer>
+<script>
+/* Open every off-site link in a new tab. Internal links (same host, relative,
+   or anchors) are left untouched. Runs once on every page via this include. */
+(function () {
+  var here = window.location.hostname;
+  document.querySelectorAll('a[href]').forEach(function (a) {
+    if (a.hostname && a.hostname !== here && /^https?:$/.test(a.protocol)) {
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+})();
+</script>

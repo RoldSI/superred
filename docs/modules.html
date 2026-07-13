@@ -3,13 +3,16 @@ layout: page
 title: Modules
 permalink: /modules
 ---
+{% capture suit_tip %}<b>chatbot</b>: a conversational model.<br><b>agentic</b>: a tool-calling agent with domain-specific tools (e.g. an HR system).<br><b>assistant</b>: a general-purpose tool-calling agent with computer and execution access.{% endcapture %}
+{% capture prov_tip %}<b>Author provided</b>: contributed by the original authors of the work.<br><b>Community port</b>: a re-implementation of published work, by us or the community.{% endcapture %}
+{% capture agentic_tip %}<b>Agentic extended</b>: the attack was generalized to run against any target, not only the specific setup of the original paper.{% endcapture %}
 <section class="section">
   <div class="section-head">
     <p class="eyebrow">Modules</p>
     <h2>Attacks, targets, and benchmarks</h2>
   </div>
   <div class="section-body">
-    <p>Every attacker, target, and benchmark is an independent package that anyone can write and publish. To get you started, we provide a ready-to-use set: {{ site.data.modules.optimizers | size }} attackers, {{ site.data.modules.targets | size }} targets, and {{ site.data.modules.security_claims | size }} security claims, growing with first-party modules and community ports.</p>
+    <p>Every attacker, target, and benchmark is an independent package that anyone can write and publish. To get you started, we provide a ready-to-use set of {{ site.data.modules.optimizers | size }} attackers, {{ site.data.modules.targets | size }} targets, and {{ site.data.modules.security_claims | size }} security claims for chatbot, agentic, and assistant use cases, growing with first-party modules and community ports. Each links to how to use it. The <code>⚠️</code> marks packages not yet published on PyPI.</p>
 
     <div class="tabs">
       <input type="radio" name="modtab" id="tab-attackers" checked>
@@ -19,13 +22,37 @@ permalink: /modules
         <label for="tab-attackers">Attackers <span class="n">{{ site.data.modules.optimizers | size }}</span></label>
         <label for="tab-targets">Targets <span class="n">{{ site.data.modules.targets | size }}</span></label>
         <label for="tab-claims">Security claims <span class="n">{{ site.data.modules.security_claims | size }}</span></label>
+        <span class="mod-filters">
+          <div class="dropdown" data-key="suit">
+            <button type="button" class="dropdown-toggle" data-default="Any target">Any target</button>
+            <div class="dropdown-menu">
+              <button type="button" data-value="">Any target</button>
+              <button type="button" data-value="assistant"><span class="mod-suit mod-suit-assistant">assistant</span></button>
+              <button type="button" data-value="agentic"><span class="mod-suit mod-suit-agentic">agentic</span></button>
+              <button type="button" data-value="chatbot"><span class="mod-suit mod-suit-chatbot">chatbot</span></button>
+            </div>
+          </div>
+          <div class="dropdown" data-key="prov">
+            <button type="button" class="dropdown-toggle" data-default="Any source">Any source</button>
+            <div class="dropdown-menu">
+              <button type="button" data-value="">Any source</button>
+              <button type="button" data-value="first"><span class="mod-src mod-src-first">Author provided</span></button>
+              <button type="button" data-value="port"><span class="mod-tag mod-tag-port">Community port</span></button>
+            </div>
+          </div>
+        </span>
       </div>
 
       <div class="tabpanel panel-attackers">
         <div class="mod-grid">
           {% for m in site.data.modules.optimizers %}
-          <div class="mod-name">{{ m.name }} <span class="mod-tag mod-tag-port">Third-party port</span> <span class="mod-tag mod-tag-agentic">Agentic extended</span></div>
-          <div class="mod-desc">{{ m.blurb }}</div>
+          <div class="mod-row" data-suit="{{ m.suit | join: ' ' }}" data-prov="{% if m.first_party %}first{% else %}port{% endif %}">
+            <div class="mod-name">
+              <span class="mod-title">{{ m.name }} <a class="mod-pip" href="/guide/using-modules#using-an-optimizer" title="Not yet published on PyPI">{{ m.pip }} ⚠️</a></span>
+              <span class="mod-meta">{% for s in m.suit %}<span class="hint"><span class="mod-suit mod-suit-{{ s }}">{{ s }}</span><span class="tip">{{ suit_tip }}</span></span>{% endfor %}{% unless m.first_party %}<span class="hint"><span class="mod-tag mod-tag-port">Community port</span><span class="tip">{{ prov_tip }}</span></span>{% endunless %}<span class="hint"><span class="mod-tag mod-tag-agentic">Agentic extended</span><span class="tip">{{ agentic_tip }}</span></span></span>
+            </div>
+            <div class="mod-desc">{{ m.blurb }}</div>
+          </div>
           {% endfor %}
         </div>
       </div>
@@ -33,8 +60,13 @@ permalink: /modules
       <div class="tabpanel panel-targets">
         <div class="mod-grid">
           {% for m in site.data.modules.targets %}
-          <div class="mod-name">{{ m.name }}{% unless m.first_party %} <span class="mod-tag mod-tag-port">Third-party port</span>{% endunless %}</div>
-          <div class="mod-desc">{{ m.blurb }}</div>
+          <div class="mod-row" data-suit="{{ m.suit | join: ' ' }}" data-prov="{% if m.first_party %}first{% else %}port{% endif %}">
+            <div class="mod-name">
+              <span class="mod-title">{{ m.name }} <a class="mod-pip" href="/guide/using-modules#using-a-target" title="Not yet published on PyPI">{{ m.pip }} ⚠️</a></span>
+              <span class="mod-meta">{% for s in m.suit %}<span class="hint"><span class="mod-suit mod-suit-{{ s }}">{{ s }}</span><span class="tip">{{ suit_tip }}</span></span>{% endfor %}{% unless m.first_party %}<span class="hint"><span class="mod-tag mod-tag-port">Community port</span><span class="tip">{{ prov_tip }}</span></span>{% endunless %}</span>
+            </div>
+            <div class="mod-desc">{{ m.blurb }}</div>
+          </div>
           {% endfor %}
         </div>
       </div>
@@ -42,8 +74,13 @@ permalink: /modules
       <div class="tabpanel panel-claims">
         <div class="mod-grid">
           {% for m in site.data.modules.security_claims %}
-          <div class="mod-name">{{ m.name }}{% unless m.first_party %} <span class="mod-tag mod-tag-port">Third-party port</span>{% endunless %}</div>
-          <div class="mod-desc">{{ m.blurb }}</div>
+          <div class="mod-row" data-suit="{{ m.suit | join: ' ' }}" data-prov="{% if m.first_party %}first{% else %}port{% endif %}">
+            <div class="mod-name">
+              <span class="mod-title">{{ m.name }} <a class="mod-pip" href="/guide/using-modules#using-a-security-claim" title="Not yet published on PyPI">{{ m.pip }} ⚠️</a></span>
+              <span class="mod-meta">{% for s in m.suit %}<span class="hint"><span class="mod-suit mod-suit-{{ s }}">{{ s }}</span><span class="tip">{{ suit_tip }}</span></span>{% endfor %}{% unless m.first_party %}<span class="hint"><span class="mod-tag mod-tag-port">Community port</span><span class="tip">{{ prov_tip }}</span></span>{% endunless %}</span>
+            </div>
+            <div class="mod-desc">{{ m.blurb }}</div>
+          </div>
           {% endfor %}
         </div>
       </div>
@@ -52,3 +89,45 @@ permalink: /modules
     <p class="muted" style="margin-top: 2.6rem">Built your own attack, target, or benchmark on SuperRed? Reach out to have your implementation featured here.</p>
   </div>
 </section>
+
+<script>
+(function () {
+  var rank = { assistant: 0, agentic: 1, chatbot: 2 };
+  function minRank(row) {
+    return Math.min.apply(null, row.dataset.suit.split(" ").map(function (s) { return rank[s] ?? 9; }));
+  }
+  document.querySelectorAll(".mod-grid").forEach(function (grid) {
+    Array.prototype.slice.call(grid.querySelectorAll(".mod-row"))
+      .sort(function (a, b) { return minRank(a) - minRank(b); })
+      .forEach(function (row) { grid.appendChild(row); });
+  });
+  var filters = { suit: "", prov: "" };
+  function apply() {
+    document.querySelectorAll(".mod-row").forEach(function (row) {
+      var ok = (!filters.suit || row.dataset.suit.split(" ").indexOf(filters.suit) >= 0)
+            && (!filters.prov || row.dataset.prov === filters.prov);
+      row.style.display = ok ? "contents" : "none";
+    });
+  }
+  document.querySelectorAll(".dropdown").forEach(function (dd) {
+    var key = dd.dataset.key;
+    var toggle = dd.querySelector(".dropdown-toggle");
+    toggle.addEventListener("click", function (e) {
+      e.stopPropagation();
+      document.querySelectorAll(".dropdown.open").forEach(function (o) { if (o !== dd) o.classList.remove("open"); });
+      dd.classList.toggle("open");
+    });
+    dd.querySelectorAll(".dropdown-menu button").forEach(function (opt) {
+      opt.addEventListener("click", function () {
+        filters[key] = opt.dataset.value;
+        toggle.innerHTML = opt.dataset.value ? opt.innerHTML : toggle.dataset.default;
+        dd.classList.remove("open");
+        apply();
+      });
+    });
+  });
+  document.addEventListener("click", function () {
+    document.querySelectorAll(".dropdown.open").forEach(function (o) { o.classList.remove("open"); });
+  });
+})();
+</script>

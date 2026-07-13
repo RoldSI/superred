@@ -1,0 +1,4 @@
+# Jekyll build output and cache (generated locally; GitHub Pages builds its own).
+_site/
+.jekyll-cache/
+.sass-cache/

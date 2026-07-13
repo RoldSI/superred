@@ -8,8 +8,8 @@ permalink: /guide/
 
 SuperRed is a framework for **red-teaming AI systems**: you point an automated
 attacker (an *optimizer*) at an AI system (a *target*) and measure whether the
-attacker can make the system do something it should not, under a precisely
-defined level of access (a *security scope*).
+attacker can make the system violate a security property (a *security claim*),
+under a precisely defined level of access (a *security scope*).
 
 This guide is for people who want to **use** the framework: wrap an AI system as
 a target, write an attacker, define what counts as a successful attack, and run
@@ -29,24 +29,24 @@ in one short program:
   later judges whether the attack worked.
 - An **Optimizer** is the attacker: it receives events as the target runs and
   decides what to inject.
-- The **Controller** wires these together and runs one **threat model**: one
-  security scope, one attacker budget, against one claim.
+- The **Controller** wires these together and runs one **threat model**.
 
 ## Install
 
 Install the framework from PyPI, plus the three small demo modules used in the
-example below (they ship in the `superred-modules` repository):
+example below. The `⚠️` marks packages not yet published on PyPI:
 
 ```bash
 pip install superred
-pip install -e ./superred-modules/targets/test_basic_llm_chat
-pip install -e ./superred-modules/optimizers/test_basic_prompt_list
-pip install -e ./superred-modules/security_claims/test_basic_secret_leak
+pip install basic-llm-chat-target        # ⚠️
+pip install basic-prompt-list-optimizer  # ⚠️
+pip install basic-secret-leak-claim      # ⚠️
 ```
 
 The target calls a real LLM through [litellm](https://docs.litellm.ai/), so set
 an API key for any litellm-compatible endpoint. The attacker in this example
-does no LLM calls of its own.
+does no inference of its own, though most attackers are themselves LLM-driven and
+call models through litellm too.
 
 ## A first evaluation, step by step
 
@@ -54,24 +54,23 @@ The example is a complete, runnable evaluation: a fixed-prompt attacker trying
 to make a chatbot leak a secret planted in its system prompt. We will build it
 one piece at a time.
 
-Start with the imports and read your API key from the environment:
+Read your API key from the environment:
 
 ```python
-import asyncio
 import os
-
-from superred.core.controller import Controller, TargetFactory
-from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
-from basic_prompt_list_optimizer import BasicPromptListOptimizer
-from basic_secret_leak_claim import basic_secret_leak_claim
 
 key = os.environ["OPENAI_API_KEY"]
 ```
 
 **The target: the system under test.** The controller builds a fresh target for
-each task, so it takes a *factory* rather than an instance:
+each task, so it takes a *factory* rather than an instance. Working through a
+factory is what lets SuperRed run tasks in parallel and reuse targets from a
+pool, with the factory sizing that pool to the resources of the host it runs on:
 
 ```python
+from superred.core.controller import TargetFactory
+from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
+
 target = TargetFactory(
     create=lambda: BasicLLMChatTarget(model="gpt-4o-mini", api_key=key),
 )
@@ -81,6 +80,8 @@ target = TargetFactory(
 secret in the system prompt and marks the run a success if the model reveals it:
 
 ```python
+from basic_secret_leak_claim import basic_secret_leak_claim
+
 claim = basic_secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
 ```
 
@@ -90,6 +91,9 @@ the user-input surface, and nothing else. This attacker is not LLM-driven, so it
 needs no model of its own:
 
 ```python
+from superred.core.controller import Controller
+from basic_prompt_list_optimizer import BasicPromptListOptimizer
+
 controller = Controller(
     optimizer_factory=lambda: BasicPromptListOptimizer(),
     target_factory=target,
@@ -101,6 +105,8 @@ controller = Controller(
 **Run it and inspect the result:**
 
 ```python
+import asyncio
+
 result = asyncio.run(controller.run())
 
 for task in result.task_results:

@@ -17,6 +17,11 @@ counts as success) belongs in a [SecurityClaim](/guide/writing-tasks), not here.
 The payoff is that one target serves many claims, and one claim can run against
 many targets.
 
+A target can wrap either a **mocked environment** (fast, deterministic, and
+cheap to run in bulk) or a **real, non-production deployment** of your system,
+so you can stress-test the actual thing under attack before it ships. Point it
+at staging or a throwaway instance, never at production.
+
 ## What a target must provide
 
 You subclass `superred.core.interfaces.target.Target` and implement:

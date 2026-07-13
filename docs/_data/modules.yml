@@ -1,35 +1,45 @@
 # Catalogue of available modules, rendered on /modules.
-# Blurbs are condensed from each module's own package description.
+# pip:  intended PyPI package name (nothing is published yet).
+# suit: which target classes it fits (chatbot / agentic / assistant); a list.
+# first_party: an original module by its own authors (otherwise it is a
+#              community port of someone else's published work).
 optimizers:
-  - { name: PAIR,            blurb: "Iterative prompt refinement with an attacker LLM" }
-  - { name: TAP,             blurb: "Tree-of-attacks with pruning" }
-  - { name: AutoDAN-Turbo,   blurb: "Lifelong strategy-discovery jailbreak" }
-  - { name: Crescendo,       blurb: "Gradual multi-turn escalation" }
-  - { name: GPTFuzzer,       blurb: "Mutation-based jailbreak fuzzing" }
-  - { name: Many-Shot,       blurb: "Many in-context demonstrations" }
-  - { name: GOAT,            blurb: "Generative offensive agent tester (multi-turn)" }
-  - { name: FlipAttack,      blurb: "Single-turn flip-based obfuscation" }
-  - { name: CodeChameleon,   blurb: "Code-encryption obfuscation jailbreak" }
-  - { name: DRA,             blurb: "Disguise-and-reconstruction attack" }
-  - { name: Bijection Learning, blurb: "Bijection-cipher jailbreak" }
-  - { name: FITD,            blurb: "Foot-in-the-door multi-turn escalation" }
-  - { name: GEPA,            blurb: "Reflective prompt evolution" }
-  - { name: GEPA (agentic),  blurb: "Reflective prompt evolution for agent targets" }
-  - { name: AgentVigil,      blurb: "Indirect prompt injection for agent targets" }
-  - { name: MINJA,           blurb: "Memory-injection attack for agent targets" }
-  - { name: PoisonedRAG,     blurb: "Knowledge-base / RAG corruption" }
+  - { name: PAIR,            pip: pair-optimizer,            suit: [chatbot], blurb: "Iterative prompt refinement with an attacker LLM" }
+  - { name: TAP,             pip: tap-optimizer,             suit: [chatbot], blurb: "Tree-of-attacks with pruning" }
+  - { name: AutoDAN-Turbo,   pip: autodan-turbo-optimizer,   suit: [chatbot], blurb: "Lifelong strategy-discovery jailbreak" }
+  - { name: Crescendo,       pip: crescendo-optimizer,       suit: [chatbot], blurb: "Gradual multi-turn escalation" }
+  - { name: GPTFuzzer,       pip: gptfuzzer-optimizer,       suit: [chatbot], blurb: "Mutation-based jailbreak fuzzing" }
+  - { name: Many-Shot,       pip: many-shot-optimizer,       suit: [chatbot], blurb: "Many in-context demonstrations" }
+  - { name: GOAT,            pip: goat-optimizer,            suit: [chatbot], blurb: "Generative offensive agent tester (multi-turn)" }
+  - { name: FlipAttack,      pip: flip-attack-optimizer,     suit: [chatbot], blurb: "Single-turn flip-based obfuscation" }
+  - { name: CodeChameleon,   pip: code-chameleon-optimizer,  suit: [chatbot], blurb: "Code-encryption obfuscation jailbreak" }
+  - { name: DRA,             pip: dra-optimizer,             suit: [chatbot], blurb: "Disguise-and-reconstruction attack" }
+  - { name: Bijection Learning, pip: bijection-optimizer,    suit: [chatbot], blurb: "Bijection-cipher jailbreak" }
+  - { name: FITD,            pip: fitd-optimizer,            suit: [chatbot], blurb: "Foot-in-the-door multi-turn escalation" }
+  - { name: GEPA,            pip: gepa-optimizer,            suit: [chatbot], blurb: "Reflective prompt evolution" }
+  - { name: GEPA (agentic),  pip: gepa-agentic-optimizer,    suit: [agentic, assistant], blurb: "Reflective prompt evolution for agent targets" }
+  - { name: AgentVigil,      pip: agentvigil-websentinel-optimizer, suit: [agentic, assistant], blurb: "Indirect prompt injection for agent targets" }
+  - { name: MINJA,           pip: minja-optimizer,           suit: [agentic, assistant], blurb: "Memory-injection attack for agent targets" }
+  - { name: PoisonedRAG,     pip: poisonedrag-optimizer,     suit: [agentic, assistant], blurb: "Knowledge-base / RAG corruption" }
+  - { name: Chord/XTHP,      pip: chord-xthp-optimizer,      suit: [agentic, assistant], blurb: "Tool-control-flow hijack for agents" }
+  - { name: EIA,             pip: eia-agent-optimizer,       suit: [agentic, assistant], blurb: "Environmental injection for web agents" }
+  - { name: MUZZLE,          pip: muzzle-optimizer,          suit: [agentic, assistant], blurb: "Adaptive indirect prompt injection for agents" }
+  - { name: Goal passthrough, pip: goal-passthrough-optimizer, suit: [chatbot, agentic, assistant], first_party: true, blurb: "Direct-request baseline (no attack)" }
 
 targets:
-  - { name: Chatbot,             blurb: "Any LLM as a single- or multi-turn chatbot", first_party: true }
-  - { name: AgentDojo,           blurb: "Tool-using agent across all four AgentDojo suites" }
-  - { name: Agent Security Bench, blurb: "Plan-then-execute agent loop (ASB)" }
-  - { name: Inspect agent,       blurb: "General inspect-ai tool-calling agent", first_party: true }
+  - { name: Chatbot,             pip: chatbot-target,        suit: [chatbot], first_party: true, blurb: "Any LLM as a single- or multi-turn chatbot" }
+  - { name: AgentDojo,           pip: agentdojo-target,      suit: [agentic], blurb: "Tool-using agent across all four AgentDojo suites" }
+  - { name: Agent Security Bench, pip: asb-target,           suit: [agentic], blurb: "Plan-then-execute agent loop (ASB)" }
+  - { name: Inspect agent,       pip: inspect-agent-target,  suit: [agentic], first_party: true, blurb: "General inspect-ai tool-calling agent" }
+  - { name: Claude Code (DTAP),  pip: dtap-claudecode-target, suit: [assistant], blurb: "Claude Code coding agent with execution access" }
+  - { name: OpenClaw (DTAP),     pip: dtap-openclaw-target,  suit: [assistant], blurb: "OpenClaw computer-use assistant" }
 
 security_claims:
-  - { name: HarmBench,           blurb: "Standardized red-teaming benchmark" }
-  - { name: StrongREJECT,        blurb: "Jailbreak benchmark (Souly et al., 2024)" }
-  - { name: SORRY-Bench,         blurb: "Fine-grained safety-refusal benchmark" }
-  - { name: AgentHarm,           blurb: "Harmful agent-behavior benchmark (176 behaviors)" }
-  - { name: AgentDojo,           blurb: "Prompt-injection tasks + purpose-violation goals" }
-  - { name: Agent Security Bench, blurb: "Attack-success / utility / refusal tasks" }
-  - { name: Chatbot suite,       blurb: "HarmBench + SORRY-Bench + StrongREJECT combined", first_party: true }
+  - { name: HarmBench,           pip: secclaim-harmbench,          suit: [chatbot], blurb: "Standardized red-teaming benchmark" }
+  - { name: StrongREJECT,        pip: strongreject-claim,          suit: [chatbot], blurb: "Jailbreak benchmark (Souly et al., 2024)" }
+  - { name: SORRY-Bench,         pip: security-claim-sorry-bench,  suit: [chatbot], blurb: "Fine-grained safety-refusal benchmark" }
+  - { name: AgentHarm,           pip: security-claim-agentharm,    suit: [agentic], blurb: "Harmful agent-behavior benchmark (176 behaviors)" }
+  - { name: AgentDojo,           pip: security-claim-agentdojo,    suit: [agentic], blurb: "Prompt-injection tasks + purpose-violation goals" }
+  - { name: Agent Security Bench, pip: security-claim-asb,         suit: [agentic], blurb: "Attack-success / utility / refusal tasks" }
+  - { name: DecodingTrust-Agent, pip: security-claim-dtap,         suit: [assistant], blurb: "Agent trustworthiness across 14 domains" }
+  - { name: Chatbot suite,       pip: security-claim-chatbot-suite, suit: [chatbot], first_party: true, blurb: "HarmBench + SORRY-Bench + StrongREJECT combined" }

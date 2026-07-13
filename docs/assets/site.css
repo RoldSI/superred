@@ -21,6 +21,8 @@
 @media (max-width: 640px) {
   :root { --fs-body: 1.05rem; --fs-head: 1.4rem; }
 }
+/* Anchor jumps leave room for the sticky header. */
+html { scroll-padding-top: calc(var(--header-h) + 1.5rem); }
 
 .site-header {
   position: sticky;
