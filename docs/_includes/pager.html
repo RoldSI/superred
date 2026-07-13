@@ -1,0 +1,6 @@
+{% if prev or nxt %}
+<nav class="pager {{ include.cls }}">
+  {% if prev %}<a class="pager-prev" href="{{ prev.url }}">&larr; {{ prev.title }}</a>{% endif %}
+  {% if nxt %}<a class="pager-next" href="{{ nxt.url }}">{{ nxt.title }} &rarr;</a>{% endif %}
+</nav>
+{% endif %}

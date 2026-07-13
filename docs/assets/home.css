@@ -28,10 +28,18 @@ a { color: var(--ink); }
 /* Header lives in site.css (shared across all pages). */
 
 /* ---- shared section frame ---- */
+/* Full-bleed frame (border + gutter), prose in a readable measure, wide
+   elements (grids, code) allowed to run wider. */
 .section {
   padding: 4.5rem var(--gutter);
   border-top: 1px solid var(--line);
 }
+.section > * { max-width: var(--measure); }
+.section > .doc-cards,
+.section > .features,
+.section > .two-col,
+.section > pre,
+.section > .highlight { max-width: var(--wide); }
 .eyebrow {
   margin: 0 0 0.8rem;
   font-size: var(--fs-small);
@@ -118,14 +126,17 @@ a { color: var(--ink); }
 .hero .tagline {
   color: var(--gray);
   font-size: var(--fs-body);
-  margin: 0.6rem 0 0;
+  margin: 0.6rem auto 0;
+  max-width: var(--wide);
 }
 .hero .lead {
   font-size: var(--fs-head);
   margin: 1.8rem auto 0;
+  max-width: var(--wide);
 }
 .hero .intro {
   margin: 1.2rem auto 0;
+  max-width: var(--measure);
   font-size: var(--fs-body);
   color: #333333;
 }
@@ -186,21 +197,7 @@ a { color: var(--ink); }
   font-size: var(--fs-body);
 }
 
-/* ---- getting started ---- */
-.start pre {
-  background: var(--code-bg);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 1rem 1.2rem;
-  overflow-x: auto;
-  margin: 1.4rem 0 0;
-}
-.start code {
-  font-family: var(--mono);
-  font-size: var(--fs-small);
-  line-height: 1.6;
-}
-.start .comment { color: var(--gray); }
+/* Code blocks (.highlight) are styled once in site.css. */
 
 /* ---- documentation cards ---- */
 .doc-cards {

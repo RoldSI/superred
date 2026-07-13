@@ -23,6 +23,18 @@
     </nav>
   </header>
 
+  {%- comment -%} Flatten the nav into one ordered sequence, then find prev/next. {%- endcomment -%}
+  {% assign flat = "" | split: "" %}
+  {% for section in site.data.nav %}{% assign flat = flat | concat: section.items %}{% endfor %}
+  {% assign prev = null %}
+  {% assign nxt = null %}
+  {% assign found = false %}
+  {% for item in flat %}
+    {% if found and nxt == null %}{% assign nxt = item %}{% endif %}
+    {% if item.url == page.url %}{% assign found = true %}{% endif %}
+    {% unless found %}{% assign prev = item %}{% endunless %}
+  {% endfor %}
+
   <div class="layout">
     <aside class="sidebar">
       <details class="nav-disclosure" open>
@@ -43,7 +55,9 @@
     </aside>
 
     <main class="content">
+      {% include pager.html cls="pager-top" %}
       {{ content }}
+      {% include pager.html cls="pager-bottom" %}
     </main>
   </div>
 </body>

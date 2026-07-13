@@ -1,3 +1,5 @@
+---
+---
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -15,7 +17,10 @@
 
   <!-- ===== HEADER ===== -->
   <header class="site-header">
-    <div class="brand"><a class="wordmark" href="/">SuperRed</a></div>
+    <div class="brand">
+      <a class="wordmark" href="/">SuperRed</a>
+      <span class="tagline">Open source AI red-teaming and AI system security framework</span>
+    </div>
     <nav class="site-nav">
       <a href="/guide/">Guide</a>
       <a href="/reference/">Reference</a>
@@ -38,7 +43,7 @@
   <!-- ===== SHOWCASE ===== -->
   <section class="section" id="showcase">
     <p class="eyebrow">Showcase</p>
-    <h2>A full toolbox, and the work built on it</h2>
+    <h2>Ready-made attackers, targets, and benchmarks, plus the research built on them</h2>
     <div class="doc-cards">
       <a class="card" href="/modules">
         <h3>Attacks and benchmarks, ready to run</h3>
@@ -107,18 +112,20 @@
     <p class="eyebrow">Easy to get started</p>
     <h2>Install, write a short script, run an evaluation</h2>
     <p>Install the framework from PyPI:</p>
-    <pre><code>pip install superred</code></pre>
+    {% highlight text %}pip install superred{% endhighlight %}
     <p>Then point an attacker at a target, choose what counts as broken, and say what the attacker is allowed to control:</p>
-    <pre><code>chatbot = lambda: ChatbotTarget(model="gpt-4o-mini", api_key=key)
+    {% highlight python %}
+chatbot = lambda: ChatbotTarget(model="gpt-4o-mini", api_key=key)
 
 controller = Controller(
-    optimizer_factory=lambda: PAIROptimizer(),  <span class="comment"># the attacker</span>
-    target_factory=TargetFactory(create=chatbot),  <span class="comment"># the system under test</span>
-    security_claim=harmbench_claim(),  <span class="comment"># what counts as broken</span>
-    scope=frozenset({USER_TAG}),  <span class="comment"># the attacker's capabilities</span>
-    llm_config=LLMConfig(model="gpt-4o", api_key=key, max_cost=5.0),  <span class="comment"># model + budget</span>
+    optimizer_factory=lambda: PAIROptimizer(),           # the attacker
+    target_factory=TargetFactory(create=chatbot),        # the system under test
+    security_claim=harmbench_claim(),                    # what counts as broken
+    scope=frozenset({USER_TAG}),                         # the attacker's capabilities
+    llm_config=LLMConfig(model="gpt-4o", api_key=key, max_cost=5.0),  # model + budget
 )
-await controller.run()</code></pre>
+await controller.run()
+{% endhighlight %}
     <p class="muted" style="margin-top:1.2rem"><a href="/guide/quick-start">A full walk-through: the Quick Start &rarr;</a></p>
   </section>
 

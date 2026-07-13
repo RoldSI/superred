@@ -7,9 +7,13 @@
   --header-h: 3.5rem;
   /* Full-width gutter and the site's only two font sizes (the hero title is
      the single exception). */
-  --gutter: clamp(1.25rem, 3vw, 3rem);
+  --gutter: clamp(1.5rem, 4vw, 4rem);
+  /* Full-bleed frame, but prose sits in a readable measure; wide elements
+     (grids, tables, code) may run to --wide. */
+  --measure: 42rem;
+  --wide: 74rem;
   --fs-body: 1.125rem;
-  --fs-head: 1.6rem;
+  --fs-head: 1.65rem;
   --fs-small: 0.9rem;
 }
 @media (max-width: 640px) {
@@ -81,4 +85,31 @@
 /* A section placed directly under the header (e.g. standalone pages) should
    not draw its own top rule against the header's bottom rule. */
 .site-header + .section { border-top: none; }
+
+/* ---- code blocks + syntax highlighting (shared across all pages) ---- */
+.highlight { margin: 1.4rem 0; }
+.highlight pre {
+  margin: 0;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.85rem 1.05rem;
+  overflow-x: auto;
+}
+.highlight code,
+.highlight pre {
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+}
+/* Rouge tokens: muted, low-saturation to sit quietly under the serif type. */
+.highlight .c, .highlight .c1, .highlight .cm, .highlight .cs { color: #9aa0a6; font-style: italic; }
+.highlight .k, .highlight .kn, .highlight .kc, .highlight .kd, .highlight .kr, .highlight .kt { color: #a13d6d; }
+.highlight .s, .highlight .s1, .highlight .s2, .highlight .sb, .highlight .sc, .highlight .sd,
+.highlight .se, .highlight .sh, .highlight .si, .highlight .sx, .highlight .sr, .highlight .ss { color: #3f7d3f; }
+.highlight .mi, .highlight .mf, .highlight .mh, .highlight .mo, .highlight .il { color: #a35a00; }
+.highlight .nf, .highlight .nb, .highlight .bp, .highlight .nc, .highlight .nn, .highlight .no { color: #2c5aa0; }
+.highlight .nd, .highlight .ni { color: #a35a00; }
+.highlight .o, .highlight .ow, .highlight .p { color: #5a5a5a; }
+.highlight .n, .highlight .nx, .highlight .nv, .highlight .na { color: var(--ink); }
 
