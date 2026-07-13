@@ -1,10 +1,8 @@
 # Sidebar navigation. Section titles are labels; items are pages, in order.
 - title: User Guide
   items:
-    - title: Overview
+    - title: Getting Started
       url: /guide/
-    - title: Quick Start
-      url: /guide/quick-start
     - title: Core Concepts
       url: /guide/core-concepts
     - title: Writing a Target

@@ -23,9 +23,10 @@
     <p class="tagline">Open source AI red-teaming and AI system security framework</p>
     <p class="lead">Run <strong>any attacker</strong> against <strong>any AI system</strong> with <strong>any threat model</strong></p>
     <p class="intro">SuperRed is a modular framework for red-teaming AI systems. Attackers, targets, and the benchmarks that score them are independent modules you combine freely, and you define the threat model down to exactly how much access the attacker gets. The same setup evaluates a new attack against various systems and benchmarks, or a new system against various attacks.</p>
+    {% highlight text %}pip install superred{% endhighlight %}
     <div class="cta">
-      <a class="btn btn-primary" href="/guide/quick-start">Get started</a>
-      <a class="btn btn-secondary" href="/guide/">Read the guide</a>
+      <a class="btn btn-primary" href="/guide/">Get started</a>
+      <a class="btn btn-secondary" href="/reference/">Reference</a>
     </div>
   </section>
 
@@ -38,7 +39,7 @@
     <div class="section-body">
     <div class="doc-cards">
       <a class="card" href="/modules">
-        <h3>Attacks and benchmarks, ready to run</h3>
+        <h3>Attacks, targets, and benchmarks, ready to run</h3>
         <p>Over a dozen faithfully implemented attacks, including AutoDAN-Turbo, PAIR, TAP, Crescendo, and AgentVigil, alongside targets and safety benchmarks such as HarmBench, DecodingTrust, and AgentDojo.</p>
         <span class="go">Browse the modules &rarr;</span>
       </a>
@@ -55,7 +56,7 @@
   <section class="section" id="why">
     <div class="section-head">
     <p class="eyebrow">Why SuperRed</p>
-    <h2>Attacks, systems, and benchmarks no longer live in separate worlds</h2>
+    <h2>Attacks, systems, and benchmarks, freely composable</h2>
     </div>
     <div class="section-body">
     <p>Published attacks on AI systems and the benchmarks that measure them are scattered across one-off codebases. Each attack is wired to the system it was first demonstrated on; each benchmark ships its own runner. Answering a simple question (<em>does this attack beat that system, and how much access does it take?</em>) usually means re-implementing one against the other by hand.</p>
@@ -67,10 +68,10 @@
   <section class="section" id="who">
     <div class="section-head">
     <p class="eyebrow">A meeting point</p>
-    <h2>Attackers and targets are both first-class</h2>
+    <h2>Attackers, targets, and benchmarks are all first-class</h2>
     </div>
     <div class="section-body">
-    <p>An attack and a system under test are the same kind of thing here: interchangeable modules. Fix one to evaluate the other, so red-teamers and system builders share a single toolbox where every contribution strengthens both sides.</p>
+    <p>An attack, a system under test, and the benchmark that scores it are the same kind of thing here: interchangeable modules. Hold any of them fixed to evaluate the others, so everyone shares a single toolbox where every contribution strengthens the rest.</p>
     <div class="two-col" style="margin-top: 2.4rem">
       <div class="col">
         <h3>For red-teamers</h3>
@@ -79,6 +80,10 @@
       <div class="col">
         <h3>For system builders</h3>
         <p>Declare your system's trust boundaries once, then see exactly which attacks succeed at each level of access.</p>
+      </div>
+      <div class="col">
+        <h3>For evaluators</h3>
+        <p>Package a benchmark once as a security claim, then use it to score any attacker against any target, or reuse the ones already ported.</p>
       </div>
     </div>
     </div>
@@ -119,8 +124,7 @@
     <h2>Install, write a short script, run an evaluation</h2>
     </div>
     <div class="section-body">
-    <p>Install the framework from PyPI:</p>
-    {% highlight text %}pip install superred{% endhighlight %}
+    <p>Install the framework from PyPI: <code>pip install superred</code></p>
     <p>Then point an attacker at a target, choose what counts as broken, and say what the attacker is allowed to control:</p>
     {% highlight python %}
 chatbot = lambda: ChatbotTarget(model="gpt-4o-mini", api_key=key)
@@ -134,7 +138,7 @@ controller = Controller(
 )
 await controller.run()
 {% endhighlight %}
-    <p class="muted" style="margin-top:1.2rem"><a href="/guide/quick-start">A full walk-through: the Quick Start &rarr;</a></p>
+    <p class="muted" style="margin-top:1.2rem"><a href="/guide/">The full walk-through, in the guide &rarr;</a></p>
     </div>
   </section>
 

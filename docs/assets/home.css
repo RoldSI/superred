@@ -38,7 +38,7 @@ a { color: var(--ink); }
   column-gap: clamp(2rem, 5vw, 5rem);
   align-items: start;
 }
-.section-head { position: sticky; top: calc(var(--header-h) + 1.5rem); }
+.section-head { position: sticky; top: calc(var(--header-h) + 3rem); }
 .section-body > :first-child { margin-top: 0; }
 @media (max-width: 860px) {
   .section { grid-template-columns: 1fr; row-gap: 1.2rem; }
@@ -66,7 +66,7 @@ a { color: var(--ink); }
 .tabs > input { position: absolute; opacity: 0; width: 0; height: 0; }
 .tablist {
   position: sticky;
-  top: var(--header-h);
+  top: calc(var(--header-h) + 3rem);
   z-index: 5;
   display: flex;
   flex-wrap: wrap;
@@ -127,7 +127,9 @@ a { color: var(--ink); }
   white-space: nowrap;
   vertical-align: middle;
 }
-.mod-tag-first { color: #2c5aa0; background: #f1f5fb; border-color: #d6e0f0; }
+.mod-tag-port    { color: #8a5a1a; background: #f8efe2; border-color: #ecdcc4; }
+.mod-tag-first   { color: #2c5aa0; background: #eef3fb; border-color: #d6e0f0; }
+.mod-tag-agentic { color: #3f7d3f; background: #eef6ee; border-color: #d3e6d3; }
 @media (max-width: 640px) {
   .mod-grid { grid-template-columns: 1fr; }
   .mod-grid > .mod-desc { border-top: none; padding-top: 0; padding-bottom: 0.7rem; }
@@ -198,8 +200,8 @@ a { color: var(--ink); }
 /* ---- two-column value props ---- */
 .two-col {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2.5rem;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem 2.5rem;
 }
 .two-col h3 { font-size: var(--fs-body); font-weight: 500; margin: 0 0 0.6rem; }
 .two-col p { margin: 0; }
@@ -211,6 +213,7 @@ a { color: var(--ink); }
   gap: 2rem 2.5rem;
 }
 .feature { padding-top: 1rem; border-top: 1px solid var(--line); }
+.features .feature:nth-child(-n+2) { border-top: none; padding-top: 0; }
 .feature h3 { font-size: var(--fs-body); font-weight: 500; margin: 0 0 0.4rem; }
 .feature p { margin: 0; font-size: var(--fs-body); color: #333; }
 
@@ -253,3 +256,14 @@ a { color: var(--ink); }
   .two-col, .features, .doc-cards { grid-template-columns: 1fr; }
   .section { padding: 3.2rem 1.25rem; }
 }
+
+/* inline code on landing pages */
+.section-body p code, .hero code {
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+/* compact, centered pip line in the hero */
+.hero .highlight { width: max-content; max-width: 100%; margin: 1.6rem auto 0.2rem; }
