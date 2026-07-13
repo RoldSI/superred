@@ -31,8 +31,7 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 0.9rem var(--gutter);
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: saturate(180%) blur(6px);
+  background: #ffffff;
   border-bottom: 1px solid var(--line);
 }
 
@@ -126,6 +125,11 @@
   gap: 0.6rem;
   color: var(--gray);
   font-size: var(--fs-body);
+}
+.site-footer .footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
 }
 .site-footer a { color: var(--gray); text-decoration: none; }
 .site-footer a:hover { color: var(--ink); }

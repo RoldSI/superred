@@ -262,3 +262,36 @@ Multiple controllers pointed at the same `results_dir` (the multi-threat-model s
 - **Collisions**: if either the claim-level file or the task subfolder already exists, the writer raises `FileExistsError` rather than overwriting. Pass a per-run subdirectory if you re-run into the same parent.
 
 When `results_dir` is `None` (the default), nothing is written and behavior is unchanged.
+
+## Middleware (how filtering is implemented)
+
+The security filtering and trajectory recording are implemented as
+**middleware**: small functions that wrap the event handler. The Controller
+builds the target's `send_event` by composing them onto the channel:
+
+```python
+send_event = compose(
+    trajectory_recorder(trajectory),         # records every event and response
+    security_domain_filter(scope),           # declines non-injectable controllables
+)(channel.send)
+```
+
+The filter receives the read & write **`scope`** (not the wider visibility
+scope that also includes `read_only` tags), so it declines both out-of-scope
+controllable events and in-scope events under `read_only` tags (the latter stay
+recorded and visible; see
+[Security Domains](/guide/security-domains#access-levels-read-only-surfaces)).
+When `read_only` is empty the read & write scope equals the full visibility scope.
+
+`compose(a, b)(handler)` applies `a` outermost, then `b`, then the inner handler,
+with zero extra tasks or channels. The two built-ins
+(`security_domain_filter`, `trajectory_recorder`) live in
+`superred.core.middleware`.
+
+This is the mechanism that enforces scope, and it is worth understanding when
+reading the Controller. Note, though, that wiring custom middleware into a run is
+**not** a public extension point today: the Controller composes a fixed stack
+internally. If you need extra behaviour (rate limiting, tracing), the supported
+places to put it are inside your target's `run()` or your optimizer's
+`on_event()`. For the design rationale, see
+the [Architecture Overview](/reference/) above.

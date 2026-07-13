@@ -167,37 +167,3 @@ The pip name uses dashes (`my-optimizer`) and the import name uses underscores
 `test_*` fixtures are a deliberate example). Export your public surface from
 `__init__.py`, including any security-domain tag constants callers need to build
 scopes (the targets export their `*_TAG` constants for exactly this).
-
-## Middleware (how filtering is implemented)
-
-The security filtering and trajectory recording are implemented as
-**middleware**: small functions that wrap the event handler. The Controller
-builds the target's `send_event` by composing them onto the channel:
-
-```python
-send_event = compose(
-    trajectory_recorder(trajectory),         # records every event and response
-    security_domain_filter(scope),           # declines non-injectable controllables
-)(channel.send)
-```
-
-The filter receives the read & write **`scope`** (not the wider visibility
-scope that also includes `read_only` tags), so it declines both out-of-scope
-controllable events and in-scope events under `read_only` tags (the latter stay
-recorded and visible; see
-[Security Domains](/guide/security-domains#access-levels-read-only-surfaces)).
-When `read_only` is empty the read & write scope equals the full visibility scope.
-
-`compose(a, b)(handler)` applies `a` outermost, then `b`, then the inner handler,
-with zero extra tasks or channels. The two built-ins
-(`security_domain_filter`, `trajectory_recorder`) live in
-`superred.core.middleware`.
-
-This is the mechanism that enforces scope, and it is worth understanding when
-reading the Controller. Note, though, that wiring custom middleware into a run is
-**not** a public extension point today: the Controller composes a fixed stack
-internally. If you need extra behaviour (rate limiting, tracing), the supported
-places to put it are inside your target's `run()` or your optimizer's
-`on_event()`. For the design rationale, see
-the [Architecture Overview](/reference/) and
-[Controller reference](/reference/controller).

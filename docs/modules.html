@@ -9,7 +9,7 @@ permalink: /modules
     <h2>Attacks, targets, and benchmarks</h2>
   </div>
   <div class="section-body">
-    <p>The framework itself ships no modules. What is listed here is an initial, ready-to-use set to get you started: {{ site.data.modules.optimizers | size }} attackers, {{ site.data.modules.targets | size }} targets, and {{ site.data.modules.security_claims | size }} security claims. Every module is an independent package, and anyone can publish their own, whether a first-party module or a community port.</p>
+    <p>Every attacker, target, and benchmark is an independent package that anyone can write and publish. To get you started, we provide a ready-to-use set: {{ site.data.modules.optimizers | size }} attackers, {{ site.data.modules.targets | size }} targets, and {{ site.data.modules.security_claims | size }} security claims, growing with first-party modules and community ports.</p>
 
     <div class="tabs">
       <input type="radio" name="modtab" id="tab-attackers" checked>
@@ -33,7 +33,7 @@ permalink: /modules
       <div class="tabpanel panel-targets">
         <div class="mod-grid">
           {% for m in site.data.modules.targets %}
-          <div class="mod-name">{{ m.name }} {% if m.first_party %}<span class="mod-tag mod-tag-first">First-party</span>{% else %}<span class="mod-tag mod-tag-port">Third-party port</span>{% endif %}</div>
+          <div class="mod-name">{{ m.name }}{% unless m.first_party %} <span class="mod-tag mod-tag-port">Third-party port</span>{% endunless %}</div>
           <div class="mod-desc">{{ m.blurb }}</div>
           {% endfor %}
         </div>
@@ -42,7 +42,7 @@ permalink: /modules
       <div class="tabpanel panel-claims">
         <div class="mod-grid">
           {% for m in site.data.modules.security_claims %}
-          <div class="mod-name">{{ m.name }} {% if m.first_party %}<span class="mod-tag mod-tag-first">First-party</span>{% else %}<span class="mod-tag mod-tag-port">Third-party port</span>{% endif %}</div>
+          <div class="mod-name">{{ m.name }}{% unless m.first_party %} <span class="mod-tag mod-tag-port">Third-party port</span>{% endunless %}</div>
           <div class="mod-desc">{{ m.blurb }}</div>
           {% endfor %}
         </div>
