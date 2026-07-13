@@ -1,4 +1,4 @@
-/* Superred landing page: same design language as the docs. Garamond, black on
+/* SuperRed landing page: same design language as the docs. Garamond, black on
    white, restrained grays. Kept deliberately plain. */
 
 :root {
@@ -126,6 +126,12 @@ a { color: var(--ink); }
   max-width: 40ch;
   font-size: 1.2rem;
   margin: 1.8rem auto 0;
+}
+.hero .intro {
+  max-width: 56ch;
+  margin: 1.2rem auto 0;
+  font-size: 1.05rem;
+  color: #333333;
 }
 .cta {
   display: flex;
