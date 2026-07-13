@@ -42,7 +42,7 @@ body {
 .sidebar nav { font-size: var(--fs-body); }
 .nav-section {
   margin: 1.4rem 0 0.4rem;
-  font-size: var(--fs-body);
+  font-size: var(--fs-small);
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -104,7 +104,7 @@ body {
 /* code */
 .content code {
   font-family: var(--mono);
-  font-size: var(--fs-body);
+  font-size: var(--fs-small);
   background: var(--code-bg);
   padding: 0.1em 0.35em;
   border-radius: 3px;
@@ -120,7 +120,7 @@ body {
 .content pre code {
   background: none;
   padding: 0;
-  font-size: var(--fs-body);
+  font-size: var(--fs-small);
 }
 
 /* tables */

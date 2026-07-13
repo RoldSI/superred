@@ -10,6 +10,7 @@
   --gutter: clamp(1.25rem, 3vw, 3rem);
   --fs-body: 1.125rem;
   --fs-head: 1.6rem;
+  --fs-small: 0.9rem;
 }
 @media (max-width: 640px) {
   :root { --fs-body: 1.05rem; --fs-head: 1.4rem; }
