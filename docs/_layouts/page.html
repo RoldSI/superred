@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ page.title }} · SuperRed</title>
+  <title>SuperRed · {{ page.title }}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
@@ -11,29 +11,10 @@
   <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
-  <header class="site-header">
-    <div class="brand">
-      <a class="wordmark" href="/">SuperRed</a>
-      <span class="tagline">Open source AI red-teaming and AI system security framework</span>
-    </div>
-    <nav class="site-nav">
-      <a href="/guide/">Guide</a>
-      <a href="/reference/">Reference</a>
-      <a href="https://github.com/RoldSI/superred" target="_blank" rel="noopener noreferrer">GitHub</a>
-    </nav>
-  </header>
+  {% include site-header.html %}
 
   {{ content }}
 
-  <footer class="site-footer">
-    <span>SuperRed</span>
-    <span>
-      <a href="/guide/">Guide</a> &nbsp;&middot;&nbsp;
-      <a href="/reference/">Reference</a> &nbsp;&middot;&nbsp;
-      <a href="/modules">Modules</a> &nbsp;&middot;&nbsp;
-      <a href="/portfolio">Portfolio</a> &nbsp;&middot;&nbsp;
-      <a href="https://github.com/RoldSI/superred" target="_blank" rel="noopener noreferrer">GitHub</a>
-    </span>
-  </footer>
+  {% include site-footer.html %}
 </body>
 </html>

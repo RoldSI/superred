@@ -20,10 +20,10 @@ optimizers:
   - { name: PoisonedRAG,     blurb: "Knowledge-base / RAG corruption" }
 
 targets:
-  - { name: Chatbot,             blurb: "Any LLM as a single- or multi-turn chatbot", tag: "First-party provided" }
+  - { name: Chatbot,             blurb: "Any LLM as a single- or multi-turn chatbot", first_party: true }
   - { name: AgentDojo,           blurb: "Tool-using agent across all four AgentDojo suites" }
   - { name: Agent Security Bench, blurb: "Plan-then-execute agent loop (ASB)" }
-  - { name: Inspect agent,       blurb: "General inspect-ai tool-calling agent" }
+  - { name: Inspect agent,       blurb: "General inspect-ai tool-calling agent", first_party: true }
 
 security_claims:
   - { name: HarmBench,           blurb: "Standardized red-teaming benchmark" }
@@ -32,4 +32,4 @@ security_claims:
   - { name: AgentHarm,           blurb: "Harmful agent-behavior benchmark (176 behaviors)" }
   - { name: AgentDojo,           blurb: "Prompt-injection tasks + purpose-violation goals" }
   - { name: Agent Security Bench, blurb: "Attack-success / utility / refusal tasks" }
-  - { name: Chatbot suite,       blurb: "HarmBench + SORRY-Bench + StrongREJECT combined" }
+  - { name: Chatbot suite,       blurb: "HarmBench + SORRY-Bench + StrongREJECT combined", first_party: true }

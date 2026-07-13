@@ -15,18 +15,7 @@
 </head>
 <body>
 
-  <!-- ===== HEADER ===== -->
-  <header class="site-header">
-    <div class="brand">
-      <a class="wordmark" href="/">SuperRed</a>
-      <span class="tagline">Open source AI red-teaming and AI system security framework</span>
-    </div>
-    <nav class="site-nav">
-      <a href="/guide/">Guide</a>
-      <a href="/reference/">Reference</a>
-      <a href="https://github.com/RoldSI/superred" target="_blank" rel="noopener noreferrer">GitHub</a>
-    </nav>
-  </header>
+  {% include site-header.html %}
 
   <!-- ===== HERO ===== -->
   <section class="hero">
@@ -42,34 +31,45 @@
 
   <!-- ===== SHOWCASE ===== -->
   <section class="section" id="showcase">
+    <div class="section-head">
     <p class="eyebrow">Showcase</p>
     <h2>Ready-made attackers, targets, and benchmarks, plus the research built on them</h2>
+    </div>
+    <div class="section-body">
     <div class="doc-cards">
       <a class="card" href="/modules">
         <h3>Attacks and benchmarks, ready to run</h3>
         <p>Over a dozen faithfully implemented attacks, including AutoDAN-Turbo, PAIR, TAP, Crescendo, and AgentVigil, alongside targets and safety benchmarks such as HarmBench, DecodingTrust, and AgentDojo.</p>
         <span class="go">Browse the modules &rarr;</span>
       </a>
-      <a class="card" href="/portfolio">
+      <a class="card" href="/research">
         <h3>Research built with SuperRed</h3>
         <p>From new attack strategies to full system evaluations, SuperRed is the substrate researchers and builders use to do serious red-teaming work.</p>
-        <span class="go">See the portfolio &rarr;</span>
+        <span class="go">See the research &rarr;</span>
       </a>
+    </div>
     </div>
   </section>
 
   <!-- ===== WHY: the gap it closes ===== -->
   <section class="section" id="why">
+    <div class="section-head">
     <p class="eyebrow">Why SuperRed</p>
     <h2>Attacks, systems, and benchmarks no longer live in separate worlds</h2>
+    </div>
+    <div class="section-body">
     <p>Published attacks on AI systems and the benchmarks that measure them are scattered across one-off codebases. Each attack is wired to the system it was first demonstrated on; each benchmark ships its own runner. Answering a simple question (<em>does this attack beat that system, and how much access does it take?</em>) usually means re-implementing one against the other by hand.</p>
     <p>SuperRed makes the three moving parts independent and composable. The attacker (an <strong>optimizer</strong>), the system under test (a <strong>target</strong>), and the definition of success (a <strong>security claim</strong>) are separate, interchangeable modules. Any attacker can be pointed at any target and scored by any claim, under a flexible threat model you state explicitly.</p>
+    </div>
   </section>
 
   <!-- ===== VALUE PROPOSITION ===== -->
   <section class="section" id="who">
+    <div class="section-head">
     <p class="eyebrow">A meeting point</p>
     <h2>Attackers and targets are both first-class</h2>
+    </div>
+    <div class="section-body">
     <p>An attack and a system under test are the same kind of thing here: interchangeable modules. Fix one to evaluate the other, so red-teamers and system builders share a single toolbox where every contribution strengthens both sides.</p>
     <div class="two-col" style="margin-top: 2.4rem">
       <div class="col">
@@ -81,12 +81,16 @@
         <p>Declare your system's trust boundaries once, then see exactly which attacks succeed at each level of access.</p>
       </div>
     </div>
+    </div>
   </section>
 
   <!-- ===== FEATURES ===== -->
   <section class="section" id="features">
+    <div class="section-head">
     <p class="eyebrow">High-level features</p>
     <h2>What the framework gives you</h2>
+    </div>
+    <div class="section-body">
     <div class="features">
       <div class="feature">
         <h3>Flexible threat models</h3>
@@ -105,12 +109,16 @@
         <p>Run many threat models in parallel, each against its own instance of the system.</p>
       </div>
     </div>
+    </div>
   </section>
 
   <!-- ===== GETTING STARTED ===== -->
   <section class="section start" id="start">
+    <div class="section-head">
     <p class="eyebrow">Easy to get started</p>
     <h2>Install, write a short script, run an evaluation</h2>
+    </div>
+    <div class="section-body">
     <p>Install the framework from PyPI:</p>
     {% highlight text %}pip install superred{% endhighlight %}
     <p>Then point an attacker at a target, choose what counts as broken, and say what the attacker is allowed to control:</p>
@@ -127,12 +135,16 @@ controller = Controller(
 await controller.run()
 {% endhighlight %}
     <p class="muted" style="margin-top:1.2rem"><a href="/guide/quick-start">A full walk-through: the Quick Start &rarr;</a></p>
+    </div>
   </section>
 
   <!-- ===== DOCUMENTATION ===== -->
   <section class="section" id="docs">
+    <div class="section-head">
     <p class="eyebrow">Documentation</p>
     <h2>Two ways in</h2>
+    </div>
+    <div class="section-body">
     <div class="doc-cards">
       <a class="card" href="/guide/">
         <h3>Guide</h3>
@@ -145,19 +157,10 @@ await controller.run()
         <span class="go">Open the reference &rarr;</span>
       </a>
     </div>
+    </div>
   </section>
 
-  <!-- ===== FOOTER ===== -->
-  <footer class="site-footer">
-    <span>SuperRed</span>
-    <span>
-      <a href="/guide/">Guide</a> &nbsp;&middot;&nbsp;
-      <a href="/reference/">Reference</a> &nbsp;&middot;&nbsp;
-      <a href="/modules">Modules</a> &nbsp;&middot;&nbsp;
-      <a href="/portfolio">Portfolio</a> &nbsp;&middot;&nbsp;
-      <a href="https://github.com/RoldSI/superred" target="_blank" rel="noopener noreferrer">GitHub</a>
-    </span>
-  </footer>
+  {% include site-footer.html %}
 
 </body>
 </html>

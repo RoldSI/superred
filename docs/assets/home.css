@@ -28,18 +28,22 @@ a { color: var(--ink); }
 /* Header lives in site.css (shared across all pages). */
 
 /* ---- shared section frame ---- */
-/* Full-bleed frame (border + gutter), prose in a readable measure, wide
-   elements (grids, code) allowed to run wider. */
+/* Full-width editorial layout: the section heading sits in a left rail, the
+   content fills the rest. Uses the whole width with structure. */
 .section {
-  padding: 4.5rem var(--gutter);
+  padding: 4rem var(--gutter);
   border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(0, 16rem) minmax(0, 1fr);
+  column-gap: clamp(2rem, 5vw, 5rem);
+  align-items: start;
 }
-.section > * { max-width: var(--measure); }
-.section > .doc-cards,
-.section > .features,
-.section > .two-col,
-.section > pre,
-.section > .highlight { max-width: var(--wide); }
+.section-head { position: sticky; top: calc(var(--header-h) + 1.5rem); }
+.section-body > :first-child { margin-top: 0; }
+@media (max-width: 860px) {
+  .section { grid-template-columns: 1fr; row-gap: 1.2rem; }
+  .section-head { position: static; }
+}
 .eyebrow {
   margin: 0 0 0.8rem;
   font-size: var(--fs-small);
@@ -58,52 +62,75 @@ a { color: var(--ink); }
 .section p:last-child { margin-bottom: 0; }
 .muted { color: var(--gray); }
 
-/* module catalogue (modules.html) */
-.cat {
-  margin: 2.6rem 0 0.4rem;
-  font-size: var(--fs-head);
-  font-weight: 500;
+/* module catalogue (modules.html): JS-free sticky tabs + adaptive grid */
+.tabs > input { position: absolute; opacity: 0; width: 0; height: 0; }
+.tablist {
+  position: sticky;
+  top: var(--header-h);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1.6rem 0 0.4rem;
+  padding: 0.5rem 0;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
 }
-.cat .count {
-  margin-left: 0.6rem;
-  font-size: var(--fs-small);
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.tablist label {
+  cursor: pointer;
+  padding: 0.35rem 0.85rem;
+  border-radius: 5px;
   color: var(--gray);
+  font-size: var(--fs-small);
+  white-space: nowrap;
 }
-.mod-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 0.8rem 0 0;
-  font-size: var(--fs-body);
+.tablist label:hover { color: var(--ink); }
+.tablist label .n { opacity: 0.55; }
+.tabpanel { display: none; }
+#tab-attackers:checked ~ .tablist label[for="tab-attackers"],
+#tab-targets:checked ~ .tablist label[for="tab-targets"],
+#tab-claims:checked ~ .tablist label[for="tab-claims"] {
+  color: var(--ink);
+  background: var(--code-bg);
+  font-weight: 500;
 }
-.mod-table th,
-.mod-table td {
-  text-align: left;
-  vertical-align: baseline;
+#tab-attackers:checked ~ .panel-attackers,
+#tab-targets:checked ~ .panel-targets,
+#tab-claims:checked ~ .panel-claims { display: block; }
+
+.mod-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: baseline;
+}
+.mod-grid > .mod-name,
+.mod-grid > .mod-desc {
   padding: 0.5rem 0;
   border-top: 1px solid var(--line);
 }
-.mod-table th {
-  width: 34%;
-  padding-right: 1.5rem;
+.mod-grid > .mod-name {
   font-weight: 500;
+  white-space: nowrap;
+  padding-right: 1.75rem;
 }
-.mod-table td { color: var(--gray); }
+.mod-grid > .mod-desc { color: var(--gray); }
 .mod-tag {
   display: inline-block;
-  margin-left: 0.5rem;
-  padding: 0.05rem 0.45rem;
+  margin-left: 0.4rem;
+  padding: 0.02rem 0.5rem;
   font-size: var(--fs-small);
+  font-weight: 400;
   color: var(--gray);
   background: var(--code-bg);
-  border-radius: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   white-space: nowrap;
   vertical-align: middle;
 }
+.mod-tag-first { color: #2c5aa0; background: #f1f5fb; border-color: #d6e0f0; }
 @media (max-width: 640px) {
-  .mod-table th { width: 42%; }
+  .mod-grid { grid-template-columns: 1fr; }
+  .mod-grid > .mod-desc { border-top: none; padding-top: 0; padding-bottom: 0.7rem; }
 }
 
 /* ---- hero ---- */
@@ -127,16 +154,16 @@ a { color: var(--ink); }
   color: var(--gray);
   font-size: var(--fs-body);
   margin: 0.6rem auto 0;
-  max-width: var(--wide);
+  max-width: var(--container);
 }
 .hero .lead {
   font-size: var(--fs-head);
   margin: 1.8rem auto 0;
-  max-width: var(--wide);
+  max-width: var(--container);
 }
 .hero .intro {
   margin: 1.2rem auto 0;
-  max-width: var(--measure);
+  max-width: var(--container);
   font-size: var(--fs-body);
   color: #333333;
 }
@@ -180,7 +207,7 @@ a { color: var(--ink); }
 /* ---- features grid ---- */
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 2rem 2.5rem;
 }
 .feature { padding-top: 1rem; border-top: 1px solid var(--line); }
@@ -218,19 +245,7 @@ a { color: var(--ink); }
 .card p { margin: 0 0 0.9rem; font-size: var(--fs-body); color: #333; }
 .card .go { color: var(--gray); font-size: var(--fs-body); }
 
-/* ---- footer ---- */
-.site-footer {
-  padding: 2.5rem var(--gutter) 3.5rem;
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.6rem;
-  color: var(--gray);
-  font-size: var(--fs-body);
-}
-.site-footer a { color: var(--gray); text-decoration: none; }
-.site-footer a:hover { color: var(--ink); }
+/* Footer lives in site.css (shared across all pages). */
 
 /* ---- responsive ---- */
 @media (max-width: 720px) {

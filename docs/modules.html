@@ -4,36 +4,51 @@ title: Modules
 permalink: /modules
 ---
 <section class="section">
-  <p class="eyebrow">Modules</p>
-  <h2>Attacks, targets, and benchmarks</h2>
-  <p>Every module is an independently installable package that plugs into the framework, and any combination can be run together: any attacker against any target, scored by any claim.</p>
+  <div class="section-head">
+    <p class="eyebrow">Modules</p>
+    <h2>Attacks, targets, and benchmarks</h2>
+  </div>
+  <div class="section-body">
+    <p>SuperRed ships {{ site.data.modules.optimizers | size }} attackers, {{ site.data.modules.targets | size }} targets, and {{ site.data.modules.security_claims | size }} security claims. Every module is an independently installable package, and any combination runs together.</p>
 
-  <h3 class="cat">Attackers <span class="count">{{ site.data.modules.optimizers | size }} optimizers</span></h3>
-  <table class="mod-table">
-    <tbody>
-    {% for m in site.data.modules.optimizers %}
-      <tr><th scope="row">{{ m.name }}</th><td>{{ m.blurb }}{% if m.tag %} <span class="mod-tag">{{ m.tag }}</span>{% endif %}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
+    <div class="tabs">
+      <input type="radio" name="modtab" id="tab-attackers" checked>
+      <input type="radio" name="modtab" id="tab-targets">
+      <input type="radio" name="modtab" id="tab-claims">
+      <div class="tablist">
+        <label for="tab-attackers">Attackers <span class="n">{{ site.data.modules.optimizers | size }}</span></label>
+        <label for="tab-targets">Targets <span class="n">{{ site.data.modules.targets | size }}</span></label>
+        <label for="tab-claims">Security claims <span class="n">{{ site.data.modules.security_claims | size }}</span></label>
+      </div>
 
-  <h3 class="cat">Targets <span class="count">{{ site.data.modules.targets | size }} systems under test</span></h3>
-  <table class="mod-table">
-    <tbody>
-    {% for m in site.data.modules.targets %}
-      <tr><th scope="row">{{ m.name }}</th><td>{{ m.blurb }}{% if m.tag %} <span class="mod-tag">{{ m.tag }}</span>{% endif %}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
+      <div class="tabpanel panel-attackers">
+        <div class="mod-grid">
+          {% for m in site.data.modules.optimizers %}
+          <div class="mod-name">{{ m.name }} <span class="mod-tag">Third-party port</span> <span class="mod-tag">Agentic-ready</span></div>
+          <div class="mod-desc">{{ m.blurb }}</div>
+          {% endfor %}
+        </div>
+      </div>
 
-  <h3 class="cat">Security claims <span class="count">{{ site.data.modules.security_claims | size }} benchmarks</span></h3>
-  <table class="mod-table">
-    <tbody>
-    {% for m in site.data.modules.security_claims %}
-      <tr><th scope="row">{{ m.name }}</th><td>{{ m.blurb }}{% if m.tag %} <span class="mod-tag">{{ m.tag }}</span>{% endif %}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
+      <div class="tabpanel panel-targets">
+        <div class="mod-grid">
+          {% for m in site.data.modules.targets %}
+          <div class="mod-name">{{ m.name }} {% if m.first_party %}<span class="mod-tag mod-tag-first">First-party</span>{% else %}<span class="mod-tag">Third-party port</span>{% endif %}</div>
+          <div class="mod-desc">{{ m.blurb }}</div>
+          {% endfor %}
+        </div>
+      </div>
 
-  <p class="muted" style="margin-top: 2.6rem">Built your own attack, target, or benchmark on SuperRed? Reach out to have your implementation featured here.</p>
+      <div class="tabpanel panel-claims">
+        <div class="mod-grid">
+          {% for m in site.data.modules.security_claims %}
+          <div class="mod-name">{{ m.name }} {% if m.first_party %}<span class="mod-tag mod-tag-first">First-party</span>{% else %}<span class="mod-tag">Third-party port</span>{% endif %}</div>
+          <div class="mod-desc">{{ m.blurb }}</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <p class="muted" style="margin-top: 2.6rem">Built your own attack, target, or benchmark on SuperRed? Reach out to have your implementation featured here.</p>
+  </div>
 </section>

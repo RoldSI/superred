@@ -12,6 +12,8 @@
      (grids, tables, code) may run to --wide. */
   --measure: 42rem;
   --wide: 74rem;
+  /* Landing/page content sits centered in this container (symmetric margins). */
+  --container: 62rem;
   --fs-body: 1.125rem;
   --fs-head: 1.65rem;
   --fs-small: 0.9rem;
@@ -113,3 +115,17 @@
 .highlight .o, .highlight .ow, .highlight .p { color: #5a5a5a; }
 .highlight .n, .highlight .nx, .highlight .nv, .highlight .na { color: var(--ink); }
 
+
+/* ---- footer (shared, on every page) ---- */
+.site-footer {
+  border-top: 1px solid var(--line);
+  padding: 2.5rem var(--gutter) 3.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.6rem;
+  color: var(--gray);
+  font-size: var(--fs-body);
+}
+.site-footer a { color: var(--gray); text-decoration: none; }
+.site-footer a:hover { color: var(--ink); }
