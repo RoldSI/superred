@@ -771,3 +771,91 @@ a { color: var(--ink); }
   .sd-edge { display: none; }
   .sd-box { padding: 1.4rem 1.2rem; }
 }
+
+/* ---- capability matrix ----
+   Imported from the Claude Design "Matrix Diagram". Unlike the setup diagram
+   this one is deliberately a fixed-size crop, not a complete picture: the grid
+   is wider and taller than its frame and is masked out to the right and bottom,
+   so it reads as a window onto a catalogue that keeps growing rather than a
+   table that stops. That is why the px sizing here is fine where it would not
+   be there: nothing is asked to reflow, it is asked to run off the edge.
+
+   Two sizes only: --fs-small for the headers, and the same 0.8rem mono the
+   module catalogue already uses for its package chips. */
+/* The right fade belongs to the frame, not the grid. As a percentage of the
+   952px grid it would start at 571px, so on any viewport narrower than that the
+   mask is still opaque where the frame clips and the table ends in a hard
+   vertical cut. On the frame it always fades at whatever edge you can see. */
+.mx-viewport {
+  position: relative;
+  width: 100%;
+  height: 510px;
+  margin-top: 2.4rem;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, #000 60%, transparent 100%);
+  mask-image: linear-gradient(to right, #000 60%, transparent 100%);
+}
+.mx-grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 952px;
+  display: grid;
+  grid-template-columns: 160px repeat(6, 132px);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  /* The bottom fade rides the grid, whose height is fixed and known. It has to
+     finish above .mx-viewport's height, or the frame clips a still-visible row
+     and the crop reads as a mistake rather than a fade. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 28%, transparent 62%);
+  mask-image: linear-gradient(to bottom, #000 28%, transparent 62%);
+}
+.mx-corner,
+.mx-col-head,
+.mx-row-head,
+.mx-cell {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.mx-corner,
+.mx-col-head { height: 52px; }
+.mx-row-head,
+.mx-cell { height: 50px; }
+.mx-col-head {
+  display: flex;
+  align-items: flex-end;
+  padding: 0 9px 9px;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  line-height: 1.15;
+}
+.mx-row-head {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: var(--fs-small);
+  line-height: 1.1;
+}
+.mx-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 8px;
+  overflow: hidden;
+}
+.mx-claim {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.2;
+  color: #333333;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

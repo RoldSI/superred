@@ -117,6 +117,40 @@
         <span class="go">See the research &rarr;</span>
       </a>
     </div>
+
+    <!-- Capability matrix: rows are optimizers, columns are targets, cells are
+         the claims that score the pairing. The grid is wider and taller than its
+         frame on purpose and fades out, so it reads as a window onto a catalogue
+         that keeps growing rather than a table that ends. -->
+    {% assign mx = site.data.matrix %}
+    <div class="mx-viewport" aria-hidden="true">
+      <div class="mx-grid">
+        <div class="mx-corner"></div>
+        {% for t in mx.targets %}
+          <div class="mx-col-head">{{ t.name }}</div>
+        {% endfor %}
+
+        {% for opt in mx.optimizers %}
+          {% assign ri = forloop.index0 %}
+          <div class="mx-row-head">{{ opt }}</div>
+          {% for t in mx.targets %}
+            {% assign k = ri | plus: forloop.index0 %}
+            {% assign n = t.claims | size %}
+            <div class="mx-cell">
+              {% if n == 1 %}
+                <span class="mx-claim">{{ t.claims[0] }}</span>
+              {% else %}
+                {% assign i1 = k | modulo: n %}
+                {% assign k2 = k | plus: 1 %}
+                {% assign i2 = k2 | modulo: n %}
+                <span class="mx-claim">{{ t.claims[i1] }}</span>
+                <span class="mx-claim">{{ t.claims[i2] }}</span>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    </div>
     </div>
   </section>
 
