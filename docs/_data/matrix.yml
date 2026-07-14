@@ -5,9 +5,9 @@
 # only ever needs enough rows and columns to run past the fade.
 # Column order is the render order, left to right.
 targets:
+  - { name: OpenClaw,           claims: [DecodingTrust, SafeClawBench] }
   - { name: Chatbot,            claims: [HarmBench, StrongREJECT, SORRY-Bench] }
   - { name: AgentDojo,          claims: [AgentHarm, AgentDojo, ASB] }
-  - { name: OpenClaw,           claims: [DecodingTrust, SafeClawBench] }
   - { name: Claude Code,        claims: [DecodingTrust] }
   - { name: OpenClaw with DTAP, claims: [DecodingTrust, SafeClawBench] }
   - { name: Inspect agent,      claims: [AgentHarm, AgentDojo, ASB] }
