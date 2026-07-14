@@ -686,7 +686,9 @@ a { color: var(--ink); }
   padding: 2.2rem 2rem;
   border: 1px solid var(--line);
   border-radius: 6px;
+  transition: border-color 120ms ease;
 }
+.sd-box:hover { border-color: var(--gray); }
 
 .sd-grid {
   display: grid;
@@ -941,11 +943,13 @@ a { color: var(--ink); }
   position: relative;
   z-index: 1;
   box-sizing: border-box;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: #fafafa;
   padding: 1.2rem 1.3rem;
+  transition: border-color 120ms ease;
 }
+.tmt-card:hover { border-color: var(--gray); }
 .tmt-head {
   display: flex;
   align-items: baseline;
@@ -1073,7 +1077,9 @@ a { color: var(--ink); }
   background: #ffffff;
   padding: 0.55rem;
   overflow: hidden;
+  transition: border-color 120ms ease;
 }
+.results-shot:hover { border-color: var(--gray); }
 .results-shot img {
   display: block;
   width: 100%;
