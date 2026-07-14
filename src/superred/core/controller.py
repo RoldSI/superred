@@ -218,6 +218,8 @@ class ThreatModelResult:
             all-read & write run, and empty in dynamic mode).
         llm_config: The LLM configuration used, or ``None`` when no LLM
             configs were provided.
+        task_cost_cap_usd: The attacker's per-task cost cap in USD (from the
+            Controller), or ``None`` for unlimited.
         task_results: Results for each evaluated task.
         skipped_tasks: Tasks that raised NotApplicable during configure.
         scope_label: Run identity when scope is resolved per task (the
@@ -228,6 +230,7 @@ class ThreatModelResult:
     read_only: Scope
     llm_config: LLMConfig | None
     task_results: list[TaskResult]
+    task_cost_cap_usd: float | None = None
     skipped_tasks: list[Task[Target]] = field(default_factory=list)
     scope_label: str | None = None
 
@@ -373,6 +376,12 @@ class Controller:
         llm_config: LLM access configuration for the optimizer, or
             ``None`` for non-LLM optimizers (in which case the optimizer
             receives a noop client that raises on any call).
+        task_cost_cap_usd: Per-task cost cap in USD for the attacker's
+            optimizer LLM. A fresh client is built per task, so this bounds
+            the attacker's cumulative spend *per task* and resets each task
+            (a full run costs up to about ``num_tasks * task_cost_cap_usd``).
+            ``None`` (default) means unlimited. It applies only to the
+            attacker: the judge and target are never bounded by it.
         max_runs_per_task: Safety limit on runs per task. ``None`` (default)
             uses the built-in cap of 100; pass an explicit positive int to
             override.
@@ -401,6 +410,7 @@ class Controller:
         scope: Scope | ScopeResolver,
         read_only: Scope | ScopeResolver = frozenset(),
         llm_config: LLMConfig | None = None,
+        task_cost_cap_usd: float | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
@@ -453,10 +463,13 @@ class Controller:
         )
         if resolved_max_runs < 1:
             raise ValueError("max_runs_per_task must be at least 1")
+        if task_cost_cap_usd is not None and task_cost_cap_usd < 0:
+            raise ValueError("task_cost_cap_usd must be non-negative")
         self._optimizer_factory = optimizer_factory
         self._target_factory = target_factory
         self._security_claim = security_claim
         self._llm_config: LLMConfig | None = llm_config
+        self._task_cost_cap_usd: float | None = task_cost_cap_usd
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
@@ -651,6 +664,7 @@ class Controller:
                             detail_basename,
                             outcome,
                             self._llm_config,
+                            self._task_cost_cap_usd,
                         )
                     except Exception:
                         logger.exception(
@@ -681,6 +695,7 @@ class Controller:
             scope=self._naming_scope,
             read_only=self._naming_read_only,
             llm_config=self._llm_config,
+            task_cost_cap_usd=self._task_cost_cap_usd,
             task_results=task_results,
             skipped_tasks=skipped_tasks,
             scope_label=self._scope_label,
@@ -708,8 +723,13 @@ class Controller:
         # Configure target (NotApplicable propagates to caller)
         await task.configure_target(target)
 
-        # Create a fresh LLM client if we have a config
-        llm_client: LLMClient | None = LLMClient(self._llm_config) if self._llm_config else None
+        # Create a fresh LLM client if we have a config.  The per-task cost
+        # cap is applied here: a fresh client per task makes it a per-task budget.
+        llm_client: LLMClient | None = (
+            LLMClient(self._llm_config, cost_cap_usd=self._task_cost_cap_usd)
+            if self._llm_config
+            else None
+        )
 
         # Fresh optimizer for this task
         optimizer = self._optimizer_factory()

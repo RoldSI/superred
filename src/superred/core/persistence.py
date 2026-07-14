@@ -189,7 +189,7 @@ def _serialize_llm_config(cfg: LLMConfig | None) -> dict[str, Any] | None:
     """Allowlist serialization. Excludes ``api_key`` and ``api_base``."""
     if cfg is None:
         return None
-    return {"model": cfg.model, "max_cost": cfg.max_cost}
+    return {"model": cfg.model}
 
 
 def _serialize_llm_usage(u: LLMUsage) -> dict[str, Any]:
@@ -306,6 +306,7 @@ def _serialize_task_summary(tr: TaskResult, task_file_relpath: str) -> dict[str,
 def _serialize_full_task(
     tr: TaskResult,
     llm_config: LLMConfig | None,
+    task_cost_cap_usd: float | None = None,
 ) -> dict[str, Any]:
     """Self-contained per-task detail (the file in the subfolder).
 
@@ -322,6 +323,7 @@ def _serialize_full_task(
         "scope": _sorted_names(tr.scope),
         "read_only": _sorted_names(tr.read_only),
         "llm_config": _serialize_llm_config(llm_config),
+        "task_cost_cap_usd": task_cost_cap_usd,
         "task": {"goal": tr.task.goal.description},
         "success": tr.success,
         "best_score": _serialize_score(tr.best_score),
@@ -349,6 +351,7 @@ def _serialize_claim_level(
         "read_only": _sorted_names(tmr.read_only),
         "scope_label": tmr.scope_label,
         "llm_config": _serialize_llm_config(tmr.llm_config),
+        "task_cost_cap_usd": tmr.task_cost_cap_usd,
         "summary": _compute_summary(tmr),
         "task_results": task_summaries,
         "skipped_tasks": [{"goal": t.goal.description} for t in tmr.skipped_tasks],
@@ -415,6 +418,7 @@ def write_task_detail(
     basename: str,
     tr: TaskResult,
     llm_config: LLMConfig | None,
+    task_cost_cap_usd: float | None = None,
 ) -> None:
     """Write one task's detail file to ``subfolder/basename``.
 
@@ -431,7 +435,9 @@ def write_task_detail(
     ``error`` field and the partial trajectory as the last entry in
     ``runs`` — both are persisted *outside* the trajectory itself.
     """
-    _atomic_write_json(subfolder / basename, _serialize_full_task(tr, llm_config))
+    _atomic_write_json(
+        subfolder / basename, _serialize_full_task(tr, llm_config, task_cost_cap_usd)
+    )
 
 
 def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path:
@@ -457,7 +463,7 @@ def write_threat_model_result(tmr: ThreatModelResult, results_dir: Path) -> Path
             if (tr.scope or tr.read_only)
             else replace(tr, scope=tmr.scope, read_only=tmr.read_only)
         )
-        write_task_detail(subfolder, basename, detail_tr, tmr.llm_config)
+        write_task_detail(subfolder, basename, detail_tr, tmr.llm_config, tmr.task_cost_cap_usd)
         basenames.append(basename)
     return write_claim_summary(results_dir, tmr, basenames)
 

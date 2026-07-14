@@ -234,11 +234,11 @@ physical (separate root)
 
 ### LLMConfig (frozen)
 
-Configuration for controller-mediated LLM access. Part of the threat model. Fields: `model: str`, `api_base: str`, `api_key: str`, `max_cost: float | None` (default `None`, unlimited).
+Configuration for controller-mediated LLM access. Part of the threat model. Pure access: `model: str`, `api_base: str`, `api_key: str`. No budget field; the attacker's per-task cost cap is set separately via `Controller.task_cost_cap_usd`.
 
 The `__repr__` masks the API key (shows first 4 chars + `...`, or `***` for short keys).
 
-**Design decision**: Frozen because the LLM configuration is an experiment parameter that must not change during execution. `max_cost` is optional, `None` means unlimited. Cost is computed per call via `litellm.completion_cost()`.
+**Design decision**: Frozen because the LLM configuration is an experiment parameter that must not change during execution. Budget is intentionally not part of access: the same `LLMConfig` is reused by the attacker and by judges, each with its own cost cap (or none). Cost is computed per call via `litellm.completion_cost()`.
 
 ### LLMUsage (frozen)
 

@@ -209,7 +209,8 @@ When success is decided by an LLM-as-judge, that judge gets its **own** model an
 credentials, passed into the factory and entirely separate from the optimizer's
 attacker LLM:
 
-- The attacker's model and budget come from the `Controller`'s `llm_config`.
+- The attacker's model comes from the `Controller`'s `llm_config`; its per-task
+  budget comes from the `Controller`'s `task_cost_cap_usd`.
 - The judge's model and budget come from the **claim factory's** arguments
   (e.g. `judge_llm_config=LLMConfig(...)`, or plain `judge_model` / `judge_api_*`
   kwargs as HarmBench does).
