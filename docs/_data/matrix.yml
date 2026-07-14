@@ -17,11 +17,11 @@ optimizers:
   - AutoDAN-Turbo
   - Crescendo
   - AgentVigil
+  - MUZZLE
   - PAIR
   - TAP
   - MINJA
   - PoisonedRAG
-  - MUZZLE
   - GPTFuzzer
   - EIA
   - GOAT
