@@ -198,6 +198,70 @@
         <h3>Fair and reproducible</h3>
         <p>A fixed model and a per-task cost budget bound every attacker equally.</p>
       </div>
+
+      <!-- Threat-model triple: one experiment fixes a (scope, attacker LLM,
+           budget) triple; change any one for a new threat model. The main card
+           sits in normal flow at the content width; the two ghost cards behind
+           it (the "one of many" stack) are the only thing allowed to break the
+           content boundary, and only minimally. Sits between the feature rows,
+           replacing the row separators. -->
+      <div class="tmt">
+        <div class="tmt-ghost tmt-ghost-2" aria-hidden="true"></div>
+        <div class="tmt-ghost tmt-ghost-1" aria-hidden="true"></div>
+        <div class="tmt-card">
+          <div class="tmt-head">
+            <span class="tmt-eyebrow">One threat model</span>
+            <span class="tmt-sig">(scope, llm, budget)</span>
+          </div>
+          <div class="tmt-triple">
+            <div class="tmt-facet tmt-scope">
+              <span class="tmt-facet-label">Scope</span>
+              <span class="tmt-facet-sub">the system's trust boundaries</span>
+<pre class="tmt-tree">system
+├─ system_prompt
+├─ model_responses
+└─ architecture
+   └─ high_level_architecture</pre>
+<pre class="tmt-tree tmt-tree-muted">user
+…</pre>
+              <p class="tmt-note">the trust boundaries the attacker may cross: here, the <code>system</code> boundary and everything under it (read &amp; write)</p>
+              <div class="tmt-grants">
+                <span class="tmt-grants-label">grants the attacker access to</span>
+                <span class="tmt-chips">
+                  <span class="tmt-chip">controllables</span>
+                  <span class="tmt-chip">observables</span>
+                  <span class="tmt-chip">feedback</span>
+                </span>
+              </div>
+            </div>
+            <span class="tmt-x" aria-hidden="true">&times;</span>
+            <div class="tmt-facet tmt-llm">
+              <span class="tmt-facet-label">Attacker LLM</span>
+              <span class="tmt-value">gpt-5.5</span>
+              <span class="tmt-alts">
+                <span>mythos-5</span>
+                <span>claude-opus-4.5</span>
+                <span>gemini-3-pro</span>
+                <span>llama-4-405b</span>
+              </span>
+              <p class="tmt-note tmt-foot">the fixed model the attacker may call</p>
+            </div>
+            <span class="tmt-x" aria-hidden="true">&times;</span>
+            <div class="tmt-facet tmt-budget">
+              <span class="tmt-facet-label">Budget</span>
+              <span class="tmt-value">$5.00 <span class="tmt-per">/ task</span></span>
+              <span class="tmt-alts">
+                <span>$1.00</span>
+                <span>$20.00</span>
+                <span>$100.00</span>
+                <span>unlimited</span>
+              </span>
+              <p class="tmt-note tmt-foot">a per-task cost cap on LLM spend</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="feature">
         <h3>Metrics and reports</h3>
         <p>Every run records its model, cost, and success rate to a report.</p>
@@ -206,6 +270,13 @@
         <h3>Built to scale</h3>
         <p>Run many threat models in parallel, each against its own instance of the system.</p>
       </div>
+
+      <!-- The report SuperRed writes for one threat model, framed like the
+           diagram above. -->
+      <figure class="results-shot">
+        <img src="/assets/img/results-dashboard.png" width="1999" height="1319" loading="lazy"
+             alt="SuperRed results report for a HarmBench threat model: 42% attack success rate over 5 of 12 goals, mean score 0.57, max 0.94, $11.23 optimizer spend, run-outcome breakdown, and a table of per-task goals with outcomes, best scores, runs, and cost.">
+      </figure>
     </div>
     </div>
   </section>

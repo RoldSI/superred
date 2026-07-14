@@ -568,8 +568,8 @@ a { color: var(--ink); }
   grid-template-columns: repeat(2, 1fr);
   gap: 2rem 2.5rem;
 }
-.feature { padding-top: 1rem; border-top: 1px solid var(--line); }
-.features .feature:nth-child(-n+2) { border-top: none; padding-top: 0; }
+/* No row rules: the threat-model card sits between the two rows and divides
+   them, so the old top-border separators are gone. */
 .feature h3 { font-size: var(--fs-body); font-weight: 500; margin: 0 0 0.4rem; }
 .feature p { margin: 0; font-size: var(--fs-body); color: #333; }
 
@@ -877,3 +877,171 @@ a { color: var(--ink); }
 .mx-c-asb           { background: #eef2f8; border-color: #dee6f1; }
 .mx-c-decodingtrust { background: #f2eff8; border-color: #e4def1; }
 .mx-c-safeclawbench { background: #f8eff5; border-color: #eee0e9; }
+
+/* ---- threat-model triple (features section) ----
+   Imported from the Claude Design "Threat Model Triple": one card showing the
+   (scope, attacker LLM, budget) triple that fixes one threat model, resting on
+   two faint ghost cards, the "one of many" stack. The card is laid out in
+   normal flow at the content width; only the ghosts break that boundary, offset
+   up and right just far enough to peek into the gutter. Sits between the two
+   feature rows, replacing their separators. Two sizes only, --fs-body for the
+   emphasised values and --fs-small for the rest (mono chips use the same 0.8rem
+   as the module catalogue). */
+.tmt {
+  grid-column: 1 / -1;
+  position: relative;
+  margin: 0.3rem 0;
+}
+.tmt-ghost {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
+}
+.tmt-ghost-1 { transform: translate(13px, -8px);  opacity: 0.6; }
+.tmt-ghost-2 { transform: translate(26px, -16px); opacity: 0.32; }
+
+.tmt-card {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  background: #fafafa;
+  padding: 1.2rem 1.3rem;
+}
+.tmt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.tmt-eyebrow {
+  font-size: var(--fs-small);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.tmt-sig { font-family: var(--mono); font-size: 0.8rem; color: #333333; }
+
+.tmt-triple { display: flex; align-items: stretch; gap: 0; }
+.tmt-facet {
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0.85rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.tmt-scope { flex: 1.55; min-width: 0; }   /* room for the boundary tree */
+.tmt-llm, .tmt-budget { flex: 1; min-width: 0; }
+.tmt-x {
+  flex: none;
+  width: 2.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-body);
+  color: var(--gray);
+}
+.tmt-facet-label {
+  font-size: var(--fs-small);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.tmt-facet-sub { font-size: var(--fs-small); color: #333333; margin-top: -0.3rem; }
+.tmt-value {
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.tmt-per { font-family: var(--serif); font-size: var(--fs-small); font-weight: 400; color: var(--gray); }
+.tmt-tree {
+  margin: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--ink);
+  border-radius: 5px;
+  background: var(--code-bg);
+  padding: 0.5rem 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre;
+  overflow-x: auto;
+}
+.tmt-tree-muted {
+  border-color: transparent;
+  background: none;
+  padding: 0 0.65rem;
+  color: var(--gray);
+}
+/* .tmt prefix so these beat `.section p { margin: 0 0 1rem }`, which would
+   otherwise reset the margins and stop tmt-foot pinning to the bottom. */
+.tmt .tmt-note {
+  margin: 0;
+  font-style: italic;
+  font-size: var(--fs-small);
+  line-height: 1.35;
+  color: var(--gray);
+}
+.tmt-note code { font-family: var(--mono); font-size: 0.8rem; font-style: normal; }
+.tmt .tmt-foot { margin-top: auto; }   /* pin the caption to the box bottom */
+.tmt-grants { margin-top: 0.1rem; }
+.tmt-grants-label { display: block; font-size: var(--fs-small); color: #333333; margin-bottom: 0.4rem; }
+.tmt-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tmt-chip {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: #333333;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+}
+.tmt-alts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--gray);
+  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+}
+
+/* Stack the triple when the row no longer fits, and pull the ghost offsets in
+   so they still only peek (never past the viewport at the smaller gutter). */
+@media (max-width: 860px) {
+  .tmt-triple { flex-direction: column; }
+  .tmt-x { width: auto; height: 1.5rem; }
+  .tmt .tmt-foot { margin-top: 0; }
+  .tmt-ghost-1 { transform: translate(8px, -6px); }
+  .tmt-ghost-2 { transform: translate(16px, -12px); }
+}
+
+/* The results-report screenshot, framed like the diagram above it and spanning
+   the full features width below the second row. */
+.results-shot {
+  grid-column: 1 / -1;
+  margin: 0.3rem 0 0;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0.55rem;
+  overflow: hidden;
+}
+.results-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
