@@ -126,13 +126,13 @@ parallel (`concurrency`).
   <div class="evf-box">
     <div class="evf-grid">
       <div class="evf-node evf-optimizer">
-        <p class="evf-kicker">Module &middot; Attacker</p>
+        <p class="evf-kicker">Attacker</p>
         <p class="evf-name">Optimizer</p>
         <p class="evf-desc">Acts and observes through events.</p>
       </div>
       <div class="evf-conn evf-conn-left" aria-hidden="true">
         <span class="evf-wire evf-wire-event"><i class="evf-head evf-head-left"></i></span>
-        <span class="evf-wire evf-wire-resp"></span>
+        <span class="evf-wire evf-wire-resp"><i class="evf-head evf-head-right"></i></span>
         <span class="evf-tag evf-tag-resp">EventResponse</span>
       </div>
       <div class="evf-controller">
@@ -152,12 +152,12 @@ parallel (`concurrency`).
         </div>
       </div>
       <div class="evf-conn evf-conn-right" aria-hidden="true">
-        <span class="evf-wire evf-wire-event"></span>
+        <span class="evf-wire evf-wire-event"><i class="evf-head evf-head-left"></i></span>
         <span class="evf-wire evf-wire-resp"><i class="evf-head evf-head-right"></i></span>
         <span class="evf-tag evf-tag-event">Event</span>
       </div>
       <div class="evf-node evf-target">
-        <p class="evf-kicker">Module &middot; System</p>
+        <p class="evf-kicker">System</p>
         <p class="evf-name">Target</p>
         <p class="evf-desc">Emits events to expose information and injection points.</p>
       </div>

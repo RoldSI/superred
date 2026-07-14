@@ -224,12 +224,6 @@ body {
      with the sidebar, so viewport width is the wrong signal for when to stack. */
   container-type: inline-size;
 }
-/* On the doc layout (>=800px) the content column carries exactly 2.5rem of side
-   padding; reclaim it so the diagram gets the full column width. Guarded to that
-   breakpoint because only there is the padding 2.5rem (below it stacks anyway). */
-@media (min-width: 800px) {
-  .evf-figure { width: calc(100% + 5rem); margin-inline: -2.5rem; }
-}
 .evf-box {
   padding: 1.5rem 1.1rem;
   border: 1px solid var(--line);
@@ -239,8 +233,12 @@ body {
   display: grid;
   /* minmax(0, ...) on the box columns so long descriptions wrap instead of
      forcing the column past its share and overflowing the frame. */
+  /* Asymmetric connectors: the left one carries the long "EventResponse" label
+     so it stays wide; the right one only carries "Event", so it can be much
+     narrower. This reclaims the buffer on the right and lets the boxes breathe,
+     at the cost of the controller no longer being dead-centre (which is fine). */
   grid-template-columns:
-    minmax(0, 1fr) 7rem minmax(0, 1.15fr) 7rem minmax(0, 1fr);
+    minmax(0, 1fr) 8.5rem minmax(0, 1.2fr) 5rem minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -271,12 +269,12 @@ body {
      let it spill past the border. */
   color: var(--gray);
 }
-.evf-name { margin: 0; font-size: var(--fs-head); font-weight: 500; line-height: 1.15; }
+.evf-name { margin: 0; font-size: var(--fs-body); font-weight: 500; line-height: 1.15; }
 .evf-desc { margin: 0; font-size: var(--fs-small); line-height: 1.35; color: #333333; }
 
 /* controller internals: heading over two sub-boxes */
 .evf-ctrl-head { text-align: center; margin-bottom: 0.7rem; }
-.evf-ctrl-head .evf-name { font-size: var(--fs-head); }
+.evf-ctrl-head .evf-name { font-size: var(--fs-body); }
 .evf-subs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 .evf-sub {
   border: 1px solid var(--line);
@@ -330,7 +328,7 @@ body {
 /* Stack when the diagram itself gets too narrow for the row (not the viewport):
    the boxes stack and each connector becomes a short vertical link with its
    label. Container query, so the sidebar's width is accounted for. */
-@container (max-width: 50rem) {
+@container (max-width: 43rem) {
   .evf-grid { grid-template-columns: 1fr; row-gap: 0.6rem; }
   .evf-conn {
     min-height: 2rem;

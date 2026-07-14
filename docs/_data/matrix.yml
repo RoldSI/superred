@@ -8,7 +8,7 @@ targets:
   - { name: OpenClaw,           claims: [DecodingTrust, SafeClawBench] }
   - { name: Chatbot,            claims: [HarmBench, StrongREJECT, SORRY-Bench] }
   - { name: Claude Code,        claims: [DecodingTrust] }
-  - { name: OpenClaw with DTAP, claims: [DecodingTrust, SafeClawBench] }
+  - { name: OpenClaw with DecodingTrust, claims: [DecodingTrust, SafeClawBench] }
   - { name: AgentDojo,          claims: [AgentHarm, AgentDojo, ASB] }
   - { name: Inspect agent,      claims: [AgentHarm, AgentDojo, ASB] }
 
