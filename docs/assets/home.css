@@ -274,6 +274,7 @@ a { color: var(--ink); }
 
 /* ---- hero ---- */
 .hero {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -281,6 +282,207 @@ a { color: var(--ink); }
   text-align: center;
   min-height: 84vh;
   padding: 3rem var(--gutter) 4rem;
+}
+
+/* ---- the entrance aura ----
+   A pastel red field that should read as one living body rather than a stack of
+   circles. The lobes multiply into one another, so overlaps deepen the red and
+   the mass gains internal density; a lone blob would just look like a gradient.
+
+   The field is built in two registers, because one alone fails:
+
+   1. The four background lobes carry no intensity of their own and drift on
+      very slow prime periods (97/113/131/149s against 71/79/83/89s). Their
+      opacity swing is deliberately narrow, so the back never reads as a
+      throb. This is atmosphere, not movement you watch.
+   2. The bubble is the one intense body, and it roams on a much shorter
+      period. It is the element that proves the field is alive: you should see
+      it travel within a few seconds rather than wonder whether you imagined it.
+
+   Nothing is on a metronome. Every period is coprime with its neighbours, so
+   the composite only returns to a given state after their least common
+   multiple, far longer than anyone will sit here: the field keeps developing
+   and never visibly loops. Negative delays start it mid-life, so it never opens
+   on a synced frame.
+
+   Only transform/translate/scale and opacity animate, so the whole field stays
+   on the compositor. The grain is static and costs nothing per frame. */
+.hero-aura {
+  position: absolute;
+  inset: -14% 0 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: #ffffff;
+  /* Confine the multiply blending to the lobes and this white base, so the
+     aura can never darken the type or the page behind it. */
+  isolation: isolate;
+  /* Dissolve into the page before the next section begins. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 54%, transparent 95%);
+  mask-image: linear-gradient(to bottom, #000 54%, transparent 95%);
+}
+.hero > *:not(.hero-aura) { position: relative; z-index: 1; }
+
+.lobe {
+  position: absolute;
+  mix-blend-mode: multiply;
+  will-change: transform, opacity;
+}
+/* Warm coral: the body of the mass, anchored top-left. */
+.lobe-1 {
+  width: 80vw; height: 80vw; left: -18%; top: -30%;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(252, 84, 62, 0.56), rgba(252, 84, 62, 0.30) 36%, rgba(252, 84, 62, 0) 70%);
+  animation: wander-1 97s ease-in-out infinite, wane-a 71s ease-in-out infinite;
+  animation-delay: -37s, -19s;
+}
+/* Blush: broadens the field across the top-right. */
+.lobe-2 {
+  width: 72vw; height: 72vw; left: 48%; top: -24%;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(255, 128, 118, 0.58), rgba(255, 128, 118, 0.31) 38%, rgba(255, 128, 118, 0) 72%);
+  animation: wander-2 113s ease-in-out infinite, wane-b 79s ease-in-out infinite;
+  animation-delay: -61s, -43s;
+}
+/* Rose-magenta: the violet cast that makes the red mystic rather than sunset. */
+.lobe-3 {
+  width: 64vw; height: 64vw; left: 16%; top: 16%;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(219, 74, 124, 0.44), rgba(219, 74, 124, 0.24) 34%, rgba(219, 74, 124, 0) 68%);
+  animation: wander-3 131s ease-in-out infinite, wane-c 83s ease-in-out infinite;
+  animation-delay: -17s, -67s;
+}
+/* Pale peach: keeps the lower field light so the type stays legible. */
+.lobe-4 {
+  width: 68vw; height: 68vw; left: -12%; top: 40%;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(255, 166, 132, 0.46), rgba(255, 166, 132, 0.24) 36%, rgba(255, 166, 132, 0) 70%);
+  animation: wander-4 149s ease-in-out infinite, wane-b 89s ease-in-out infinite;
+  animation-delay: -103s, -29s;
+}
+
+/* The bubble: the denser body in the field, and the only thing here whose motion
+   you are meant to catch. It roams a long meandering circuit, so it travels
+   visibly within a few seconds rather than leaving you wondering.
+
+   It must not read as a disc sliding over a background. So there is no circle
+   anywhere: the box is oblong and carries two offset ellipses of slightly
+   different reds, which fuse into a lumpy mass with no single clean edge, and
+   the falloff runs long so it dissolves into the field instead of ending. It
+   should be tellable apart only just.
+
+   Position and breath use the separate translate/scale properties rather than
+   one transform, so they run on different periods (53s against 19s) without
+   overwriting each other and stay out of phase for ~17 minutes. */
+.bubble {
+  width: 40vw; height: 30vw; left: 28%; top: 20%;
+  /* Each ellipse must reach zero inside the box, or the element's own rectangle
+     shows up as a hard edge. Centre +/- radius stays within 0..100% on both
+     axes, and the last stop sits at 100% so the fade ends at the ellipse. */
+  background:
+    radial-gradient(ellipse 40% 42% at 44% 44%,
+      rgba(232, 32, 48, 0.40), rgba(232, 32, 48, 0.16) 45%, rgba(232, 32, 48, 0) 100%),
+    radial-gradient(ellipse 40% 38% at 58% 58%,
+      rgba(224, 46, 76, 0.32), rgba(224, 46, 76, 0.12) 45%, rgba(224, 46, 76, 0) 100%);
+  animation: bubble-path 53s ease-in-out infinite, bubble-breath 19s ease-in-out infinite;
+  animation-delay: -11s, -5s;
+  will-change: translate, scale;
+}
+
+/* Static desaturated turbulence: hides the banding that large soft gradients
+   produce, and keeps the field from reading as a smooth generic gradient. */
+.hero-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.30;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+/* Irregular paths: the stops are deliberately uneven so a lobe drifts and
+   doubles back rather than sliding to a beat. */
+@keyframes wander-1 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  19%  { transform: translate3d(5vw, 3vh, 0) scale(1.08); }
+  37%  { transform: translate3d(-3vw, 7vh, 0) scale(0.94); }
+  58%  { transform: translate3d(7vw, -2vh, 0) scale(1.12); }
+  76%  { transform: translate3d(-4vw, 4vh, 0) scale(1.01); }
+  91%  { transform: translate3d(2vw, -5vh, 0) scale(0.97); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes wander-2 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  23%  { transform: translate3d(-6vw, 4vh, 0) scale(1.10); }
+  41%  { transform: translate3d(3vw, -3vh, 0) scale(0.96); }
+  62%  { transform: translate3d(-8vw, -5vh, 0) scale(1.06); }
+  84%  { transform: translate3d(4vw, 6vh, 0) scale(0.99); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes wander-3 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  17%  { transform: translate3d(6vw, -4vh, 0) scale(1.14); }
+  34%  { transform: translate3d(-5vw, -7vh, 0) scale(0.92); }
+  53%  { transform: translate3d(8vw, 5vh, 0) scale(1.07); }
+  71%  { transform: translate3d(-2vw, 8vh, 0) scale(1.03); }
+  88%  { transform: translate3d(5vw, 2vh, 0) scale(0.95); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes wander-4 {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  21%  { transform: translate3d(-4vw, -6vh, 0) scale(1.05); }
+  46%  { transform: translate3d(7vw, 3vh, 0) scale(1.13); }
+  67%  { transform: translate3d(-6vw, 6vh, 0) scale(0.93); }
+  89%  { transform: translate3d(3vw, -4vh, 0) scale(1.02); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+/* A long, lopsided circuit: never a centred orbit, and long enough that the
+   return to the start is not something you can sit and wait for. */
+@keyframes bubble-path {
+  0%   { translate: 0 0; }
+  11%  { translate: 17vw -7vh; }
+  21%  { translate: 31vw 6vh; }
+  32%  { translate: 20vw 17vh; }
+  43%  { translate: -3vw 10vh; }
+  54%  { translate: -19vw 19vh; }
+  65%  { translate: -31vw 3vh; }
+  76%  { translate: -17vw -13vh; }
+  88%  { translate: 5vw -18vh; }
+  100% { translate: 0 0; }
+}
+/* Squash and stretch on separate axes, so the mass keeps changing shape instead
+   of staying one blob that merely grows. */
+@keyframes bubble-breath {
+  0%   { scale: 1 1; }
+  37%  { scale: 1.14 0.92; }
+  68%  { scale: 0.92 1.12; }
+  100% { scale: 1 1; }
+}
+/* Narrow swings on purpose: the back should breathe, not blink. */
+@keyframes wane-a {
+  0%   { opacity: 0.80; }
+  23%  { opacity: 0.94; }
+  47%  { opacity: 0.74; }
+  71%  { opacity: 0.90; }
+  100% { opacity: 0.80; }
+}
+@keyframes wane-b {
+  0%   { opacity: 0.88; }
+  31%  { opacity: 0.76; }
+  59%  { opacity: 0.98; }
+  82%  { opacity: 0.82; }
+  100% { opacity: 0.88; }
+}
+@keyframes wane-c {
+  0%   { opacity: 0.76; }
+  19%  { opacity: 0.92; }
+  53%  { opacity: 0.70; }
+  78%  { opacity: 0.86; }
+  100% { opacity: 0.76; }
+}
+
+/* Hold the field still, but keep the composition. */
+@media (prefers-reduced-motion: reduce) {
+  .lobe { animation: none; }
 }
 .hero h1 {
   font-size: clamp(3rem, 11vw, 6rem);
