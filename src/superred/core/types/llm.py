@@ -21,8 +21,14 @@ class LLMConfig:
         model: LiteLLM model identifier (e.g. ``"gpt-4o-mini"``).
         api_base: LiteLLM-compatible API base URL.
         api_key: API key for the LLM provider.
-        max_cost: Maximum total cost in USD. ``None`` for unlimited.
-            Cost is computed per call via ``litellm.completion_cost()``.
+        max_cost: Cost cap in USD for the ``LLMClient`` created from this
+            config; ``None`` means unlimited. It bounds that one client's
+            *cumulative* spend, not a run-wide total. The controller creates a
+            fresh client per task, so for the attacker this is a **per-task**
+            cap that resets each task (a full run can therefore cost up to
+            about ``num_tasks * max_cost``). A judge built from its own
+            ``LLMConfig`` has its own separate cap. Per-call cost comes from
+            ``litellm.completion_cost()``.
     """
 
     model: str
