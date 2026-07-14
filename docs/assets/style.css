@@ -203,3 +203,133 @@ body {
 }
 .pager a:hover { border-color: var(--gray); }
 .pager .pager-next { margin-left: auto; text-align: right; }
+
+/* ---- event-flow diagram (Core Concepts) ----
+   Imported from the Claude Design "Event Flow Diagram", rebuilt as a grid so it
+   cannot overflow: the source is a fixed-aspect canvas of absolutely-positioned
+   boxes with hard-coded px type, which overflows the moment it is scaled down.
+   Same framing as the home-page setup diagram, a bordered box with no title;
+   the surrounding prose gives it context.
+
+   Three boxes in a row with the controller in the middle. Two connector columns
+   carry the horizontal wires: the Event line runs target -> optimizer, the
+   EventResponse line runs optimizer -> target, and both terminate at the
+   controller's edges, so the controller literally sits on the path it mediates.
+   Two sizes only, --fs-head for the names and --fs-small for everything else. */
+.evf-figure { width: 100%; max-width: 54rem; margin: 2rem auto; }
+.evf-box {
+  padding: 1.7rem 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.evf-grid {
+  display: grid;
+  /* minmax(0, ...) on the box columns so long descriptions wrap instead of
+     forcing the column past its share and overflowing the frame. The middle
+     column is wider so the controller's two sub-boxes are not cramped. */
+  grid-template-columns:
+    minmax(0, 1fr) 7rem minmax(0, 1.55fr) 7rem minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.evf-node,
+.evf-controller {
+  position: relative;
+  z-index: 1;                    /* above the connector wires */
+  box-sizing: border-box;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.evf-node {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.9rem 1rem;
+}
+.evf-controller { border-color: var(--ink); padding: 0.85rem 0.9rem; }
+
+.evf-kicker {
+  margin: 0;
+  font-size: var(--fs-small);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--gray);
+}
+.evf-name { margin: 0; font-size: var(--fs-head); font-weight: 500; line-height: 1.15; }
+.evf-desc { margin: 0; font-size: var(--fs-small); line-height: 1.35; color: #333333; }
+
+/* controller internals: heading over two sub-boxes */
+.evf-ctrl-head { text-align: center; margin-bottom: 0.7rem; }
+.evf-ctrl-head .evf-name { font-size: var(--fs-head); }
+.evf-subs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.evf-sub {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--code-bg);
+  padding: 0.5rem 0.4rem;
+  text-align: center;
+}
+.evf-sub-name { margin: 0; font-size: var(--fs-small); font-weight: 500; line-height: 1.1; color: var(--ink); }
+.evf-sub-note { margin: 0.15rem 0 0; font-size: var(--fs-small); line-height: 1.2; color: var(--gray); }
+
+/* connectors: two horizontal wires, a head at the far end, and a chip label.
+   The wires sit at the same two heights in both connectors, so they line up
+   across the controller as one continuous path. */
+.evf-conn { position: relative; }
+.evf-wire {
+  position: absolute;
+  left: 0; right: 0;
+  height: 0;
+  border-top: 1px solid var(--ink);
+}
+.evf-wire-event { top: 40%; }
+.evf-wire-resp  { top: 64%; }
+.evf-head { position: absolute; top: 50%; width: 0; height: 0; border-style: solid; }
+.evf-head-left {
+  left: 0; transform: translateY(-50%);
+  border-width: 4px 6px 4px 0;
+  border-color: transparent var(--ink) transparent transparent;
+}
+.evf-head-right {
+  right: 0; transform: translateY(-50%);
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--ink);
+}
+.evf-tag {
+  position: absolute;
+  left: 50%;
+  padding: 2px 6px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.2;
+  color: var(--ink);
+  background: #ffffff;                 /* punches a hole in the wire */
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.evf-tag-event { top: 40%; transform: translate(-50%, -50%); }
+.evf-tag-resp  { top: 64%; transform: translate(-50%, -50%); }
+
+/* Stack on narrow: the row does not fit, so the boxes stack and each connector
+   becomes a short vertical link carrying its label. */
+@media (max-width: 640px) {
+  .evf-grid { grid-template-columns: 1fr; row-gap: 0.6rem; }
+  .evf-conn {
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .evf-conn::before {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; left: 50%;
+    border-left: 1px solid var(--ink);
+  }
+  .evf-wire, .evf-head { display: none; }
+  .evf-tag { position: relative; left: auto; top: auto; transform: none; }
+}

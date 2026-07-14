@@ -151,6 +151,49 @@ budget, or hits the Controller's `max_runs_per_task` safety cap (default 100).
 
 ## Events and responses
 
+<figure class="evf-figure">
+  <div class="evf-box">
+    <div class="evf-grid">
+      <div class="evf-node evf-optimizer">
+        <p class="evf-kicker">Module &middot; Attacker</p>
+        <p class="evf-name">Optimizer</p>
+        <p class="evf-desc">Acts and observes through events.</p>
+      </div>
+      <div class="evf-conn evf-conn-left" aria-hidden="true">
+        <span class="evf-wire evf-wire-event"><i class="evf-head evf-head-left"></i></span>
+        <span class="evf-wire evf-wire-resp"></span>
+        <span class="evf-tag evf-tag-resp">EventResponse</span>
+      </div>
+      <div class="evf-controller">
+        <div class="evf-ctrl-head">
+          <p class="evf-kicker">Framework</p>
+          <p class="evf-name">Controller</p>
+        </div>
+        <div class="evf-subs">
+          <div class="evf-sub">
+            <p class="evf-sub-name">Threat model</p>
+            <p class="evf-sub-note">enforces the scope</p>
+          </div>
+          <div class="evf-sub">
+            <p class="evf-sub-name">Trajectory</p>
+            <p class="evf-sub-note">records events &amp; responses</p>
+          </div>
+        </div>
+      </div>
+      <div class="evf-conn evf-conn-right" aria-hidden="true">
+        <span class="evf-wire evf-wire-event"></span>
+        <span class="evf-wire evf-wire-resp"><i class="evf-head evf-head-right"></i></span>
+        <span class="evf-tag evf-tag-event">Event</span>
+      </div>
+      <div class="evf-node evf-target">
+        <p class="evf-kicker">Module &middot; System</p>
+        <p class="evf-name">Target</p>
+        <p class="evf-desc">Emits events to expose information and injection points.</p>
+      </div>
+    </div>
+  </div>
+</figure>
+
 The target and optimizer never call each other directly. They communicate
 through typed **events** carried on a channel. As an optimizer author, these are
 the events you will see:
