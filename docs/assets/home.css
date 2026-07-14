@@ -623,3 +623,208 @@ a { color: var(--ink); }
 }
 /* compact, centered pip line in the hero */
 .hero .highlight { width: max-content; max-width: 100%; margin: 1.6rem auto 0.2rem; }
+
+/* ---- setup diagram ----
+   Rebuilt from the Claude Design source rather than copied from it. The
+   original draws a fixed 1040x560 stage of absolutely-positioned boxes with
+   hard-coded px type: the moment the stage is narrower than the width it was
+   drawn at, the boxes shrink but the text does not, and it overflows. Here the
+   same picture is a content-sized grid, so every box sizes to what is in it and
+   cannot break, and the type reuses the site's existing sizes rather than
+   introducing a private scale.
+
+   The band is deliberately not a .section: it centres on the page instead of
+   sitting in a section's body column. */
+.diagram-band {
+  border-top: 1px solid var(--line);
+  padding: 4rem var(--gutter);
+  display: flex;
+  justify-content: center;
+}
+/* The diagram and the argument under it are one unit, so no rule between. */
+.diagram-band + .section { border-top: none; }
+
+.setup-diagram {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 66rem;
+  margin: 0;
+  padding: 2.4rem 2.2rem 1.8rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.sd-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 1.25fr auto 1fr;
+  /* Stretch, so the three boxes on the top row share one height and line up
+     top and bottom however much text each of them holds. */
+  align-items: stretch;
+}
+.sd-optimizer  { grid-column: 1; grid-row: 1; }
+.sd-edge-opt   { grid-column: 2; grid-row: 1; }
+.sd-controller { grid-column: 3; grid-row: 1; }
+.sd-edge-tgt   { grid-column: 4; grid-row: 1; }
+.sd-target     { grid-column: 5; grid-row: 1; }
+.sd-edge-claim { grid-column: 3; grid-row: 2; }
+.sd-claim      { grid-column: 3; grid-row: 3; }
+
+.sd-node {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+/* The framework core, filled: the one piece you do not swap. */
+.sd-node-core {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #ffffff;
+}
+/* One label size for the diagram's meta bits (kicker and package tag). The
+   body-label size competes with the box title and wraps "Module · Attacker"
+   onto two lines; the source design drops these to ~10px for the same reason.
+   Everything that carries meaning still uses the site's sizes. */
+.sd-kicker,
+.sd-pkg { font-size: 0.75rem; }
+.sd-kicker {
+  margin: 0;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--gray);
+}
+.sd-node-core .sd-kicker { color: rgba(255, 255, 255, 0.62); }
+.sd-name {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.15;
+}
+.sd-node-core .sd-name { font-size: var(--fs-head); }
+.sd-desc {
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.35;
+  color: #333333;
+}
+.sd-node-core .sd-desc { color: rgba(255, 255, 255, 0.78); }
+.sd-pkg {
+  margin-top: 0.15rem;
+  padding: 0.1rem 0.4rem;
+  font-family: var(--mono);
+  color: #333333;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.sd-node-core .sd-pkg {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+/* Connectors. The line is a pseudo-element and the heads are CSS triangles, so
+   the arrows scale with the layout without an SVG to keep in sync. */
+.sd-edge {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sd-edge-h { min-height: 2.2rem; padding: 0 0.7rem; }
+.sd-edge-h::before {
+  content: "";
+  position: absolute;
+  left: 0.3rem; right: 0.3rem; top: 50%;
+  height: 1px;
+  background: var(--ink);
+}
+.sd-edge-v { min-height: 5rem; padding: 0.9rem 0; }
+.sd-edge-v::before {
+  content: "";
+  position: absolute;
+  top: 0.3rem; bottom: 0.3rem; left: 50%;
+  width: 1px;
+  background: var(--ink);
+}
+/* Sits on the line, punching a hole in it the way the source does. */
+.sd-rel {
+  position: relative;
+  padding: 0 0.5rem;
+  background: #ffffff;
+  font-size: var(--fs-small);
+  font-style: italic;
+  color: var(--gray);
+  white-space: nowrap;
+}
+.sd-head { position: absolute; width: 0; height: 0; border-style: solid; }
+.sd-head-start {
+  left: 0; top: 50%; transform: translateY(-50%);
+  border-width: 4px 5px 4px 0;
+  border-color: transparent var(--ink) transparent transparent;
+}
+.sd-head-end {
+  right: 0; top: 50%; transform: translateY(-50%);
+  border-width: 4px 0 4px 5px;
+  border-color: transparent transparent transparent var(--ink);
+}
+.sd-head-up {
+  top: 0; left: 50%; transform: translateX(-50%);
+  border-width: 0 4px 5px 4px;
+  border-color: transparent transparent var(--ink) transparent;
+}
+.sd-head-down {
+  bottom: 0; left: 50%; transform: translateX(-50%);
+  border-width: 5px 4px 0 4px;
+  border-color: var(--ink) transparent transparent transparent;
+}
+
+.sd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem 1.6rem;
+  margin-top: 1.8rem;
+  padding-top: 1.3rem;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-small);
+  color: #333333;
+}
+.sd-legend-item { display: inline-flex; align-items: center; gap: 0.5rem; }
+.sd-legend code { font-family: var(--mono); font-size: var(--fs-small); }
+.sd-swatch {
+  flex: none;
+  width: 1.6rem; height: 1rem;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.sd-swatch-core { background: var(--ink); border-color: var(--ink); }
+
+.sd-caption { margin-top: 1.5rem; text-align: center; }
+.sd-caption .sd-kicker { margin-bottom: 0.4rem; }
+.sd-caption-text {
+  max-width: 52ch;
+  margin: 0 auto;
+  font-size: var(--fs-body);
+  color: #333333;
+}
+
+/* A star cannot be stacked without implying a chain that is not there, so the
+   connectors go and the filled core plus the legend carry the structure. */
+@media (max-width: 860px) {
+  .sd-grid { grid-template-columns: 1fr; row-gap: 0.9rem; }
+  .sd-optimizer, .sd-controller, .sd-target, .sd-claim {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .sd-edge { display: none; }
+  .setup-diagram { padding: 1.6rem 1.4rem 1.4rem; }
+}
