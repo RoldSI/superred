@@ -864,3 +864,16 @@ a { color: var(--ink); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* One tint per security claim, so a repeated claim is recognisable down a
+   column without having to read it. Held at the edge of perceptible on purpose:
+   every tint sits at roughly the default chip's lightness and only the hue
+   moves, so the table stays a quiet grey field rather than becoming a chart.
+   The text keeps its own colour, so tinting never costs contrast. */
+.mx-c-harmbench     { background: #f9f0f1; border-color: #efe1e3; }
+.mx-c-strongreject  { background: #f9f2ec; border-color: #efe4d9; }
+.mx-c-sorry-bench   { background: #f8f4e9; border-color: #ece7d4; }
+.mx-c-agentharm     { background: #eff5ef; border-color: #e0eae0; }
+.mx-c-agentdojo     { background: #ecf4f3; border-color: #dbe9e7; }
+.mx-c-asb           { background: #eef2f8; border-color: #dee6f1; }
+.mx-c-decodingtrust { background: #f2eff8; border-color: #e4def1; }
+.mx-c-safeclawbench { background: #f8eff5; border-color: #eee0e9; }

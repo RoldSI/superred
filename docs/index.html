@@ -138,13 +138,16 @@
             {% assign n = t.claims | size %}
             <div class="mx-cell">
               {% if n == 1 %}
-                <span class="mx-claim">{{ t.claims[0] }}</span>
+                {% assign c1 = t.claims[0] %}
+                <span class="mx-claim mx-c-{{ c1 | slugify }}">{{ c1 }}</span>
               {% else %}
                 {% assign i1 = k | modulo: n %}
                 {% assign k2 = k | plus: 1 %}
                 {% assign i2 = k2 | modulo: n %}
-                <span class="mx-claim">{{ t.claims[i1] }}</span>
-                <span class="mx-claim">{{ t.claims[i2] }}</span>
+                {% assign c1 = t.claims[i1] %}
+                {% assign c2 = t.claims[i2] %}
+                <span class="mx-claim mx-c-{{ c1 | slugify }}">{{ c1 }}</span>
+                <span class="mx-claim mx-c-{{ c2 | slugify }}">{{ c2 }}</span>
               {% endif %}
             </div>
           {% endfor %}
