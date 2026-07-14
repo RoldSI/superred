@@ -799,9 +799,14 @@ a { color: var(--ink); }
   position: absolute;
   top: 0;
   left: 0;
-  width: 952px;
+  width: 100%;
   display: grid;
-  grid-template-columns: 160px repeat(6, 132px);
+  /* Target columns take whatever room the frame gives them, so the table always
+     reaches the right edge instead of stopping short on a wide screen. They
+     never go below their natural width though: on a frame narrower than the
+     tracks the grid overflows instead of crushing the cells, and the frame
+     clips and fades it. */
+  grid-template-columns: 160px repeat(6, minmax(132px, 1fr));
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
   /* The bottom fade rides the grid, whose height is fixed and known. It has to
