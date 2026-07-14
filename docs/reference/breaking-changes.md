@@ -21,9 +21,9 @@ Judges and other direct `LLMClient` users are no longer budgeted through
 that wants a cap passes it to the client directly:
 `LLMClient(config, cost_cap_usd=...)`.
 
-Persisted output: the `llm_config` block no longer carries `max_cost`; the
-attacker cap is written as a top-level `task_cost_cap_usd` in both the
-claim-level file and each per-task detail file.
+Persisted output (`SCHEMA_VERSION` bumped `2` → `3`): the `llm_config` block
+no longer carries `max_cost`; the attacker cap is written as a top-level
+`task_cost_cap_usd` in both the claim-level file and each per-task detail file.
 
 **Migration**:
 

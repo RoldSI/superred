@@ -569,7 +569,7 @@ class TestDynamicScopePersistence:
         assert payload["scope_label"] == "my-label"
         assert payload["scope"] == []
         assert payload["read_only"] == []
-        assert payload["version"] == 2
+        assert payload["version"] == 3
 
     async def test_per_task_detail_records_own_resolved_scope(self, tmp_path: Path) -> None:
         """Each detail file records the per-task resolved scope, so two tasks

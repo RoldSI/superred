@@ -69,7 +69,7 @@ if TYPE_CHECKING:
     from superred.core.controller import RunResult, TaskResult, ThreatModelResult
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SAFE_SEGMENT_RE = re.compile(r"[^A-Za-z0-9_-]")
 _TASK_FILENAME_MAX_GOAL = 50
