@@ -38,80 +38,6 @@
     </div>
   </section>
 
-  <!-- ===== SETUP DIAGRAM =====
-       Deliberately outside the .section grid: it centres on the page rather
-       than sitting in a section's body column. Reads as one unit with the Why
-       argument directly beneath it. -->
-  <div class="diagram-band" id="setup">
-    <figure class="setup-diagram">
-      <div class="sd-grid">
-
-        <div class="sd-node sd-optimizer">
-          <p class="sd-kicker">Module &middot; Attacker</p>
-          <p class="sd-name">Optimizer</p>
-          <p class="sd-desc">Drives the attack.</p>
-          <code class="sd-pkg">superred-modules</code>
-        </div>
-
-        <div class="sd-edge sd-edge-h sd-edge-opt">
-          <span class="sd-head sd-head-start" aria-hidden="true"></span>
-          <span class="sd-rel">events &#8644; responses</span>
-          <span class="sd-head sd-head-end" aria-hidden="true"></span>
-        </div>
-
-        <div class="sd-node sd-node-core sd-controller">
-          <p class="sd-kicker">Framework</p>
-          <p class="sd-name">Controller</p>
-          <p class="sd-desc">Orchestrates the run and enforces the security scope.</p>
-          <code class="sd-pkg">superred</code>
-        </div>
-
-        <div class="sd-edge sd-edge-h sd-edge-tgt">
-          <span class="sd-head sd-head-start" aria-hidden="true"></span>
-          <span class="sd-rel">observables &#8644; controllables</span>
-          <span class="sd-head sd-head-end" aria-hidden="true"></span>
-        </div>
-
-        <div class="sd-node sd-target">
-          <p class="sd-kicker">Module &middot; System</p>
-          <p class="sd-name">Target</p>
-          <p class="sd-desc">The AI system under test.</p>
-          <code class="sd-pkg">superred-modules</code>
-        </div>
-
-        <div class="sd-edge sd-edge-v sd-edge-claim">
-          <span class="sd-head sd-head-up" aria-hidden="true"></span>
-          <span class="sd-rel">goal &#8644; evaluation</span>
-          <span class="sd-head sd-head-down" aria-hidden="true"></span>
-        </div>
-
-        <div class="sd-node sd-claim">
-          <p class="sd-kicker">Module &middot; Benchmark</p>
-          <p class="sd-name">Security claim</p>
-          <p class="sd-desc">Defines the goal, scores the run.</p>
-          <code class="sd-pkg">superred-modules</code>
-        </div>
-
-      </div>
-
-      <div class="sd-legend">
-        <span class="sd-legend-item">
-          <span class="sd-swatch sd-swatch-core" aria-hidden="true"></span>
-          Framework core: <code>superred</code>
-        </span>
-        <span class="sd-legend-item">
-          <span class="sd-swatch" aria-hidden="true"></span>
-          Interchangeable module: <code>superred-modules</code>
-        </span>
-      </div>
-
-      <figcaption class="sd-caption">
-        <p class="sd-kicker">How it fits together</p>
-        <p class="sd-caption-text">The controller is the framework. The optimizer, target, and security claim are interchangeable modules you plug into it.</p>
-      </figcaption>
-    </figure>
-  </div>
-
   <!-- ===== WHY: the gap it closes ===== -->
   <section class="section" id="why">
     <div class="section-head">
@@ -119,8 +45,55 @@
     <h2>Attacks, systems, and benchmarks, freely composable</h2>
     </div>
     <div class="section-body">
+    <figure class="setup-diagram">
+        <div class="sd-box">
+          <div class="sd-grid">
+
+            <div class="sd-node sd-optimizer">
+              <p class="sd-kicker">Module &middot; Attacker</p>
+              <p class="sd-name">Optimizer</p>
+              <p class="sd-desc">Drives the attack.</p>
+            </div>
+
+            <div class="sd-edge sd-edge-h sd-edge-opt" aria-hidden="true">
+              <span class="sd-head sd-head-start"></span>
+              <span class="sd-head sd-head-end"></span>
+            </div>
+
+            <div class="sd-node sd-node-core sd-controller">
+              <p class="sd-kicker">Framework</p>
+              <p class="sd-name">Controller</p>
+              <p class="sd-desc">Orchestrates the run and enforces the security scope.</p>
+            </div>
+
+            <div class="sd-edge sd-edge-h sd-edge-tgt" aria-hidden="true">
+              <span class="sd-head sd-head-start"></span>
+              <span class="sd-head sd-head-end"></span>
+            </div>
+
+            <div class="sd-node sd-target">
+              <p class="sd-kicker">Module &middot; System</p>
+              <p class="sd-name">Target</p>
+              <p class="sd-desc">The AI system under test.</p>
+            </div>
+
+            <div class="sd-edge sd-edge-v sd-edge-claim" aria-hidden="true">
+              <span class="sd-head sd-head-up"></span>
+              <span class="sd-head sd-head-down"></span>
+            </div>
+
+            <div class="sd-node sd-claim">
+              <p class="sd-kicker">Module &middot; Benchmark</p>
+              <p class="sd-name">Security claim</p>
+              <p class="sd-desc">Defines the goal, scores the run.</p>
+            </div>
+
+          </div>
+        </div>
+      </figure>
+
     <p>Published attacks on AI systems and the benchmarks that measure them are scattered across one-off codebases. Each attack is wired to the system it was first demonstrated on, and each benchmark ships its own runner. Answering a simple question (<em>does this attack beat that system, and how much access does it take?</em>) usually means re-implementing one against the other by hand.</p>
-    <p>SuperRed pulls those pieces apart. The attacker, the system under test, and the definition of success never touch each other: they meet only at the controller, which runs them and enforces how much access the attacker actually gets. Swapping any one of them leaves the other two untouched.</p>
+    <p>SuperRed pulls those pieces apart. The controller is the framework, and the optimizer, target, and security claim are interchangeable modules you plug into it. They never touch each other: they meet only at the controller, which runs them and enforces how much access the attacker actually gets, so swapping any one of them leaves the other two untouched.</p>
     <p>So a new attack can be measured against many systems and benchmarks on the day it is published, and a new system can be put in front of every attack already in the library. The comparison stops being a re-implementation project and becomes a change of one argument.</p>
     </div>
   </section>
