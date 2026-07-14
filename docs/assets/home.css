@@ -562,31 +562,40 @@ a { color: var(--ink); }
 .two-col h3 { font-size: var(--fs-body); font-weight: 500; margin: 0 0 0.6rem; }
 .two-col p { margin: 0; }
 
-/* audience pitches (meeting-point section): each leads with the benefit, then
-   explains how. A ruled top edge makes each pitch read as its own statement.
-   The .pitches prefix beats `.section p { margin: 0 0 1rem }`. */
-.pitches {
+/* audience cards (meeting-point section): three role cards, each a lead pitch
+   over a ruled list of specifics. Imported from the Claude Design "Audience
+   Split", rebuilt on the site's tokens and two sizes (heading is --fs-body 500,
+   everything else --fs-body). The .audience prefix beats `.section p`. */
+.audience {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2.4rem 2.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.25rem;
   margin-top: 2.8rem;
 }
-.pitch { border-top: 2px solid var(--ink); padding-top: 0.9rem; }
-.pitches .pitch-role {
-  margin: 0 0 0.7rem;
-  font-size: var(--fs-small);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--gray);
+.aud-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 1.5rem 1.5rem 1.6rem;
+  transition: border-color 120ms ease;
 }
-.pitches .pitch-lead {
-  margin: 0 0 0.55rem;
+.aud-card:hover { border-color: var(--gray); }
+.audience .aud-title { margin: 0 0 0.7rem; font-size: var(--fs-body); font-weight: 500; line-height: 1.2; }
+.audience .aud-lead { margin: 0; font-size: var(--fs-body); line-height: 1.55; color: #333333; }
+.aud-rule { height: 1px; background: var(--line); margin: 1.2rem 0 1rem; }
+.aud-points { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.85rem; }
+.audience .aud-points li {
+  position: relative;
+  padding-left: 1.3rem;
   font-size: var(--fs-body);
-  font-weight: 500;
-  line-height: 1.25;
-  color: var(--ink);
+  line-height: 1.5;
+  color: #333333;
 }
-.pitches .pitch-how { margin: 0; font-size: var(--fs-body); color: #333333; }
+.audience .aud-points li::before { content: "\2192"; position: absolute; left: 0; color: var(--gray); }
+.audience .aud-points li em { font-style: italic; }
 
 /* ---- features grid ---- */
 .features {
@@ -635,7 +644,7 @@ a { color: var(--ink); }
 /* ---- responsive ---- */
 @media (max-width: 720px) {
   body { font-size: var(--fs-body); }
-  .two-col, .features, .doc-cards, .pitches { grid-template-columns: 1fr; }
+  .two-col, .features, .doc-cards, .audience { grid-template-columns: 1fr; }
   .section { padding: 3.2rem 1.25rem; }
 }
 

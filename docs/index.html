@@ -165,22 +165,34 @@
     </div>
     <div class="section-body">
     <p>An attack, a system under test, and the benchmark that scores it are the same kind of thing here: interchangeable modules. Hold any of them fixed to evaluate it, so everyone shares a single toolbox where every contribution strengthens the rest.</p>
-    <div class="pitches">
-      <div class="pitch">
-        <p class="pitch-role">For red-teamers</p>
-        <p class="pitch-lead">Any attacker, against everything</p>
-        <p class="pitch-how">Run against many targets as you develop, and score on real benchmarks by changing one argument. The framework carries attackers of every kind, from deterministic fixed strategies to agentic, reinforcement-learned ones.</p>
-      </div>
-      <div class="pitch">
-        <p class="pitch-role">For system builders</p>
-        <p class="pitch-lead">Test the system you actually ship</p>
-        <p class="pitch-how">Wrap a fixed-response mock, a simulated environment, a sandbox, or a real non-production deployment. Porting an existing system is straightforward.</p>
-      </div>
-      <div class="pitch">
-        <p class="pitch-role">For evaluators</p>
-        <p class="pitch-lead">Comparable insights, by construction</p>
-        <p class="pitch-how">Package a benchmark once, then run it under precisely defined threat models, so numbers stay comparable instead of drifting with each benchmark's own assumptions. Scoring can be deterministic or agentic.</p>
-      </div>
+    <div class="audience">
+      <article class="aud-card">
+        <h3 class="aud-title">For red-teamers</h3>
+        <p class="aud-lead">An interactive environment for developing attacks, so you can build and score novel strategies on real environments as you go.</p>
+        <div class="aud-rule"></div>
+        <ul class="aud-points">
+          <li>Powerful attackers of every kind: deterministic to agentic, fixed strategies to RL.</li>
+          <li>Iterate against many targets as you build, and evaluate on standard benchmarks in a few lines.</li>
+        </ul>
+      </article>
+      <article class="aud-card">
+        <h3 class="aud-title">For system builders</h3>
+        <p class="aud-lead">Declare your system's trust boundaries once, then see exactly which attacks succeed at each level of access.</p>
+        <div class="aud-rule"></div>
+        <ul class="aud-points">
+          <li>Test any kind of target: fixed-response fixtures, simulated environments, sandboxes, or live deployments.</li>
+          <li>Wrap an existing system as a target; porting is straightforward.</li>
+        </ul>
+      </article>
+      <article class="aud-card">
+        <h3 class="aud-title">For evaluators</h3>
+        <p class="aud-lead">Package a benchmark once as a security claim, then score any attacker against any target, or reuse the ones already ported.</p>
+        <div class="aud-rule"></div>
+        <ul class="aud-points">
+          <li>Benchmark under many threat models for fine-grained, <em>comparable</em> insight, not assumptions that vary from benchmark to benchmark.</li>
+          <li>Score deterministically or agentically, whichever the benchmark calls for.</li>
+        </ul>
+      </article>
     </div>
     </div>
   </section>
