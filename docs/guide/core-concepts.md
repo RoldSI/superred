@@ -122,35 +122,6 @@ parallel (`concurrency`).
 
 ## The run loop
 
-For each task in the claim, the Controller does this (simplified):
-
-```
-target = target_factory.create()          # fresh instance for this task
-task.configure_target(target)              # set up the scenario (or skip if NotApplicable)
-optimizer = optimizer_factory()            # fresh attacker
-optimizer.initialize(goal, controllables, observables, llm_client)
-                                           # controllables/observables are scope-filtered
-launch optimizer.run(channel)              # attacker runs concurrently
-
-LOOP (until the optimizer says done, or max_runs_per_task):
-    send RunStartEvent  ->  optimizer
-    target.run(emit, send_event):
-        target emits ObservableEvent facts via emit(...)
-        target pauses at each controllable: send_event(...) -> optimizer injects
-    evaluation = task.evaluate(trajectory, target)   # did it work?
-    send RunEndEvent(evaluation)  ->  optimizer       # optimizer may answer done=True
-    target.reset_ephemeral_state()                    # reset for the next run
-
-optimizer.teardown()
-target.reset_ephemeral_state(); target.teardown()        # instance is then discarded
-```
-
-A "run" is one full pass of the target plus its evaluation. A task can take many
-runs: the attacker keeps trying until it gives up (`done=True`), exhausts its
-budget, or hits the Controller's `max_runs_per_task` safety cap (default 100).
-
-## Events and responses
-
 <figure class="evf-figure">
   <div class="evf-box">
     <div class="evf-grid">
@@ -193,6 +164,35 @@ budget, or hits the Controller's `max_runs_per_task` safety cap (default 100).
     </div>
   </div>
 </figure>
+
+For each task in the claim, the Controller does this (simplified):
+
+```
+target = target_factory.create()          # fresh instance for this task
+task.configure_target(target)              # set up the scenario (or skip if NotApplicable)
+optimizer = optimizer_factory()            # fresh attacker
+optimizer.initialize(goal, controllables, observables, llm_client)
+                                           # controllables/observables are scope-filtered
+launch optimizer.run(channel)              # attacker runs concurrently
+
+LOOP (until the optimizer says done, or max_runs_per_task):
+    send RunStartEvent  ->  optimizer
+    target.run(emit, send_event):
+        target emits ObservableEvent facts via emit(...)
+        target pauses at each controllable: send_event(...) -> optimizer injects
+    evaluation = task.evaluate(trajectory, target)   # did it work?
+    send RunEndEvent(evaluation)  ->  optimizer       # optimizer may answer done=True
+    target.reset_ephemeral_state()                    # reset for the next run
+
+optimizer.teardown()
+target.reset_ephemeral_state(); target.teardown()        # instance is then discarded
+```
+
+A "run" is one full pass of the target plus its evaluation. A task can take many
+runs: the attacker keeps trying until it gives up (`done=True`), exhausts its
+budget, or hits the Controller's `max_runs_per_task` safety cap (default 100).
+
+## Events and responses
 
 The target and optimizer never call each other directly. They communicate
 through typed **events** carried on a channel. As an optimizer author, these are

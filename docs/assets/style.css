@@ -216,19 +216,31 @@ body {
    EventResponse line runs optimizer -> target, and both terminate at the
    controller's edges, so the controller literally sits on the path it mediates.
    Two sizes only, --fs-head for the names and --fs-small for everything else. */
-.evf-figure { width: 100%; max-width: 54rem; margin: 2rem auto; }
+.evf-figure {
+  width: 100%;
+  max-width: 54rem;
+  margin: 2rem auto;
+  /* Query on the figure's own width, not the viewport: the doc column shrinks
+     with the sidebar, so viewport width is the wrong signal for when to stack. */
+  container-type: inline-size;
+}
+/* On the doc layout (>=800px) the content column carries exactly 2.5rem of side
+   padding; reclaim it so the diagram gets the full column width. Guarded to that
+   breakpoint because only there is the padding 2.5rem (below it stacks anyway). */
+@media (min-width: 800px) {
+  .evf-figure { width: calc(100% + 5rem); margin-inline: -2.5rem; }
+}
 .evf-box {
-  padding: 1.7rem 1.4rem;
+  padding: 1.5rem 1.1rem;
   border: 1px solid var(--line);
   border-radius: 6px;
 }
 .evf-grid {
   display: grid;
   /* minmax(0, ...) on the box columns so long descriptions wrap instead of
-     forcing the column past its share and overflowing the frame. The middle
-     column is wider so the controller's two sub-boxes are not cramped. */
+     forcing the column past its share and overflowing the frame. */
   grid-template-columns:
-    minmax(0, 1fr) 7rem minmax(0, 1.55fr) 7rem minmax(0, 1fr);
+    minmax(0, 1fr) 7rem minmax(0, 1.15fr) 7rem minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -246,16 +258,17 @@ body {
   flex-direction: column;
   justify-content: center;
   gap: 0.3rem;
-  padding: 0.9rem 1rem;
+  padding: 0.9rem 0.85rem;
 }
-.evf-controller { border-color: var(--ink); padding: 0.85rem 0.9rem; }
+.evf-controller { border-color: var(--ink); padding: 0.85rem 0.85rem; }
 
 .evf-kicker {
   margin: 0;
   font-size: var(--fs-small);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  white-space: nowrap;
+  /* allowed to wrap: "Module / Attacker" is long, and a narrow box must never
+     let it spill past the border. */
   color: var(--gray);
 }
 .evf-name { margin: 0; font-size: var(--fs-head); font-weight: 500; line-height: 1.15; }
@@ -314,9 +327,10 @@ body {
 .evf-tag-event { top: 40%; transform: translate(-50%, -50%); }
 .evf-tag-resp  { top: 64%; transform: translate(-50%, -50%); }
 
-/* Stack on narrow: the row does not fit, so the boxes stack and each connector
-   becomes a short vertical link carrying its label. */
-@media (max-width: 640px) {
+/* Stack when the diagram itself gets too narrow for the row (not the viewport):
+   the boxes stack and each connector becomes a short vertical link with its
+   label. Container query, so the sidebar's width is accounted for. */
+@container (max-width: 50rem) {
   .evf-grid { grid-template-columns: 1fr; row-gap: 0.6rem; }
   .evf-conn {
     min-height: 2rem;
