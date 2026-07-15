@@ -232,7 +232,7 @@ are reproducible.
 
 ## Worked examples in the repository
 
-- `superred-modules/security_claims/test_basic_secret_leak` - a single-task
+- `superred-modules/security_claims/demo_secret_leak` - a single-task
   claim and a tiny factory; the simplest place to start.
 - `superred-modules/security_claims/harmbench` and `.../strongreject` - full
   benchmark claims with dataset loaders, LLM judges, and hierarchical factories.

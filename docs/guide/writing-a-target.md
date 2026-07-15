@@ -41,8 +41,8 @@ You subclass `superred.core.interfaces.target.Target` and implement:
 
 ## Minimal template
 
-This is the complete `BasicLLMChatTarget` that ships in
-`superred-modules/targets/test_basic_llm_chat`, lightly annotated. It is a
+This is the complete `MinimalLLMChatTarget` that ships in
+`superred-modules/targets/minimal_llm_chat`, lightly annotated. It is a
 single-turn chatbot: one config slot (system prompt), one controllable (the user
 message), one query (the last response).
 
@@ -77,7 +77,7 @@ _USER_INPUT_CTRL = Controllable(
 )
 
 
-class BasicLLMChatTarget(Target):
+class MinimalLLMChatTarget(Target):
     """A single-turn LLM chat system."""
 
     def __init__(self, model: str, api_base: str, api_key: str) -> None:
@@ -316,7 +316,7 @@ instances is declared on the `TargetFactory`, not inside the target:
 from superred.core.controller import TargetFactory
 
 target_factory = TargetFactory(
-    create=lambda: BasicLLMChatTarget(model=..., api_base=..., api_key=...),
+    create=lambda: MinimalLLMChatTarget(model=..., api_base=..., api_key=...),
     concurrency=8,   # up to 8 tasks at once, each with its own instance
 )
 ```
@@ -365,7 +365,7 @@ subject of [Security Domains](/guide/security-domains).
 
 ## Worked examples in the repository
 
-- `superred-modules/targets/test_basic_llm_chat` - the template above.
+- `superred-modules/targets/minimal_llm_chat` - the template above.
 - `superred-modules/targets/chatbot` - a production chatbot target: single- or
   multi-turn, with a two-tree domain forest that separates "knows the model
   name" from "can override the system prompt" from "can rewrite the response".
