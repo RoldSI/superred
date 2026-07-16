@@ -1,0 +1,17 @@
+---
+layout: null
+permalink: /sitemap.xml
+---
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{%- assign pages = site.html_pages | where_exp: "p", "p.sitemap != false" -%}
+{%- for page in pages -%}
+{%- assign loc = page.url | replace: "index.html", "" | absolute_url -%}
+  <url>
+    <loc>{{ loc | xml_escape }}</loc>
+{%- if page.url == "/" %}
+    <priority>1.0</priority>
+{%- endif %}
+  </url>
+{%- endfor %}
+</urlset>

@@ -1,5 +1,6 @@
 title: SuperRed
-description: AI red-teaming and AI system security framework
+description: SuperRed is a modular Python framework for red-teaming AI systems — run any attacker against any AI system under any threat model.
+url: https://superred.simonsure.com
 markdown: kramdown
 kramdown:
   input: GFM

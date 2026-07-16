@@ -1,0 +1,59 @@
+{%- comment -%}
+  Shared SEO / social head tags. Include with optional overrides:
+    {% include head-meta.html title="…" description="…" image="…" %}
+  Falls back to the page's own front-matter, then to site-wide defaults.
+{%- endcomment -%}
+{%- assign m_title = include.title | default: page.title -%}
+{%- if m_title and page.url != "/" -%}{%- assign m_title = "SuperRed · " | append: m_title -%}{%- endif -%}
+{%- assign m_title = m_title | default: site.title -%}
+{%- assign m_desc = include.description | default: page.description | default: site.description -%}
+{%- assign m_image = include.image | default: page.image | default: "/assets/img/results-dashboard.png" -%}
+{%- assign m_url = page.url | replace: "index.html", "" | absolute_url -%}
+<title>{{ m_title }}</title>
+<meta name="description" content="{{ m_desc | strip_newlines | escape }}">
+<link rel="canonical" href="{{ m_url }}">
+<meta name="robots" content="index, follow">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="SuperRed">
+<meta property="og:title" content="{{ m_title | escape }}">
+<meta property="og:description" content="{{ m_desc | strip_newlines | escape }}">
+<meta property="og:url" content="{{ m_url }}">
+<meta property="og:image" content="{{ m_image | absolute_url }}">
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ m_title | escape }}">
+<meta name="twitter:description" content="{{ m_desc | strip_newlines | escape }}">
+<meta name="twitter:image" content="{{ m_image | absolute_url }}">
+
+<link rel="icon" href="/assets/img/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/assets/img/favicon.png">
+
+<!-- Display faces for the Street Machine wordmark (hero + header), site-wide. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Candal&family=Mr+Dafoe&display=swap" rel="stylesheet">
+{%- if page.url == "/" %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "SuperRed",
+  "description": {{ m_desc | strip_newlines | jsonify }},
+  "url": {{ "/" | absolute_url | jsonify }},
+  "codeRepository": "https://github.com/RoldSI/superred",
+  "programmingLanguage": "Python",
+  "runtimePlatform": "Python",
+  "applicationCategory": "SecurityApplication",
+  "keywords": "AI red-teaming, LLM security, adversarial machine learning, jailbreak, prompt injection, AI safety benchmark, Python framework",
+  "license": "https://github.com/RoldSI/superred",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
+{%- endif %}

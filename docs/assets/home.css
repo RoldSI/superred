@@ -9,6 +9,15 @@
   --serif: Garamond, "EB Garamond", "Adobe Garamond Pro", "Times New Roman", serif;
   --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --page: 860px;
+  /* elevation + motion tokens for the finesse pass: soft, low-contrast shadows
+     and one shared easing so every hover/lift across the page feels the same */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --shadow-sm: 0 1px 2px rgba(17, 17, 17, 0.04), 0 2px 6px rgba(17, 17, 17, 0.05);
+  --shadow-md: 0 4px 12px rgba(17, 17, 17, 0.07), 0 10px 24px rgba(17, 17, 17, 0.06);
+  --shadow-red: 0 4px 14px rgba(237, 33, 33, 0.22);
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
 }
 
 * { box-sizing: border-box; }
@@ -321,6 +330,34 @@ a { color: var(--ink); }
   -webkit-mask-image: linear-gradient(to bottom, #000 54%, transparent 95%);
   mask-image: linear-gradient(to bottom, #000 54%, transparent 95%);
 }
+/* A wash of whites over the coloured field: a plain white veil whose opacity
+   swells and recedes, so the hero repeatedly dissolves toward white and blooms
+   back. Only opacity animates (compositor-only, no repaint), which is why this
+   does not flicker the way an animated `filter` on the blurred, blended lobe
+   subtree did. Sits above the lobes but below the grain and the type. */
+.hero-aura::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: #ffffff;
+  pointer-events: none;
+  animation: aura-wash 60s ease-in-out infinite;
+  animation-delay: -13s;
+  will-change: opacity;
+}
+@keyframes aura-wash {
+  0%   { opacity: 0.30; }
+  16%  { opacity: 0.55; }
+  33%  { opacity: 0.72; }  /* near white */
+  50%  { opacity: 0.40; }
+  66%  { opacity: 0.78; }  /* whitest */
+  83%  { opacity: 0.52; }
+  100% { opacity: 0.30; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-aura::after { animation: none; opacity: 0.45; }
+}
 .hero > *:not(.hero-aura) { position: relative; z-index: 1; }
 
 .lobe {
@@ -333,7 +370,7 @@ a { color: var(--ink); }
   width: 80vw; height: 80vw; left: -18%; top: -30%;
   background: radial-gradient(circle at 50% 50%,
     rgba(252, 84, 62, 0.56), rgba(252, 84, 62, 0.30) 36%, rgba(252, 84, 62, 0) 70%);
-  animation: wander-1 97s ease-in-out infinite, wane-a 71s ease-in-out infinite;
+  animation: wander-1 180s ease-in-out infinite, wane-a 130s ease-in-out infinite;
   animation-delay: -37s, -19s;
 }
 /* Blush: broadens the field across the top-right. */
@@ -341,7 +378,7 @@ a { color: var(--ink); }
   width: 72vw; height: 72vw; left: 48%; top: -24%;
   background: radial-gradient(circle at 50% 50%,
     rgba(255, 128, 118, 0.58), rgba(255, 128, 118, 0.31) 38%, rgba(255, 128, 118, 0) 72%);
-  animation: wander-2 113s ease-in-out infinite, wane-b 79s ease-in-out infinite;
+  animation: wander-2 210s ease-in-out infinite, wane-b 150s ease-in-out infinite;
   animation-delay: -61s, -43s;
 }
 /* Rose-magenta: the violet cast that makes the red mystic rather than sunset. */
@@ -349,7 +386,7 @@ a { color: var(--ink); }
   width: 64vw; height: 64vw; left: 16%; top: 16%;
   background: radial-gradient(circle at 50% 50%,
     rgba(219, 74, 124, 0.44), rgba(219, 74, 124, 0.24) 34%, rgba(219, 74, 124, 0) 68%);
-  animation: wander-3 131s ease-in-out infinite, wane-c 83s ease-in-out infinite;
+  animation: wander-3 240s ease-in-out infinite, wane-c 160s ease-in-out infinite;
   animation-delay: -17s, -67s;
 }
 /* Pale peach: keeps the lower field light so the type stays legible. */
@@ -357,7 +394,7 @@ a { color: var(--ink); }
   width: 68vw; height: 68vw; left: -12%; top: 40%;
   background: radial-gradient(circle at 50% 50%,
     rgba(255, 166, 132, 0.46), rgba(255, 166, 132, 0.24) 36%, rgba(255, 166, 132, 0) 70%);
-  animation: wander-4 149s ease-in-out infinite, wane-b 89s ease-in-out infinite;
+  animation: wander-4 270s ease-in-out infinite, wane-b 170s ease-in-out infinite;
   animation-delay: -103s, -29s;
 }
 
@@ -384,8 +421,10 @@ a { color: var(--ink); }
       rgba(232, 32, 48, 0.40), rgba(232, 32, 48, 0.16) 45%, rgba(232, 32, 48, 0) 100%),
     radial-gradient(ellipse 40% 38% at 58% 58%,
       rgba(224, 46, 76, 0.32), rgba(224, 46, 76, 0.12) 45%, rgba(224, 46, 76, 0) 100%);
-  animation: bubble-path 53s ease-in-out infinite, bubble-breath 19s ease-in-out infinite;
-  animation-delay: -11s, -5s;
+  /* Calmed: a small slow drift rather than a wide skate across the hero, so the
+     eye rests on the wordmark and the tonal wash carries the life instead. */
+  animation: bubble-path 120s ease-in-out infinite, bubble-breath 46s ease-in-out infinite;
+  animation-delay: -31s, -9s;
   will-change: translate, scale;
 }
 
@@ -439,22 +478,17 @@ a { color: var(--ink); }
    return to the start is not something you can sit and wait for. */
 @keyframes bubble-path {
   0%   { translate: 0 0; }
-  11%  { translate: 17vw -7vh; }
-  21%  { translate: 31vw 6vh; }
-  32%  { translate: 20vw 17vh; }
-  43%  { translate: -3vw 10vh; }
-  54%  { translate: -19vw 19vh; }
-  65%  { translate: -31vw 3vh; }
-  76%  { translate: -17vw -13vh; }
-  88%  { translate: 5vw -18vh; }
+  25%  { translate: 5vw -3vh; }
+  50%  { translate: 8vw 4vh; }
+  75%  { translate: 2vw 6vh; }
   100% { translate: 0 0; }
 }
 /* Squash and stretch on separate axes, so the mass keeps changing shape instead
-   of staying one blob that merely grows. */
+   of staying one blob that merely grows. Held to a narrow swing so it breathes
+   rather than pumps. */
 @keyframes bubble-breath {
   0%   { scale: 1 1; }
-  37%  { scale: 1.14 0.92; }
-  68%  { scale: 0.92 1.12; }
+  50%  { scale: 1.05 0.97; }
   100% { scale: 1 1; }
 }
 /* Narrow swings on purpose: the back should breathe, not blink. */
@@ -483,13 +517,61 @@ a { color: var(--ink); }
 /* Hold the field still, but keep the composition. */
 @media (prefers-reduced-motion: reduce) {
   .lobe { animation: none; }
+  .hero-aura { animation: none; }
 }
-.hero h1 {
-  font-size: clamp(3rem, 11vw, 6rem);
-  font-weight: 500;
-  line-height: 1.05;
-  letter-spacing: 0.01em;
-  margin: 0;
+/* ---- Street Machine wordmark ----
+   A faithful port of the CodePen "Street Machine" treatment, adapted from its
+   black-bg/white-text original to the site's white hero and coral red:
+     - "Super": blocky italic Candal, ink face, hard red offset drop shadow,
+       with two red "speed-line" bars underneath.
+     - "Red": Mr Dafoe cursive script, coral, tilted and overlapping the corner.
+   The two words scale together (shared vw term) so their overlap holds at any
+   width. This is the one place the site departs from Garamond, on purpose. */
+.hero .wordmark {
+  position: relative;
+  display: inline-block;
+  /* the tilted "Red" script descends well past the baseline; the bottom margin
+     clears it so the lead line below doesn't crowd the wordmark */
+  margin: 1.4rem 0 1.4rem;
+  padding: 0 1.6em 0.5em 0;
+}
+.hero .wm-super {
+  position: relative;
+  font-family: "Candal", sans-serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: clamp(3.8rem, 14vw, 9.5rem);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-shadow: -8px 8px 0 #ed2121;
+  -webkit-text-stroke: 0.5px #ed2121;
+}
+/* two clean red speed bars under "Super" — no box-shadow doubling (that read as
+   extra stray lines). They echo the drop-shadow's down-left offset: the lower
+   bar sits a touch shorter and inset, so they read as motion lines, not a stack. */
+.hero .wm-super::before,
+.hero .wm-super::after {
+  content: "";
+  position: absolute;
+  height: 0.07em;
+  background: #ed2121;
+  border-radius: 999px;
+}
+.hero .wm-super::before { left: 0;      bottom: -0.08em; width: 88%; }
+.hero .wm-super::after  { left: -0.06em; bottom: -0.20em; width: 62%; }
+.hero .wm-red {
+  position: absolute;
+  right: 0;
+  bottom: -0.2em;
+  font-family: "Mr Dafoe", cursive;
+  font-weight: 400;
+  font-size: clamp(3.1rem, 11.2vw, 7.6rem);
+  line-height: 1;
+  color: #fc543e;
+  transform: rotate(-14deg);
+  text-shadow: 1px 2px 0 rgba(249, 210, 210, 0.9);
+  white-space: nowrap;
 }
 .hero .tagline {
   color: var(--gray);
@@ -516,18 +598,80 @@ a { color: var(--ink); }
   justify-content: center;
   margin-top: 2.2rem;
 }
+/* click-to-copy pill: styled identically to the old code element, now a button
+   with a copy icon that flips to a check for ~1.6s after a successful copy */
+/* the install commands read as code in a dark terminal chip: a muted "$" prompt,
+   light mono text on near-black, with the copy affordance on the right */
 .hero-pip {
+  position: relative;
   display: inline-flex;
   align-items: center;
+  gap: 0.7rem;
   font-family: var(--mono);
   font-size: var(--fs-body);
   line-height: 1.65;
-  background: var(--code-bg);
-  border: 1px solid var(--line);
-  padding: 0.55rem 1.4rem;
+  color: #e8e8e8;
+  background: #0e0e0e;
+  border: 1px solid #0e0e0e;
+  padding: 0.55rem 1.1rem 0.55rem 1.4rem;
   border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
 }
-.cta-and { color: var(--gray); }
+/* a dim shell prompt before the command */
+.hero-pip .pip-text::before { content: "$ "; color: #ed6b5c; }
+.hero-pip:hover { border-color: #2a2a2a; box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.hero-pip:active { transform: translateY(0); }
+.hero-pip .pip-copy-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #7d7d7d;
+  transition: color 160ms var(--ease);
+}
+.hero-pip:hover .pip-copy-icon { color: #e8e8e8; }
+.hero-pip .pip-ic-check { display: none; color: #7ee787; }
+.hero-pip.copied .pip-ic-copy { display: none; }
+.hero-pip.copied .pip-ic-check { display: inline; }
+.hero-pip.copied .pip-copy-icon { color: #7ee787; }
+
+/* tooltip above the pill: "Click to copy", flipping to "Copied!" after a copy */
+.hero-pip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  padding: 0.3rem 0.6rem;
+  font-family: var(--serif);
+  font-size: var(--fs-small);
+  line-height: 1.2;
+  white-space: nowrap;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 5px;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms var(--ease), transform 140ms var(--ease);
+}
+/* little arrow under the tooltip bubble */
+.hero-pip::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms var(--ease);
+}
+.hero-pip:hover::after, .hero-pip:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+.hero-pip:hover::before, .hero-pip:focus-visible::before { opacity: 1; }
+.hero-pip.copied::after { background: #2e9e4f; }
+.hero-pip.copied::before { border-top-color: #2e9e4f; }
+.cta-and, .cta-or { color: var(--gray); }
 .btn {
   /* Same box model as .hero-pip so the CTA pill and button render at an
      identical height: same display, alignment, line-height, padding, border. */
@@ -540,11 +684,13 @@ a { color: var(--ink); }
   text-decoration: none;
   border: 1px solid var(--ink);
   border-radius: 4px;
+  transition: background 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
 }
+.btn:active { transform: translateY(1px); }
 .btn-primary { background: var(--ink); color: #fff; }
-.btn-primary:hover { background: #000; }
+.btn-primary:hover { background: #000; box-shadow: var(--shadow-md); transform: translateY(-2px); }
 .btn-secondary { background: #fff; color: var(--ink); }
-.btn-secondary:hover { background: var(--code-bg); }
+.btn-secondary:hover { background: var(--code-bg); box-shadow: var(--shadow-sm); transform: translateY(-2px); }
 .scroll-hint {
   margin-top: 3rem;
   color: var(--gray);
@@ -580,9 +726,13 @@ a { color: var(--ink); }
   border-radius: 6px;
   background: #ffffff;
   padding: 1.5rem 1.5rem 1.6rem;
-  transition: border-color 120ms ease;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
 }
-.aud-card:hover { border-color: var(--gray); }
+.aud-card:hover {
+  border-color: #d8d8d8;
+  box-shadow: var(--shadow-md);
+  transform: translateY(-3px);
+}
 .audience .aud-title { margin: 0 0 0.7rem; font-size: var(--fs-body); font-weight: 500; line-height: 1.2; }
 .audience .aud-lead { margin: 0; font-size: var(--fs-body); line-height: 1.55; color: #333333; }
 .aud-rule { height: 1px; background: var(--line); margin: 1.2rem 0 1rem; }
@@ -633,11 +783,19 @@ a { color: var(--ink); }
   border-radius: 6px;
   text-decoration: none;
   color: var(--ink);
+  background: #fff;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
 }
-.card:hover { border-color: var(--gray); }
+.card:hover {
+  border-color: #d8d8d8;
+  box-shadow: var(--shadow-md);
+  transform: translateY(-3px);
+}
 .card h3 { font-size: var(--fs-body); font-weight: 500; margin: 0 0 0.5rem; }
 .card p { margin: 0 0 0.9rem; font-size: var(--fs-body); color: #333; }
-.card .go { color: var(--gray); font-size: var(--fs-body); }
+/* the "go" line warms as the card lifts */
+.card .go { color: var(--gray); font-size: var(--fs-body); transition: color 160ms var(--ease); }
+.card:hover .go { color: #ed2121; }
 
 /* Footer lives in site.css (shared across all pages). */
 
@@ -686,9 +844,12 @@ a { color: var(--ink); }
   padding: 2.2rem 2rem;
   border: 1px solid var(--line);
   border-radius: 6px;
-  transition: border-color 120ms ease;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
 }
-.sd-box:hover { border-color: var(--gray); }
+.sd-box:hover { border-color: #d8d8d8; box-shadow: var(--shadow-md); }
+/* the individual nodes lift a touch when you hover the diagram */
+.sd-node { transition: box-shadow 160ms var(--ease), transform 160ms var(--ease); }
+.sd-box:hover .sd-node { box-shadow: var(--shadow-sm); }
 
 .sd-grid {
   display: grid;
@@ -947,9 +1108,9 @@ a { color: var(--ink); }
   border-radius: 8px;
   background: #fafafa;
   padding: 1.2rem 1.3rem;
-  transition: border-color 120ms ease;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
 }
-.tmt-card:hover { border-color: var(--gray); }
+.tmt-card:hover { border-color: #d8d8d8; box-shadow: var(--shadow-md); transform: translateY(-2px); }
 .tmt-head {
   display: flex;
   align-items: baseline;
@@ -1077,12 +1238,237 @@ a { color: var(--ink); }
   background: #ffffff;
   padding: 0.55rem;
   overflow: hidden;
-  transition: border-color 120ms ease;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
 }
-.results-shot:hover { border-color: var(--gray); }
+.results-shot:hover { border-color: #d8d8d8; box-shadow: var(--shadow-md); }
 .results-shot img {
   display: block;
   width: 100%;
   height: auto;
   border-radius: 4px;
+}
+
+/* ---- runnable demo ----
+   The getting-started code sample, with a Run button and a terminal-style
+   output panel. The "run" is a scripted simulation played out by a small inline
+   script (no backend, no code execution): it types the attack loop and ends on
+   a result echoing the real dashboard numbers. Styled on the site's tokens so
+   it reads as part of the page, not a widget bolted on. */
+/* One framed box with Code / Output tabs and a Run button. Clicking Run flips
+   to the Output tab and plays the simulated run; you can tab back to the code.
+   A single box means no two-column squeeze on laptop widths. */
+.runnable {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 1.4rem 0;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 160ms var(--ease);
+}
+.runnable:hover { box-shadow: var(--shadow-md); }
+.runnable-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.runnable-tab {
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  color: var(--gray);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.6rem 1.1rem;
+  margin-bottom: -1px;   /* sit the active underline on the tab-strip border */
+  cursor: pointer;
+}
+.runnable-tab:hover { color: var(--ink); }
+.runnable-tab[aria-selected="true"] { color: var(--ink); border-bottom-color: #ed2121; }
+/* Run sits at the right end of the tab strip. */
+.runnable-tabs .runnable-run { margin-left: auto; align-self: center; margin-right: 0.55rem; }
+
+.runnable-panel { min-width: 0; }
+.runnable-panel[hidden] { display: none; }
+/* fold the shared .highlight margins so the code sits flush inside the frame */
+.runnable .highlight { margin: 0; }
+.runnable .highlight pre { border: none; border-radius: 0; padding: 0.9rem 1.05rem; min-width: 0; }
+.runnable-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  color: #fff;
+  background: #ed2121;
+  border: 1px solid #ed2121;
+  border-radius: 5px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+  transition: background 160ms var(--ease), border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
+}
+.runnable-run:hover { background: #d31414; border-color: #d31414; box-shadow: var(--shadow-red); transform: translateY(-1px); }
+.runnable-run:active { transform: translateY(0); }
+.runnable-run .rr-icon { transition: transform 200ms var(--ease); }
+.runnable-run:hover .rr-icon { transform: scale(1.15); }
+.runnable-run:disabled { opacity: 0.6; cursor: default; }
+.runnable-run .rr-icon { font-size: 0.8em; line-height: 1; }
+.runnable-hint { font-size: var(--fs-small); color: var(--gray); }
+.runnable-out {
+  margin: 0;
+  background: #0e0e0e;
+  color: #d6d6d6;
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  padding: 0.9rem 1.05rem;
+  min-height: 15rem;
+  max-height: 26rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* the idle state reads as a dim comment until Run is pressed */
+.runnable-out { color: #6b6b6b; }
+.runnable-out .o-cmd  { color: #d6d6d6; }
+.runnable-out .o-dim  { color: #7d7d7d; }
+.runnable-out .o-atk  { color: #ff8a7a; }   /* attacker, coral */
+.runnable-out .o-tgt  { color: #9ecbff; }   /* target, cool blue */
+.runnable-out .o-lo   { color: #8a8f98; }
+.runnable-out .o-mid  { color: #e6c07b; }   /* climbing score, amber */
+.runnable-out .o-hi   { color: #ff6b57; }   /* high score, red */
+.runnable-out .o-bar  { color: #ed6b5c; letter-spacing: -0.02em; }
+.runnable-out .o-done { color: #7ee787; }   /* success green */
+/* each line eases in as it is printed, so the run reads as a smooth stream */
+.runnable-out > div { animation: line-in 220ms var(--ease) both; }
+@keyframes line-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .runnable-out > div { animation: none; }
+}
+
+/* ---- used-by marquee ----
+   A seamless auto-scrolling strip of institution wordmarks above the footer.
+   The track holds two identical copies of the set and translates left by
+   exactly half its width, so the loop is invisible. Edge-fade masks let logos
+   dissolve in and out at the margins. Hover pauses the scroll and colours the
+   hovered mark. Plain text wordmarks (not brand logo files) keep it on the
+   site's type system and sidestep trademark-asset misuse. */
+.usedby {
+  padding: 3.2rem var(--gutter) 3.6rem;
+  border-top: 1px solid var(--line);
+  text-align: center;
+  overflow: hidden;
+}
+.usedby-kicker {
+  position: relative;
+  display: inline-block;
+  margin: 0 0 1.8rem;
+  font-size: var(--fs-small);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gray);
+  cursor: help;
+  transition: color 160ms var(--ease);
+}
+.usedby-kicker:hover { color: var(--ink); }
+/* the disclaimer, revealed as a tooltip above the kicker on hover/focus */
+.usedby-kicker::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  width: max-content;
+  max-width: 22rem;
+  padding: 0.5rem 0.75rem;
+  font-family: var(--serif);
+  font-size: var(--fs-small);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
+  white-space: normal;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms var(--ease), transform 140ms var(--ease);
+}
+.usedby-kicker::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms var(--ease);
+}
+.usedby-kicker:hover::after, .usedby-kicker:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+.usedby-kicker:hover::before, .usedby-kicker:focus-visible::before { opacity: 1; }
+.marquee {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
+}
+.marquee-track {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  width: max-content;
+  animation: marquee-scroll 46s linear infinite;
+  will-change: transform;
+}
+/* Uniform spacing via per-item margin (NOT flex `gap`): gap adds space only
+   between items, so at the -50% loop seam the last item of copy A would butt
+   against the first of copy B with no space, causing a visible hitch. Equal
+   side margins keep the rhythm identical across the seam, so the loop is truly
+   endless. Translating exactly -50% lands on the matching item every cycle. */
+.marquee-track .ub-logo { margin: 0 clamp(1.2rem, 3vw, 2.5rem); }
+.marquee:hover .marquee-track { animation-play-state: paused; }
+@keyframes marquee-scroll {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-50%, 0, 0); }   /* half the track = one full set */
+}
+/* Real brand logo SVGs (official marks, bundled under assets/img/logos). They
+   rest desaturated so the strip reads as one calm row, then bloom into full
+   brand colour and lift on hover. Normalised by height; per-brand heights tuned
+   so the differently-proportioned marks share one optical weight. */
+.ub-logo {
+  display: block;
+  width: auto;
+  flex: none;
+  filter: grayscale(1);
+  opacity: 0.55;
+  transition: filter 220ms var(--ease), opacity 220ms var(--ease), transform 220ms var(--ease);
+}
+.ub-logo:hover { filter: grayscale(0); opacity: 1; transform: translateY(-2px); }
+/* icon-ish / compact marks a touch taller than the long wordmarks */
+.ub-aws      { height: 2.5rem; }
+.ub-eth      { height: 1.5rem; }
+.ub-berkeley { height: 2.6rem; }
+/* long wordmarks kept shorter so their optical size matches */
+.ub-google   { height: 1.7rem; }
+.ub-meta     { height: 1.6rem; }
+@media (prefers-reduced-motion: reduce) {
+  /* Hold the strip still and let it wrap to a static, centered set. */
+  .marquee { -webkit-mask-image: none; mask-image: none; }
+  .marquee-track {
+    animation: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    white-space: normal;
+    width: auto;
+    gap: 1.4rem 2.6rem;
+  }
 }
