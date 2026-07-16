@@ -287,11 +287,11 @@ client that raises `BudgetExhaustedError` on the first call. Non-LLM optimizers
 
 ## Worked example: a fixed prompt list (no LLM)
 
-The simplest possible optimizer, shipped as `test_basic_prompt_list`. One prompt
+The simplest possible optimizer, shipped as `demo_prompt_list`. One prompt
 per run; signals `done` when the list is exhausted.
 
 ```python
-class BasicPromptListOptimizer(Optimizer):
+class DemoPromptListOptimizer(Optimizer):
     def __init__(self, prompts: list[str] | None = None) -> None:
         super().__init__()
         self._prompts = prompts if prompts is not None else list(DEFAULT_PROMPTS)
