@@ -6,7 +6,7 @@ permalink: /reference/breaking-changes
 
 # Breaking Changes
 
-## v0.2.0 (unreleased)
+## v0.2.0
 
 ### `LLMConfig.max_cost` removed; attacker budget moves to `Controller(task_cost_cap_usd=...)`
 
