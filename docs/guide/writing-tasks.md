@@ -179,7 +179,7 @@ from superred.core.types.llm import LLMConfig
 
 def my_benchmark_claim(
     *,
-    judge_llm_config: LLMConfig,        # the judge's OWN model + budget (see below)
+    judge_llm_config: LLMConfig,        # the judge's OWN model + credentials (see below)
     categories: list[str] | None = None,
     max_per_category: int | None = None,
 ) -> SecurityClaim[Target]:
@@ -211,9 +211,12 @@ attacker LLM:
 
 - The attacker's model comes from the `Controller`'s `llm_config`; its per-task
   budget comes from the `Controller`'s `task_cost_cap_usd`.
-- The judge's model and budget come from the **claim factory's** arguments
+- The judge's model and credentials come from the **claim factory's** arguments
   (e.g. `judge_llm_config=LLMConfig(...)`, or plain `judge_model` / `judge_api_*`
-  kwargs as HarmBench does).
+  kwargs as HarmBench does). `LLMConfig` carries no budget: a judge built from a
+  plain `LLMConfig` is **unlimited**, and is never bounded by the attacker's
+  `task_cost_cap_usd`. To cap a judge, build its client with
+  `LLMClient(config, cost_cap_usd=...)`.
 
 Keeping them separate matters for two reasons. First, fairness: the judge must
 not consume or be confused with the attacker's budget, and judge cost is not

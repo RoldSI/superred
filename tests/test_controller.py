@@ -1081,6 +1081,19 @@ class TestControllerValidation:
                 max_runs_per_task=value,
             )
 
+    @pytest.mark.regression  # Fix: task_cost_cap_usd validated >= 0 in __init__
+    @pytest.mark.parametrize("value", [-0.01, -1.0, -100.0])
+    def test_task_cost_cap_usd_negative_raises(self, value: float) -> None:
+        with pytest.raises(ValueError, match="non-negative"):
+            Controller(
+                optimizer_factory=lambda: StubOptimizer(),
+                target_factory=TargetFactory.singleton(StubTarget()),
+                security_claim=SecurityClaim.from_tasks([StubTask()]),
+                scope=EXTERNAL_SCOPE,
+                llm_config=STUB_LLM_CONFIG,
+                task_cost_cap_usd=value,
+            )
+
     def test_max_runs_per_task_one_is_valid(self) -> None:
         """max_runs_per_task=1 is the minimum valid value."""
         Controller(
