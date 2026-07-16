@@ -1,8 +1,9 @@
 """LLM access types for the optimizer.
 
-These types define the threat model for optimizer LLM access:
-what model is available, what budget the attacker has, and
-cumulative usage tracking.
+These types define LLM access: which model, the credentials to reach
+it, and cumulative usage tracking. Budgets are not part of access. The
+attacker's per-task cost cap lives on the Controller
+(``task_cost_cap_usd``); any other ``LLMClient`` user sets its own cap.
 """
 
 from __future__ import annotations
@@ -12,31 +13,27 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class LLMConfig:
-    """LLM access configuration for the optimizer.
+    """LLM access: which model and the credentials to reach it.
 
-    Part of the threat model: defines what model the attacker can use
-    and what budget they have. Passed to the Controller at construction.
+    Pure access, used for both the attacker (``Controller(llm_config=...)``)
+    and any other LLM caller such as a judge. Budgets are not part of access:
+    the attacker's per-task cost cap is ``Controller.task_cost_cap_usd``, and
+    any other ``LLMClient`` user sets its own cap when it builds the client.
 
     Attributes:
         model: LiteLLM model identifier (e.g. ``"gpt-4o-mini"``).
         api_base: LiteLLM-compatible API base URL.
         api_key: API key for the LLM provider.
-        max_cost: Maximum total cost in USD. ``None`` for unlimited.
-            Cost is computed per call via ``litellm.completion_cost()``.
     """
 
     model: str
     api_base: str
     api_key: str
-    max_cost: float | None = None
 
     def __repr__(self) -> str:
         """Mask api_key in repr to avoid leaking secrets."""
         masked = self.api_key[:4] + "..." if len(self.api_key) > 4 else "***"
-        return (
-            f"LLMConfig(model={self.model!r}, api_base={self.api_base!r}, "
-            f"api_key={masked!r}, max_cost={self.max_cost!r})"
-        )
+        return f"LLMConfig(model={self.model!r}, api_base={self.api_base!r}, api_key={masked!r})"
 
 
 @dataclass(frozen=True)

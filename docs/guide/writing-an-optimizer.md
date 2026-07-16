@@ -274,7 +274,8 @@ compared at equal cost.
 
 ### Budget exhaustion
 
-When the cumulative cost reaches the configured `max_cost`, the next
+When the cumulative cost reaches the configured cost cap (the attacker's
+`Controller.task_cost_cap_usd`), the next
 `self.llm.complete(...)` raises `BudgetExhaustedError`. You normally do **not**
 need to catch it: the Controller catches it, ends the task cleanly with
 `stop_reason="budget_exhausted"`, and preserves the runs you completed. Only

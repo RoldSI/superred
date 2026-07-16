@@ -153,7 +153,7 @@ The controller does not create its own event loop. This allows embedding in larg
 
 14. **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format contract. The target interprets the text.
 
-15. **LLM access is part of the threat model**: The controller controls which model the optimizer can use and tracks budget (calls, USD cost). The `LLMConfig` (model, API base, API key, `max_cost`) is set at the experiment level. Budget enforcement is cost-based: `litellm.completion_cost()` computes USD per call from model pricing; pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches `max_cost`. The optimizer receives a constrained `LLMClient` that locks the model and credentials, it cannot choose a different model. Budget is per-task (fresh `LLMClient` per task). Uses litellm internally for OpenAI-compatible chat completions.
+15. **LLM access is part of the threat model**: The controller controls which model the optimizer can use and tracks budget (calls, USD cost). The `LLMConfig` (model, API base, API key) is set at the experiment level; the attacker's per-task cost cap is the controller's `task_cost_cap_usd`. Budget enforcement is cost-based: `litellm.completion_cost()` computes USD per call from model pricing; pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches the cap. The optimizer receives a constrained `LLMClient` that locks the model and credentials, it cannot choose a different model. Budget is per-task (fresh `LLMClient` per task, so the cap resets each task). Uses litellm internally for OpenAI-compatible chat completions.
 
 ## File Map
 

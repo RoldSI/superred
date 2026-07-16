@@ -27,7 +27,6 @@ llm_config = LLMConfig(
     model="gpt-4o-mini",
     api_base="https://api.openai.com",
     api_key="sk-...",
-    max_cost=5.00,  # USD budget limit (optional, None = unlimited)
 )
 
 scope: Scope = frozenset({external_tag})
@@ -39,6 +38,7 @@ controller = Controller(
     scope=scope,                              # read & write surface (visible + injectable)
     read_only=frozenset(),                    # optional: visible-but-not-injectable tags
     llm_config=llm_config,                    # optional, omit for non-LLM optimizers
+    task_cost_cap_usd=5.00,                   # per-task attacker budget (USD); None = unlimited
     max_runs_per_task=100,                    # safety limit, default 100
     include_feedback=True,                    # populate RunEndEvent.evaluation (default True)
     results_dir="results/run-1",              # optional, persist threat-model JSON
@@ -209,11 +209,11 @@ Results for one (scope, llm_config) combination:
 
 The controller mediates LLM access for the optimizer. This is part of the threat model, it defines what computational resources the attacker has.
 
-- **Configuration**: Pass `llm_config=LLMConfig(...)` to the controller constructor (optional, omit for non-LLM optimizers). The config specifies the model, API credentials, and an optional cost budget (`max_cost` in USD).
-- **Per-task budget**: A fresh `LLMClient` is created for each task. Budget resets per task.
+- **Configuration**: Pass `llm_config=LLMConfig(...)` to the controller constructor (optional, omit for non-LLM optimizers). The config specifies the model and API credentials.
+- **Per-task budget**: Pass `task_cost_cap_usd` (USD) for a per-task cost cap on the attacker's LLM. A fresh `LLMClient` is created per task, so the cap resets per task (`None` = unlimited). It bounds only the attacker; the judge and target are never bounded by it.
 - **Non-LLM optimizers**: When `llm_config` is `None`/omitted, the optimizer receives a noop `LLMClient` that raises `BudgetExhaustedError` on any call.
 - **Constrained client**: The `LLMClient` locks the model, API base, and API key. The optimizer cannot override them.
-- **Cost-based budget enforcement**: Pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches `max_cost`. Cost is computed per call via `litellm.completion_cost()`, which uses the model's pricing to convert token usage to USD.
+- **Cost-based budget enforcement**: Pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches the client's cost cap (`task_cost_cap_usd` for the attacker). Cost is computed per call via `litellm.completion_cost()`, which uses the model's pricing to convert token usage to USD.
 - **Usage tracking**: Each `RunResult` includes a cumulative `llm_usage` snapshot (calls, cost). Each `TaskResult` includes the total `llm_usage`. This enables budget-vs-performance analysis across runs.
 - **Summary output**: The evaluation summary includes call counts and cost.
 
@@ -254,8 +254,8 @@ Multiple controllers pointed at the same `results_dir` (the multi-threat-model s
 - **When**: per-task detail files are written **incrementally**, each one lands on disk as soon as its task finishes (success, error, or budget-exhausted). The claim-level summary file is written at the end of `run()` and acts as a completion marker; if a post-mortem sees the subfolder without the matching summary file, the run was interrupted and the detail files are the authoritative record of what completed.
 - **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"`, the partial trajectory accumulated before the crash, and the formatted exception under the `error` field (which lives *outside* the trajectory). Sibling tasks still finish and are persisted.
 - **Atomicity**: each individual file is written via temp file + `rename`. A disk failure on one task's write is logged and contained, the controller continues running the remaining tasks. The summary file will still point at the would-be path (the missing file at that path is the signal).
-- **Claim-level file**: `version` (`SCHEMA_VERSION`, now `2`), `completed_at`, `scope` (read & write tag names) plus `read_only` (visible-but-not-injectable tags; empty for an all-read & write run), a `scope_label` field (`null` in static mode; the run label in dynamic mode, where `scope`/`read_only` arrays are empty), `llm_config` (model + max_cost only), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
-- **Per-task detail file**: self-contained, and repeats `version`, `scope`, `read_only`, `llm_config` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`). In dynamic mode each detail file records **that task's own** resolved `scope`/`read_only`, so different files in the same run carry different scopes.
+- **Claim-level file**: `version` (`SCHEMA_VERSION`, now `3`), `completed_at`, `scope` (read & write tag names) plus `read_only` (visible-but-not-injectable tags; empty for an all-read & write run), a `scope_label` field (`null` in static mode; the run label in dynamic mode, where `scope`/`read_only` arrays are empty), `llm_config` (model only), a top-level `task_cost_cap_usd` (the attacker's per-task cost cap, or `null`), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
+- **Per-task detail file**: self-contained, and repeats `version`, `scope`, `read_only`, `llm_config`, `task_cost_cap_usd` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`). In dynamic mode each detail file records **that task's own** resolved `scope`/`read_only`, so different files in the same run carry different scopes.
 - **Aggregates**: `mean_primary_score` excludes `NotApplicable` tasks (they are reported separately as `n_skipped`). When the claim has no evaluable tasks, `mean_primary_score` and `max_primary_score` are `null`.
 - **`stop_reason` per task**: one of `"done"` (optimizer signaled `RunEndResponse(done=True)`), `"max_runs"` (hit the safety cap), `"budget_exhausted"` (`BudgetExhaustedError` was raised), or `"error"` (unexpected exception in optimizer/target/evaluator; the task was abandoned).
 - **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded from both claim and detail files. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed, keep credentials out of log/observable payloads.

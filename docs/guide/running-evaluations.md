@@ -37,8 +37,8 @@ controller = Controller(
         model="gpt-4o-mini",
         api_base="https://proxy",
         api_key="sk-...",
-        max_cost=5.00,                          # USD budget; None = unlimited
     ),
+    task_cost_cap_usd=5.00,                     # per-task attacker budget (USD); None = unlimited
     max_runs_per_task=100,                      # safety cap; None (the default) means 100
     include_feedback=True,                      # attach evaluation to RunEndEvent; default True
     results_dir="results/run-1",                # optional: persist JSON
@@ -294,7 +294,7 @@ async def main() -> None:
     claim = sorry_bench_claim(
         target_model_id=target_model,
         judge_llm_config=LLMConfig(model="openai/gpt-4-turbo-2024-04-09",
-                                   api_base=api_base, api_key=api_key, max_cost=10.0),
+                                   api_base=api_base, api_key=api_key),
         prompts_per_category=2,
     )
 
@@ -303,7 +303,8 @@ async def main() -> None:
         target_factory=target_factory,
         security_claim=claim,
         scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
-        llm_config=LLMConfig(model="gpt-4o", api_base=api_base, api_key=api_key, max_cost=5.0),
+        llm_config=LLMConfig(model="gpt-4o", api_base=api_base, api_key=api_key),
+        task_cost_cap_usd=5.0,
         include_feedback=True,
         results_dir="results/crescendo-user_response",
     )
