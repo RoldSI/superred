@@ -5,11 +5,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SuperRed: AI red-teaming and AI system security framework</title>
-  <meta name="description" content="SuperRed is a modular framework for red-teaming AI systems: run any attacker against any AI system with any threat model.">
+  {% include head-meta.html
+     title="SuperRed: Open-source AI red-teaming and AI system security framework"
+     description="SuperRed is a modular Python framework for red-teaming AI systems: run any attacker against any AI system under any threat model, and score it on standard safety benchmarks." %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Candal&family=Mr+Dafoe&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/home.css">
   <link rel="stylesheet" href="/assets/site.css">
 </head>
@@ -27,12 +28,24 @@
       <span class="lobe bubble"></span>
       <span class="hero-grain"></span>
     </div>
-    <h1>SuperRed</h1>
-    <p class="tagline">Open source AI red-teaming and AI system security framework</p>
+    <h1 class="wordmark"><span class="wm-super">Super</span><span class="wm-red">Red</span></h1>
     <p class="lead">Run <strong>any attacker</strong> against <strong>any AI system</strong> with <strong>any threat model</strong></p>
-    <p class="intro">SuperRed is a modular framework for red-teaming AI systems. Attackers, targets, and the benchmarks that score them are independent modules you combine freely, and you define the threat model down to exactly how much access and budget the attacker gets. The same setup evaluates a new attack against various systems and benchmarks, or a new system against various attacks.</p>
     <div class="cta">
-      <code class="hero-pip">pip install superred</code>
+      <button type="button" class="hero-pip" data-copy="pip install superred" data-tip="Click to copy" aria-label="Copy: pip install superred">
+        <span class="pip-text">pip install superred</span>
+        <span class="pip-copy-icon" aria-hidden="true">
+          <svg class="pip-ic-copy" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <svg class="pip-ic-check" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+      </button>
+      <span class="cta-or">or</span>
+      <button type="button" class="hero-pip" data-copy="uv tool install superred" data-tip="Click to copy" aria-label="Copy: uv tool install superred">
+        <span class="pip-text">uv tool install superred</span>
+        <span class="pip-copy-icon" aria-hidden="true">
+          <svg class="pip-ic-copy" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <svg class="pip-ic-check" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+      </button>
       <span class="cta-and">and</span>
       <a class="btn btn-primary" href="/guide/">Get started</a>
     </div>
@@ -92,9 +105,7 @@
         </div>
       </figure>
 
-    <p>Published attacks on AI systems and the benchmarks that measure them are scattered across one-off codebases. Each attack is wired to the system it was first demonstrated on, and each benchmark ships its own runner. Answering a simple question (<em>does this attack beat that system, and how much access does it take?</em>) usually means re-implementing one against the other by hand.</p>
-    <p>SuperRed pulls those pieces apart. The controller is the framework, and the optimizer, target, and security claim are interchangeable modules you plug into it. They never touch each other: they meet only at the controller, which runs them and enforces how much access the attacker actually gets, so swapping any one of them leaves the other two untouched.</p>
-    <p>So a new attack can be measured against many systems and benchmarks on the day it is published, and a new system can be put in front of every attack already in the library. The comparison stops being a re-implementation project and becomes a change of one argument.</p>
+    <p>Attacks and benchmarks live in one-off codebases, each wired to the system it was first demonstrated on. SuperRed pulls the pieces apart: the optimizer, target, and security claim are interchangeable modules that meet only at the controller. Swap any one and the comparison becomes a change of a single argument, not a re-implementation project.</p>
     </div>
   </section>
 
@@ -164,7 +175,7 @@
     <h2>Attackers, targets, and benchmarks are all first-class</h2>
     </div>
     <div class="section-body">
-    <p>An attack, a system under test, and the benchmark that scores it are the same kind of thing here: interchangeable modules. Hold any of them fixed to evaluate it, so everyone shares a single toolbox where every contribution strengthens the rest.</p>
+    <p>Attack, system, and benchmark are the same kind of thing here: interchangeable modules. Hold any one fixed to evaluate it; every contribution strengthens a shared toolbox.</p>
     <div class="audience">
       <article class="aud-card">
         <h3 class="aud-title">For red-teamers</h3>
@@ -303,9 +314,18 @@
     <h2>Install, write a short script, run an evaluation</h2>
     </div>
     <div class="section-body">
-    <p>Install the framework from PyPI: <code>pip install superred</code></p>
-    <p>Then point an attacker at a target, choose what counts as broken, and say what the attacker is allowed to control:</p>
-    {% highlight python %}
+    <p>Point an attacker at a target, choose what counts as broken, and say what the attacker may control:</p>
+    <div class="runnable" id="demo" data-view="code">
+      <div class="runnable-tabs" role="tablist" aria-label="Example">
+        <button type="button" class="runnable-tab" id="tab-code" role="tab" aria-controls="panel-code" aria-selected="true" data-view="code">Code</button>
+        <button type="button" class="runnable-tab" id="tab-output" role="tab" aria-controls="panel-output" aria-selected="false" data-view="output">Output</button>
+        <button type="button" class="runnable-run" id="demo-run" aria-controls="panel-output">
+          <span class="rr-icon" aria-hidden="true">&#9654;</span> Run
+        </button>
+      </div>
+      <div class="runnable-panels">
+        <div class="runnable-panel runnable-code" id="panel-code" role="tabpanel" aria-labelledby="tab-code">
+{% highlight python %}
 chatbot = lambda: ChatbotTarget(model="gpt-4o-mini", api_key=key)
 
 controller = Controller(
@@ -318,6 +338,10 @@ controller = Controller(
 )
 await controller.run()
 {% endhighlight %}
+        </div>
+        <pre class="runnable-panel runnable-out" id="panel-output" role="tabpanel" aria-labelledby="tab-output" aria-live="polite" hidden></pre>
+      </div>
+    </div>
     <p class="muted" style="margin-top:1.2rem"><a href="/guide/">The full walk-through, in the guide &rarr;</a></p>
     </div>
   </section>
@@ -344,7 +368,163 @@ await controller.run()
     </div>
   </section>
 
+  <!-- ===== USED BY ===== -->
+  <!-- Honest framing: individuals (researchers, students, engineers) from these
+       orgs use SuperRed, not an institutional license or endorsement. The
+       heading attributes to people, and the marks are plain text wordmarks
+       (not official brand logo files) to avoid misusing trademarked assets. -->
+  <section class="usedby" id="usedby" aria-label="Who uses SuperRed">
+    <p class="usedby-kicker" tabindex="0" data-tip="Named individuals, not institutional endorsements.">Used by researchers from</p>
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track">
+        {%- comment -%}
+          Brand-styled text logos (not official logo files). The set is
+          repeated four times so the track always stays wider than the viewport
+          and the -25% loop is seamless. Captured in a snippet so every copy
+          stays identical.
+        {%- endcomment -%}
+        {% capture ub_set %}
+          <img class="ub-logo ub-aws" src="/assets/img/logos/aws.svg" alt="AWS" width="101" height="60" loading="lazy">
+          <img class="ub-logo ub-google" src="/assets/img/logos/google.svg" alt="Google" width="178" height="60" loading="lazy">
+          <img class="ub-logo ub-eth" src="/assets/img/logos/eth.svg" alt="ETH Zürich" width="360" height="60" loading="lazy">
+          <img class="ub-logo ub-berkeley" src="/assets/img/logos/berkeley.svg" alt="UC Berkeley" width="191" height="60" loading="lazy">
+          <img class="ub-logo ub-meta" src="/assets/img/logos/meta.svg" alt="Meta" width="298" height="60" loading="lazy">
+        {% endcapture %}
+        {{ ub_set }}{{ ub_set }}{{ ub_set }}{{ ub_set }}
+      </div>
+    </div>
+  </section>
+
   {% include site-footer.html %}
+
+  <!-- Runnable demo: a scripted, honest simulation of what a real superred run
+       looks like. No backend, no code execution; the lines are pre-written and
+       typed out to convey the attack loop (attacker → target → score → result).
+       Respects prefers-reduced-motion by rendering the final state at once. -->
+  <script>
+  (function () {
+    var demo = document.getElementById('demo');
+    var btn = document.getElementById('demo-run');
+    var out = document.getElementById('panel-output');
+    var codePanel = document.getElementById('panel-code');
+    var tabCode = document.getElementById('tab-code');
+    var tabOut = document.getElementById('tab-output');
+    if (!demo || !btn || !out) return;
+
+    // Tabs: swap which panel shows and reflect state for assistive tech.
+    function show(view) {
+      var showOut = view === 'output';
+      demo.setAttribute('data-view', view);
+      out.hidden = !showOut;
+      codePanel.hidden = showOut;
+      tabOut.setAttribute('aria-selected', showOut ? 'true' : 'false');
+      tabCode.setAttribute('aria-selected', showOut ? 'false' : 'true');
+    }
+    tabCode.addEventListener('click', function () { show('code'); });
+    tabOut.addEventListener('click', function () { show('output'); });
+
+    // Each step: text line, and how it renders. `bar` grows a progress meter.
+    var script = [
+      { t: '$ python evaluate.py', cls: 'o-cmd', pause: 320 },
+      { t: 'superred · controller starting', cls: 'o-dim', pause: 260 },
+      { t: 'scope = {user} · llm = gpt-4o · budget = $5.00 / task', cls: 'o-dim', pause: 420 },
+      { t: '', pause: 120 },
+      { t: '→ PAIR attempt 1/5 · crafting adversarial prompt…', cls: 'o-atk', pause: 520 },
+      { t: '← target (gpt-4o-mini): "I can’t help with that."', cls: 'o-tgt', pause: 300 },
+      { t: '  harmbench score 0.08', cls: 'o-lo', bar: 0.08, pause: 460 },
+      { t: '→ PAIR attempt 3/5 · refining with feedback…', cls: 'o-atk', pause: 520 },
+      { t: '← target: partial compliance', cls: 'o-tgt', pause: 300 },
+      { t: '  harmbench score 0.61', cls: 'o-mid', bar: 0.61, pause: 520 },
+      { t: '→ PAIR attempt 5/5 · escalating…', cls: 'o-atk', pause: 500 },
+      { t: '← target: goal reached', cls: 'o-tgt', pause: 300 },
+      { t: '  harmbench score 0.94', cls: 'o-hi', bar: 0.94, pause: 560 },
+      { t: '', pause: 160 },
+      { t: '✓ run complete · ASR 42% (5/12 goals) · spend $1.87 / $5.00', cls: 'o-done', pause: 0 }
+    ];
+
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function barLine(score) {
+      var width = 24, filled = Math.round(score * width);
+      var pct = Math.round(score * 100);
+      return '  [' + Array(filled + 1).join('▮') + Array(width - filled + 1).join('░') + '] ' + pct + '%';
+    }
+
+    function line(step) {
+      var div = document.createElement('div');
+      if (step.cls) div.className = step.cls;
+      div.textContent = step.t;
+      out.appendChild(div);
+      if (typeof step.bar === 'number') {
+        var b = document.createElement('div');
+        b.className = 'o-bar';
+        b.textContent = barLine(step.bar);
+        out.appendChild(b);
+      }
+      out.scrollTop = out.scrollHeight;
+    }
+
+    function reset() { out.textContent = ''; }
+
+    function runAll() {
+      show('output');           // flip to the Output tab, then play the run
+      btn.disabled = true;
+      reset();
+      if (reduce) {
+        script.forEach(line);
+        finish();
+        return;
+      }
+      var i = 0;
+      (function next() {
+        if (i >= script.length) { finish(); return; }
+        var step = script[i++];
+        line(step);
+        setTimeout(next, step.pause);
+      })();
+    }
+
+    function finish() {
+      btn.disabled = false;
+      btn.querySelector('.rr-icon').innerHTML = '&#8635;';
+      btn.childNodes[btn.childNodes.length - 1].nodeValue = ' Run again';
+    }
+
+    btn.addEventListener('click', runAll);
+  })();
+  </script>
+
+  <!-- Click-to-copy for the install pills. -->
+  <script>
+  (function () {
+    var pips = document.querySelectorAll('.hero-pip[data-copy]');
+    pips.forEach(function (pip) {
+      var reset;
+      var defaultTip = pip.getAttribute('data-tip') || 'Click to copy';
+      pip.addEventListener('click', function () {
+        var text = pip.getAttribute('data-copy');
+        var done = function () {
+          pip.classList.add('copied');
+          pip.setAttribute('data-tip', 'Copied!');
+          clearTimeout(reset);
+          reset = setTimeout(function () {
+            pip.classList.remove('copied');
+            pip.setAttribute('data-tip', defaultTip);
+          }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, done);
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta); done();
+        }
+      });
+    });
+  })();
+  </script>
 
 </body>
 </html>
