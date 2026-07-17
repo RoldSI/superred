@@ -844,9 +844,9 @@ a { color: var(--ink); }
   padding: 2.2rem 2rem;
   border: 1px solid var(--line);
   border-radius: 6px;
-  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
 }
-.sd-box:hover { border-color: #d8d8d8; box-shadow: var(--shadow-md); }
+.sd-box:hover { border-color: #d8d8d8; box-shadow: var(--shadow-md); transform: translateY(-3px); }
 /* the individual nodes lift a touch when you hover the diagram */
 .sd-node { transition: box-shadow 160ms var(--ease), transform 160ms var(--ease); }
 .sd-box:hover .sd-node { box-shadow: var(--shadow-sm); }
@@ -1238,9 +1238,9 @@ a { color: var(--ink); }
   background: #ffffff;
   padding: 0.55rem;
   overflow: hidden;
-  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease), transform 160ms var(--ease);
 }
-.results-shot:hover { border-color: #d8d8d8; box-shadow: var(--shadow-md); }
+.results-shot:hover { border-color: #d8d8d8; box-shadow: var(--shadow-md); transform: translateY(-3px); }
 .results-shot img {
   display: block;
   width: 100%;
