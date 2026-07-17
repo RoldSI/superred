@@ -45,7 +45,7 @@ The controller passes a constrained `LLMClient` to `initialize()`. The base clas
 
 - **`self.llm`** property, returns the `LLMClient`. Available after `super().initialize()` is called.
 
-The `LLMClient` locks the model, API base, and API key, the optimizer cannot change them. Cost budget (`max_cost` in USD) is enforced by the client via pre-call checks that raise `BudgetExhaustedError`. Cost is computed per call via `litellm.completion_cost()`.
+The `LLMClient` locks the model, API base, and API key, the optimizer cannot change them. A cost cap (`cost_cap_usd` in USD, set by the caller; for the attacker it is the controller's `task_cost_cap_usd`) is enforced by the client via pre-call checks that raise `BudgetExhaustedError`. Cost is computed per call via `litellm.completion_cost()`.
 
 ```python
 async def on_event(self, event):

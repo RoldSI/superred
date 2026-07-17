@@ -976,7 +976,7 @@ class TestPerTaskScopeEndToEnd:
         assert claim_payload["scope_label"] == "persist label/v1"
         assert claim_payload["scope"] == []
         assert claim_payload["read_only"] == []
-        assert claim_payload["version"] == 2
+        assert claim_payload["version"] == 3
 
         subfolder = tmp_path / claim_name.removesuffix(".json")
         assert subfolder.is_dir()

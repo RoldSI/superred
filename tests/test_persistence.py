@@ -101,10 +101,9 @@ def test_llm_config_excludes_api_key_and_base() -> None:
         model="gpt-4o-mini",
         api_base="https://internal.example.com/secret-path",
         api_key="sk-LIVE-DO-NOT-LEAK",
-        max_cost=1.5,
     )
     payload = _serialize_llm_config(cfg)
-    assert payload == {"model": "gpt-4o-mini", "max_cost": 1.5}
+    assert payload == {"model": "gpt-4o-mini"}
     blob = json.dumps(payload)
     assert "sk-LIVE-DO-NOT-LEAK" not in blob
     assert "internal.example.com" not in blob
@@ -389,6 +388,7 @@ def _build_minimal_tmr(scope: Scope, read_only: Scope = frozenset()) -> ThreatMo
         scope=scope,
         read_only=read_only,
         llm_config=LLMConfig(model="m", api_base="x", api_key="SECRET"),
+        task_cost_cap_usd=2.5,
         task_results=[task_result],
         skipped_tasks=[],
     )
@@ -402,7 +402,8 @@ def test_serialize_claim_level_shape() -> None:
     datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
     assert payload["scope"] == ["external"]
     assert payload["read_only"] == []
-    assert payload["llm_config"] == {"model": "m", "max_cost": None}
+    assert payload["llm_config"] == {"model": "m"}
+    assert payload["task_cost_cap_usd"] == 2.5
     assert payload["summary"]["n_tasks"] == 1
     assert payload["summary"]["n_success"] == 1
     assert payload["summary"]["mean_primary_score"] == 0.7
@@ -453,7 +454,8 @@ def test_detail_file_is_self_contained(tmp_path: Path) -> None:
     assert detail["version"] == SCHEMA_VERSION
     assert detail["scope"] == ["external"]
     assert detail["read_only"] == []
-    assert detail["llm_config"] == {"model": "m", "max_cost": None}
+    assert detail["llm_config"] == {"model": "m"}
+    assert detail["task_cost_cap_usd"] == 2.5
     assert detail["task"]["goal"] == "Test goal"
     assert detail["stop_reason"] == "done"
     assert len(detail["runs"]) == 1

@@ -20,16 +20,10 @@ class TestLLMConfig:
             model="gpt-4o-mini",
             api_base="http://localhost:8000",
             api_key="sk-test-key-123",
-            max_cost=1.50,
         )
         assert config.model == "gpt-4o-mini"
         assert config.api_base == "http://localhost:8000"
         assert config.api_key == "sk-test-key-123"
-        assert config.max_cost == 1.50
-
-    def test_defaults_are_none(self) -> None:
-        config = LLMConfig(model="m", api_base="b", api_key="k")
-        assert config.max_cost is None
 
     def test_frozen(self) -> None:
         config = LLMConfig(model="m", api_base="b", api_key="k")
@@ -210,13 +204,13 @@ class TestLLMClient:
 
     @patch("superred.core.llm.completion_cost", return_value=0.60)
     @patch("superred.core.llm.acompletion")
-    async def test_budget_max_cost(
+    async def test_budget_cost_cap(
         self,
         mock_acompletion: AsyncMock,
         _mock_cost: MagicMock,
     ) -> None:
         mock_acompletion.return_value = _make_mock_response()
-        client = LLMClient(self._make_config(max_cost=1.00))
+        client = LLMClient(self._make_config(), cost_cap_usd=1.00)
 
         await client.complete([{"role": "user", "content": "a"}])
         assert client.usage.cost == pytest.approx(0.60)
@@ -224,7 +218,7 @@ class TestLLMClient:
         await client.complete([{"role": "user", "content": "b"}])
         assert client.usage.cost == pytest.approx(1.20)
 
-        with pytest.raises(BudgetExhaustedError, match="Cost limit reached"):
+        with pytest.raises(BudgetExhaustedError, match="Cost cap reached"):
             await client.complete([{"role": "user", "content": "c"}])
 
     @patch("superred.core.llm.completion_cost", return_value=1.00)
@@ -234,16 +228,16 @@ class TestLLMClient:
         mock_acompletion: AsyncMock,
         _mock_cost: MagicMock,
     ) -> None:
-        """Cost exactly equal to max_cost triggers BudgetExhaustedError."""
+        """Cost exactly equal to the cap triggers BudgetExhaustedError."""
         mock_acompletion.return_value = _make_mock_response()
-        client = LLMClient(self._make_config(max_cost=1.00))
+        client = LLMClient(self._make_config(), cost_cap_usd=1.00)
 
         # First call: $0 < $1.00 → allowed, cost becomes $1.00
         await client.complete([{"role": "user", "content": "a"}])
         assert client.usage.cost == pytest.approx(1.00)
 
         # Second call: $1.00 >= $1.00 → blocked
-        with pytest.raises(BudgetExhaustedError, match="Cost limit reached"):
+        with pytest.raises(BudgetExhaustedError, match="Cost cap reached"):
             await client.complete([{"role": "user", "content": "b"}])
 
     @patch("superred.core.llm.completion_cost", return_value=0.001)
@@ -307,7 +301,6 @@ class TestControllerLLMIntegration:
             model="test-model",
             api_base="http://test",
             api_key="sk-test",
-            max_cost=5.00,
         )
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
@@ -316,6 +309,7 @@ class TestControllerLLMIntegration:
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_config=config,
+            task_cost_cap_usd=5.00,
         )
         await controller.run()
 
@@ -465,7 +459,6 @@ class TestBudgetExhaustionGraceful:
             model="test-model",
             api_base="http://test",
             api_key="sk-test",
-            max_cost=1.00,
         )
         target = StubTarget()
         scope: Scope = frozenset({EXTERNAL_TAG})
@@ -475,6 +468,7 @@ class TestBudgetExhaustionGraceful:
             target_factory=TargetFactory.singleton(target),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_config=config,
+            task_cost_cap_usd=1.00,
             max_runs_per_task=10,
         )
         result = await controller.run()
@@ -535,7 +529,6 @@ class TestBudgetExhaustionGraceful:
             model="test-model",
             api_base="http://test",
             api_key="sk-test",
-            max_cost=0.50,
         )
         scope: Scope = frozenset({EXTERNAL_TAG})
         controller = Controller(
@@ -544,6 +537,7 @@ class TestBudgetExhaustionGraceful:
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_config=config,
+            task_cost_cap_usd=0.50,
         )
         result = await controller.run()
 
@@ -604,7 +598,6 @@ class TestBudgetExhaustionGraceful:
             model="test-model",
             api_base="http://test",
             api_key="sk-test",
-            max_cost=0.50,
         )
         task_a = StubTask(goal_text="Task A")
         task_b = StubTask(goal_text="Task B")
@@ -615,6 +608,7 @@ class TestBudgetExhaustionGraceful:
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([task_a, task_b]),
             llm_config=config,
+            task_cost_cap_usd=0.50,
         )
         result = await controller.run()
 

@@ -33,14 +33,14 @@ in one short program:
 
 ## Install
 
-Install the framework from PyPI, plus the three small demo modules used in the
-example below. The `⚠️` marks packages not yet published on PyPI:
+Install the framework from PyPI, along with the three small demo modules used in
+the example below:
 
 ```bash
 pip install superred
-pip install basic-llm-chat-target        # ⚠️
-pip install basic-prompt-list-optimizer  # ⚠️
-pip install basic-secret-leak-claim      # ⚠️
+pip install superred-target-minimal-llm-chat
+pip install superred-optimizer-demo-prompt-list
+pip install superred-claim-demo-secret-leak
 ```
 
 The target reaches the model through [litellm](https://docs.litellm.ai/), so it
@@ -71,10 +71,10 @@ pool, with the factory sizing that pool to the resources of the host it runs on:
 
 ```python
 from superred.core.controller import TargetFactory
-from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
+from minimal_llm_chat import MinimalLLMChatTarget, USER_INPUT_TAG
 
 target = TargetFactory(
-    create=lambda: BasicLLMChatTarget(
+    create=lambda: MinimalLLMChatTarget(
         model="gpt-4o-mini", api_base=api_base, api_key=api_key
     ),
 )
@@ -84,9 +84,9 @@ target = TargetFactory(
 secret in the system prompt and marks the run a success if the model reveals it:
 
 ```python
-from basic_secret_leak_claim import basic_secret_leak_claim
+from demo_secret_leak_claim import demo_secret_leak_claim
 
-claim = basic_secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
+claim = demo_secret_leak_claim(secret="TIGER-42", trigger="spaghetti")
 ```
 
 **The controller: one threat model.** It wires the attacker, target, and claim
@@ -96,10 +96,10 @@ needs no model of its own:
 
 ```python
 from superred.core.controller import Controller
-from basic_prompt_list_optimizer import BasicPromptListOptimizer
+from demo_prompt_list_optimizer import DemoPromptListOptimizer
 
 controller = Controller(
-    optimizer_factory=lambda: BasicPromptListOptimizer(),
+    optimizer_factory=lambda: DemoPromptListOptimizer(),
     target_factory=target,
     security_claim=claim,
     scope=frozenset({USER_INPUT_TAG}),

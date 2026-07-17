@@ -274,7 +274,8 @@ compared at equal cost.
 
 ### Budget exhaustion
 
-When the cumulative cost reaches the configured `max_cost`, the next
+When the cumulative cost reaches the configured cost cap (the attacker's
+`Controller.task_cost_cap_usd`), the next
 `self.llm.complete(...)` raises `BudgetExhaustedError`. You normally do **not**
 need to catch it: the Controller catches it, ends the task cleanly with
 `stop_reason="budget_exhausted"`, and preserves the runs you completed. Only
@@ -286,11 +287,11 @@ client that raises `BudgetExhaustedError` on the first call. Non-LLM optimizers
 
 ## Worked example: a fixed prompt list (no LLM)
 
-The simplest possible optimizer, shipped as `test_basic_prompt_list`. One prompt
+The simplest possible optimizer, shipped as `demo_prompt_list`. One prompt
 per run; signals `done` when the list is exhausted.
 
 ```python
-class BasicPromptListOptimizer(Optimizer):
+class DemoPromptListOptimizer(Optimizer):
     def __init__(self, prompts: list[str] | None = None) -> None:
         super().__init__()
         self._prompts = prompts if prompts is not None else list(DEFAULT_PROMPTS)

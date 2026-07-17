@@ -333,7 +333,8 @@ controller = Controller(
     target_factory=TargetFactory(create=chatbot),        # the system under test
     security_claim=harmbench_claim(),                    # what counts as broken
     scope=frozenset({USER_TAG}),                         # the attacker's capabilities
-    llm_config=LLMConfig(model="gpt-4o", api_key=key, max_cost=5.0),  # model + budget
+    llm_config=LLMConfig(model="gpt-4o", api_key=key),   # the attacker's model
+    task_cost_cap_usd=5.0,                               # per-task attacker budget (USD)
 )
 await controller.run()
 {% endhighlight %}

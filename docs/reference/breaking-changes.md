@@ -6,7 +6,31 @@ permalink: /reference/breaking-changes
 
 # Breaking Changes
 
-## v0.2.0 (unreleased)
+## v0.2.0
+
+### `LLMConfig.max_cost` removed; attacker budget moves to `Controller(task_cost_cap_usd=...)`
+
+`LLMConfig` is now pure access (`model`, `api_base`, `api_key`); its `max_cost`
+field is removed. The attacker's per-task cost cap is now a `Controller`
+parameter, `task_cost_cap_usd` (USD, `None` = unlimited). A fresh `LLMClient` is
+built per task, so it caps the attacker's cumulative spend per task and resets
+each task (a full run costs up to about `num_tasks * task_cost_cap_usd`).
+
+Judges and other direct `LLMClient` users are no longer budgeted through
+`LLMConfig`. A judge built from a plain `LLMConfig` is now unlimited; a caller
+that wants a cap passes it to the client directly:
+`LLMClient(config, cost_cap_usd=...)`.
+
+Persisted output (`SCHEMA_VERSION` bumped `2` → `3`): the `llm_config` block
+no longer carries `max_cost`; the attacker cap is written as a top-level
+`task_cost_cap_usd` in both the claim-level file and each per-task detail file.
+
+**Migration**:
+
+- Attacker: move the budget from `LLMConfig(..., max_cost=X)` to
+  `Controller(..., task_cost_cap_usd=X)`.
+- Judge / other direct `LLMClient` users: drop `max_cost` from the `LLMConfig`.
+  To keep a cap, pass `LLMClient(config, cost_cap_usd=X)`.
 
 ### Per-task scope: `scope` and `read_only` may be a `ScopeResolver` (additive)
 
@@ -215,9 +239,9 @@ The `superred` package now depends on `litellm>=1.0`. This is pulled in automati
 
 ### Cost-based budget enforcement
 
-`LLMConfig` now uses `max_cost: float | None` (USD) instead of the previous `max_calls`/`max_input_tokens`/`max_output_tokens` fields. `LLMUsage` now tracks `calls: int` and `cost: float` only (token fields removed). Budget enforcement is based on USD cost computed via `litellm.completion_cost()`.
+Budget enforcement is based on USD cost computed via `litellm.completion_cost()`, instead of the previous `max_calls`/`max_input_tokens`/`max_output_tokens` fields. `LLMUsage` now tracks `calls: int` and `cost: float` only (token fields removed). The cost cap is set via `Controller(task_cost_cap_usd=...)` for the attacker (see the entry above); other `LLMClient` users pass `cost_cap_usd`.
 
-**Migration**: Replace `max_calls=N` / `max_input_tokens=N` / `max_output_tokens=N` with `max_cost=X.XX` (USD amount). Remove any references to `input_tokens` or `output_tokens` on `LLMUsage`.
+**Migration**: Replace `max_calls=N` / `max_input_tokens=N` / `max_output_tokens=N` budgets with a USD cap via `Controller(task_cost_cap_usd=X.XX)`. Remove any references to `input_tokens` or `output_tokens` on `LLMUsage`.
 
 ### Controller takes optimizer_factory instead of optimizer
 

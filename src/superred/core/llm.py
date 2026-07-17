@@ -5,7 +5,8 @@ and passes it to the optimizer. The client locks the model, API base,
 and API key — the optimizer can only send messages and receive responses.
 
 Budget enforcement is pre-call: the client checks cumulative cost
-against the configured limit before making each LLM call.
+against its cost cap (``cost_cap_usd``, passed at construction) before
+making each LLM call.
 
 Uses litellm internally, so the response is a standard
 ``litellm.ModelResponse`` (OpenAI ``ChatCompletion`` format).
@@ -25,19 +26,23 @@ class LLMClient:
     """Constrained LLM client for optimizer use.
 
     The model, API base, and API key are fixed at construction by the
-    controller. The optimizer cannot change them.
+    caller. The optimizer cannot change them.
 
     Thread-safe: usage tracking is protected by a lock.
 
     Args:
-        config: The LLM configuration (model, credentials, budget limits).
+        config: The LLM access configuration (model + credentials).
+        cost_cap_usd: Maximum cumulative cost in USD for this client;
+            ``None`` (default) means unlimited. The controller passes the
+            attacker's ``task_cost_cap_usd`` here (a fresh client per task,
+            so it is a per-task cap); other callers pass their own cap.
     """
 
-    def __init__(self, config: LLMConfig) -> None:
+    def __init__(self, config: LLMConfig, cost_cap_usd: float | None = None) -> None:
         self._model = config.model
         self._api_base = config.api_base
         self._api_key = config.api_key
-        self._max_cost = config.max_cost
+        self._cost_cap_usd = cost_cap_usd
         self._lock = threading.Lock()
         self._calls = 0
         self._cost = 0.0
@@ -46,7 +51,7 @@ class LLMClient:
     def _make_noop(cls) -> LLMClient:
         """Create a zero-budget client for non-LLM optimizers.
 
-        The client is a real ``LLMClient`` with ``max_cost=0`` so any
+        The client is a real ``LLMClient`` with ``cost_cap_usd=0`` so any
         ``complete()`` call immediately raises ``BudgetExhaustedError``.
         """
         return cls(
@@ -54,8 +59,8 @@ class LLMClient:
                 model="noop",
                 api_base="http://noop",
                 api_key="noop",
-                max_cost=0,
-            )
+            ),
+            cost_cap_usd=0,
         )
 
     async def complete(
@@ -129,17 +134,17 @@ class LLMClient:
             )
 
     def _check_budget_pre_call(self) -> None:
-        """Raise BudgetExhaustedError if the cost limit has been reached."""
-        if self._max_cost is None:
+        """Raise BudgetExhaustedError if the cost cap has been reached."""
+        if self._cost_cap_usd is None:
             return
         with self._lock:
             current = LLMUsage(
                 calls=self._calls,
                 cost=self._cost,
             )
-        if current.cost >= self._max_cost:
+        if current.cost >= self._cost_cap_usd:
             raise BudgetExhaustedError(
-                f"Cost limit reached: ${current.cost:.6f}/${self._max_cost:.6f}",
+                f"Cost cap reached: ${current.cost:.6f}/${self._cost_cap_usd:.6f}",
                 usage=current,
             )
 
