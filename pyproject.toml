@@ -27,6 +27,9 @@ dependencies = [
     # because the chat<->responses bridge is circular. 1.89.0 fixes it, so the
     # constrained LLMClient can drive those models with no special-casing.
     "litellm>=1.89.0",
+    # Live progress dashboard (superred.core.reporting). Degrades to plain
+    # line output on a non-TTY, but the colored terminal UI is a core feature.
+    "rich>=14,<15",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
