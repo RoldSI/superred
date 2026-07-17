@@ -31,10 +31,12 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
@@ -46,10 +48,23 @@ from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.llm import LLMClient
 from superred.core.middleware import compose, security_domain_filter, trajectory_recorder
 from superred.core.persistence import (
-    prepare_results_dir,
-    task_detail_filename,
-    write_claim_summary,
-    write_task_detail,
+    ExperimentMeta,
+    ExperimentSession,
+    reconstruct_kept_task_result,
+    resolve_results_root,
+)
+from superred.core.reporting import (
+    DiagnosticEvent,
+    LoggingBridge,
+    ProgressReporter,
+    RunCompleteEvent,
+    TaskCompleteEvent,
+    TaskSkippedEvent,
+    TaskStartEvent,
+    ThreatModelContext,
+    ThreatModelEndEvent,
+    current_task,
+    resolve_reporter,
 )
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
@@ -154,12 +169,29 @@ class RunResult:
     Attributes:
         trajectory: The run trajectory.
         evaluation: The evaluation result for this run.
-        llm_usage: Cumulative optimizer LLM usage after this run.
+        llm_usage: Cumulative optimizer LLM usage after this run (a running
+            total across the task's runs, not this run's delta).
+        run_usage_delta: This run's own usage (``llm_usage`` minus the
+            previous run's cumulative snapshot).  Summing deltas across a
+            task's runs equals the task total; summing ``llm_usage`` does
+            not (it would multiply-count the cumulative snapshots).
+        started_at: Wall-clock UTC when this run started, or ``None``.
+        ended_at: Wall-clock UTC when this run finished, or ``None``.
+        evaluated: ``True`` if the score came from the evaluator; ``False``
+            for the synthetic zero appended on an error/budget path.
+        errored: ``True`` if the run raised mid-execution.
+        done: Whether the optimizer signalled it wanted to stop after this run.
     """
 
     trajectory: Trajectory
     evaluation: EvaluationResult
     llm_usage: LLMUsage
+    run_usage_delta: LLMUsage = LLMUsage()
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    evaluated: bool = True
+    errored: bool = False
+    done: bool = False
 
 
 @dataclass(frozen=True)
@@ -203,6 +235,8 @@ class TaskResult:
     scope: Scope = frozenset()
     read_only: Scope = frozenset()
     error: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -233,6 +267,8 @@ class ThreatModelResult:
     task_cost_cap_usd: float | None = None
     skipped_tasks: list[Task[Target]] = field(default_factory=list)
     scope_label: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 def _format_exception(exc: BaseException) -> str:
@@ -314,6 +350,75 @@ async def _swallow(coro: Awaitable[None], description: str) -> None:
         await coro
     except Exception:
         logger.exception("%s failed", description)
+
+
+# ---------------------------------------------------------------------------
+# Reporter-event builders (result objects -> progress payloads)
+# ---------------------------------------------------------------------------
+
+
+def _usage_delta(prev: LLMUsage, cur: LLMUsage) -> LLMUsage:
+    """This run's own usage: the cumulative snapshot minus the previous one."""
+    return LLMUsage(calls=cur.calls - prev.calls, cost=cur.cost - prev.cost)
+
+
+def _run_complete_event(index: int, goal: str, run_number: int, run: RunResult) -> RunCompleteEvent:
+    return RunCompleteEvent(
+        task_index=index,
+        goal=goal,
+        run_number=run_number,
+        primary_score=run.evaluation.primary_score.value,
+        success=run.evaluation.success,
+        evaluated=run.evaluated,
+        errored=run.errored,
+        done=run.done,
+        run_cost_delta_usd=run.run_usage_delta.cost,
+        cumulative_cost_usd=run.llm_usage.cost,
+    )
+
+
+def _task_complete_event(index: int, tr: TaskResult) -> TaskCompleteEvent:
+    return TaskCompleteEvent(
+        task_index=index,
+        goal=tr.task.goal.description,
+        success=tr.success,
+        stop_reason=tr.stop_reason,
+        best_score=tr.best_score.value,
+        n_runs=len(tr.runs),
+        cost_usd=tr.llm_usage.cost,
+        calls=tr.llm_usage.calls,
+        error=tr.error,
+    )
+
+
+def _threat_model_end_event(
+    ctx: ThreatModelContext,
+    result: ThreatModelResult,
+    started_at: datetime,
+    ended_at: datetime,
+) -> ThreatModelEndEvent:
+    trs = result.task_results
+    completed_reasons = ("done", "max_runs", "budget_exhausted")
+    n_success = sum(1 for t in trs if t.success)
+    n_completed = sum(1 for t in trs if t.stop_reason in completed_reasons)
+    n_error = sum(1 for t in trs if t.stop_reason == "error")
+    n_budget = sum(1 for t in trs if t.stop_reason == "budget_exhausted")
+    scores = [t.best_score.value for t in trs]
+    return ThreatModelEndEvent(
+        context=ctx,
+        n_tasks=len(trs),
+        n_success=n_success,
+        n_completed=n_completed,
+        n_error=n_error,
+        n_budget_exhausted=n_budget,
+        n_skipped=len(result.skipped_tasks),
+        asr=(n_success / n_completed) if n_completed else None,
+        max_primary_score=max(scores) if scores else None,
+        mean_primary_score=(sum(scores) / len(scores)) if scores else None,
+        total_calls=sum(t.llm_usage.calls for t in trs),
+        total_cost_usd=sum(t.llm_usage.cost for t in trs),
+        duration_s=(ended_at - started_at).total_seconds(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +520,13 @@ class Controller:
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
         scope_label: str | None = None,
+        persist: bool = True,
+        overwrite: bool = False,
+        reporter: ProgressReporter | None = None,
+        report: bool | Literal["auto"] = "auto",
+        attacker_label: str | None = None,
+        target_label: str | None = None,
+        claim_label: str | None = None,
     ) -> None:
         # ``scope`` (read & write: visible AND injectable; the classic
         # behavior) and ``read_only`` (visible-but-not-injectable tags) may
@@ -473,6 +585,13 @@ class Controller:
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
+        self._persist = persist
+        self._overwrite = overwrite
+        self._reporter_arg = reporter
+        self._report: bool | Literal["auto"] = report
+        self._attacker_label = attacker_label
+        self._target_label = target_label
+        self._claim_label = claim_label
 
     def _task_scope_for(self, task: Task[Target]) -> _TaskScope:
         """Resolve the scope enforced for *task* (once per task).
@@ -510,197 +629,278 @@ class Controller:
     async def run(self) -> ThreatModelResult:
         """Evaluate the security claim under this controller's threat model.
 
+        Streams live progress to a reporter (a shared rich dashboard on a TTY,
+        plain lines otherwise) and, unless disabled with ``persist=False``,
+        writes a self-describing result tree under the results root — resuming a
+        prior run of the same experiment so only errored tasks recompute.
+
         Returns:
-            A :class:`ThreatModelResult` for the configured
-            ``(scope, llm_config)``.  When ``results_dir`` is set,
-            per-task detail files are written incrementally as each
-            task completes, and the claim-level summary lands at the
-            end as a completion marker.
+            A :class:`ThreatModelResult` for the configured ``(scope,
+            llm_config)`` (kept + reran tasks merged in claim order).
         """
-        result, task_file_basenames = await self._iterate_tasks()
-        if self._results_dir is not None:
-            write_claim_summary(self._results_dir, result, task_file_basenames)
-        self._print_summary(result)
-        return result
+        tasks = list(self._security_claim)
+        meta = self._build_meta(n_tasks=len(tasks))
+        label = meta.dirname()
+        ctx = self._build_context(meta)
+        reporter = resolve_reporter(label, report=self._report, reporter=self._reporter_arg)
+        started_at = datetime.now(UTC)
+        reporter.on_threat_model_start(ctx)
 
-    # ------------------------------------------------------------------
-    # Task iteration (one threat model)
-    # ------------------------------------------------------------------
-
-    async def _iterate_tasks(self) -> tuple[ThreatModelResult, list[str]]:
-        """Iterate all tasks for a single threat model.
-
-        Tasks run concurrently bounded by ``target_factory.concurrency``.
-        Each in-flight task owns a fresh :class:`Target` produced by the
-        factory; the controller never shares a target across concurrent
-        tasks.  Results are collected in input order so the per-threat-
-        model output is deterministic across re-runs (modulo timing
-        non-determinism inside individual tasks).
-
-        Per-task error containment: errors raised during a task's run loop
-        are caught inside ``_run_task`` and reflected via
-        ``stop_reason="error"`` on the returned :class:`TaskResult`. Errors
-        raised *outside* the run loop — inside ``target_factory.create()``,
-        ``task.configure_target``, or ``optimizer.initialize`` — are caught
-        here as a backstop, recorded as a synthetic error
-        :class:`TaskResult`, and do not abort the threat model.
-
-        Incremental persistence: when ``results_dir`` is set, each
-        task's detail file is written as soon as its
-        :class:`TaskResult` is built — so an aborted run still leaves
-        every completed task on disk.  Returns the per-task file
-        basenames in the same order as ``task_results`` so the caller
-        can stitch them into the claim-level summary.
-        """
-        sem = asyncio.Semaphore(self._target_factory.concurrency)
-
-        subfolder: Path | None = None
-        if self._results_dir is not None:
-            # Up-front so FileExistsError fires before any task runs.  Naming
-            # uses the run-level scope (static mode) or the scope_label
-            # (dynamic mode); persistence derives the filename stem from these.
-            subfolder = prepare_results_dir(
-                self._results_dir,
-                self._naming_scope,
-                self._naming_read_only,
-                self._llm_config,
-                self._scope_label,
+        session: ExperimentSession | None = None
+        if self._persist:
+            root = resolve_results_root(self._results_dir)
+            session = ExperimentSession.open(
+                root, meta, [t.goal.description for t in tasks], overwrite=self._overwrite
             )
+            logger.info("superred: writing results to %s", session.experiment_dir)
 
-        async def run_one(
-            index: int,
-            task: Task[Target],
-        ) -> tuple[TaskResult | Task[Target], str | None]:
-            """Return ``(outcome, detail_basename)``.
+        rerun = set(session.plan.rerun) if session is not None else set(range(1, len(tasks) + 1))
+        keep = set(session.plan.keep) if session is not None else set()
 
-            *outcome* is a ``TaskResult`` when the task ran (success or
-            error) or the ``Task`` itself when it raised
-            ``NotApplicable``.  *detail_basename* is the filename of the
-            per-task JSON written into *subfolder* (``None`` when
-            persistence is disabled or the task was skipped).
-            """
-            async with sem:
-                outcome: TaskResult | Task[Target]
-                # Resolve the per-task scope first (constant in static mode).
-                # NotApplicable, or an empty resolved visibility, skips the
-                # task; any other resolver exception is contained here as a
-                # per-task error so one bad task can't abort the threat model.
-                try:
-                    task_scope = self._task_scope_for(task)
-                except NotApplicable:
-                    logger.info(
-                        "Task %r not applicable (scope resolver), skipping",
-                        task.goal.description,
-                    )
-                    return task, None
-                except Exception as exc:
-                    logger.exception(
-                        "Task %r: scope resolver failed, recording as error",
-                        task.goal.description,
-                    )
-                    outcome = _synthesize_empty_task_result(
-                        task,
-                        stop_reason="error",
-                        rationale="Scope resolver failed before run loop started.",
-                        exc=exc,
-                    )
-                else:
-                    # ``factory.create()`` may itself raise (e.g. a target whose
-                    # __init__ does network setup).  Contain it here so one
-                    # bad task can't take down the rest of the threat model
-                    # via ``asyncio.gather``'s first-exception behavior.
-                    try:
-                        target = self._target_factory.create()
-                    except Exception as exc:
-                        logger.exception(
-                            "Task %r: target_factory.create() failed, recording as error",
-                            task.goal.description,
-                        )
-                        outcome = _synthesize_empty_task_result(
-                            task,
-                            stop_reason="error",
-                            rationale="Unexpected error before run loop started.",
-                            exc=exc,
-                            scope=task_scope.write,
-                            read_only=task_scope.read_only,
-                        )
-                    else:
-                        try:
-                            try:
-                                outcome = await self._run_task(task, target, task_scope)
-                            except NotApplicable:
-                                logger.info(
-                                    "Task %r not applicable, skipping",
-                                    task.goal.description,
-                                )
-                                outcome = task
-                            except Exception as exc:
-                                logger.exception(
-                                    "Task %r: unexpected error before run loop, recording as error",
-                                    task.goal.description,
-                                )
-                                outcome = _synthesize_empty_task_result(
-                                    task,
-                                    stop_reason="error",
-                                    rationale="Unexpected error before run loop started.",
-                                    exc=exc,
-                                    scope=task_scope.write,
-                                    read_only=task_scope.read_only,
-                                )
-                        finally:
-                            # Released before the next task's semaphore slot opens.
-                            await _swallow(target.teardown(), "target.teardown post-task")
+        # Kept tasks are already on disk: pre-fill them into the live view and
+        # the merged result without re-running or re-reading their trajectories.
+        kept_results: dict[int, TaskResult] = {}
+        for i in sorted(keep):
+            assert session is not None
+            kept = reconstruct_kept_task_result(session.experiment_dir, i, tasks[i - 1])
+            kept_results[i] = kept
+            reporter.on_task_complete(_task_complete_event(i, kept))
 
-                # Incremental write. Basename is computed up front so the
-                # summary can record the intended path even if the write
-                # itself raises; skipped tasks have no detail file.  The detail
-                # file records the task's own enforced scope (read from outcome).
-                detail_basename: str | None = None
-                if subfolder is not None and isinstance(outcome, TaskResult):
-                    detail_basename = task_detail_filename(index, outcome.task.goal.description)
-                    try:
-                        write_task_detail(
-                            subfolder,
-                            detail_basename,
-                            outcome,
-                            self._llm_config,
-                            self._task_cost_cap_usd,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Task %r: failed to write per-task detail file (continuing)",
-                            task.goal.description,
-                        )
-                return outcome, detail_basename
+        # Bridge Python logging -> reporter (side pane) + per-task JSONL sink for
+        # the duration of the run; removed afterwards so the framework never
+        # leaves a handler on the root logger.
+        bridge = LoggingBridge(label, reporter, self._diagnostic_sink(session))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(bridge)
+        try:
+            reran, skipped = await self._iterate_tasks(tasks, rerun, session, reporter, label)
+        finally:
+            root_logger.removeHandler(bridge)
 
-        outcomes = await asyncio.gather(
-            *(run_one(i, t) for i, t in enumerate(self._security_claim, start=1)),
-        )
-
-        task_results: list[TaskResult] = []
-        skipped_tasks: list[Task[Target]] = []
-        task_file_basenames: list[str] = []
-        for outcome, basename in outcomes:
-            if isinstance(outcome, TaskResult):
-                task_results.append(outcome)
-                if subfolder is not None:
-                    # run_one always sets basename when persistence is on
-                    # (computed before the write attempt).
-                    assert basename is not None
-                    task_file_basenames.append(basename)
-            else:
-                skipped_tasks.append(outcome)
-
+        task_results = [
+            reran[i] if i in reran else kept_results[i]
+            for i in range(1, len(tasks) + 1)
+            if i in reran or i in kept_results
+        ]
+        ended_at = datetime.now(UTC)
         result = ThreatModelResult(
             scope=self._naming_scope,
             read_only=self._naming_read_only,
             llm_config=self._llm_config,
             task_cost_cap_usd=self._task_cost_cap_usd,
             task_results=task_results,
-            skipped_tasks=skipped_tasks,
+            skipped_tasks=[t for _, t in skipped],
             scope_label=self._scope_label,
+            started_at=started_at,
+            ended_at=ended_at,
         )
-        return result, task_file_basenames
+        reporter.on_threat_model_end(_threat_model_end_event(ctx, result, started_at, ended_at))
+        if session is not None:
+            try:
+                session.finalize(started_at, ended_at)
+            except Exception:
+                logger.exception("superred: failed to finalize results (continuing)")
+        return result
+
+    # ------------------------------------------------------------------
+    # Experiment identity + reporting helpers
+    # ------------------------------------------------------------------
+
+    def _attacker_name(self) -> str:
+        # Never construct an optimizer just to name it (fresh-per-task is an
+        # invariant, and construction may have side effects).  Use the label,
+        # else a class/function factory's name, else a generic default.
+        if self._attacker_label:
+            return self._attacker_label
+        name = getattr(self._optimizer_factory, "__name__", "")
+        return name if name and name != "<lambda>" else "optimizer"
+
+    def _build_meta(self, n_tasks: int) -> ExperimentMeta:
+        return ExperimentMeta(
+            attacker=self._attacker_name(),
+            target=self._target_label or "target",
+            claim=self._claim_label or type(self._security_claim).__name__,
+            model=self._llm_config.model if self._llm_config else None,
+            scope=tuple(sorted(t.name for t in self._naming_scope)),
+            read_only=tuple(sorted(t.name for t in self._naming_read_only)),
+            scope_label=self._scope_label,
+            task_cost_cap_usd=self._task_cost_cap_usd,
+            max_runs_per_task=self._max_runs_per_task,
+            include_feedback=self._include_feedback,
+            concurrency=self._target_factory.concurrency,
+            n_tasks=n_tasks,
+        )
+
+    def _build_context(self, meta: ExperimentMeta) -> ThreatModelContext:
+        return ThreatModelContext(
+            label=meta.dirname(),
+            attacker=meta.attacker,
+            target=meta.target,
+            claim=meta.claim,
+            model=meta.model,
+            scope=meta.scope,
+            read_only=meta.read_only,
+            scope_label=meta.scope_label,
+            task_cost_cap_usd=meta.task_cost_cap_usd,
+            max_runs_per_task=meta.max_runs_per_task,
+            include_feedback=meta.include_feedback,
+            concurrency=meta.concurrency,
+            n_tasks=meta.n_tasks,
+        )
+
+    def _diagnostic_sink(
+        self, session: ExperimentSession | None
+    ) -> Callable[[DiagnosticEvent], None] | None:
+        """Per-task JSONL log sink for the logging bridge (``None`` if no persist)."""
+        if session is None:
+            return None
+
+        def sink(ev: DiagnosticEvent) -> None:
+            try:
+                line = json.dumps(
+                    {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "level": ev.level,
+                        "logger_name": ev.logger_name,
+                        "task_index": ev.task_index,
+                        "message": ev.message,
+                    }
+                )
+                with open(session.task_log_path(ev.task_index), "a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+            except Exception:
+                pass
+
+        return sink
+
+    # ------------------------------------------------------------------
+    # Task iteration (one threat model)
+    # ------------------------------------------------------------------
+
+    async def _iterate_tasks(
+        self,
+        tasks: list[Task[Target]],
+        rerun: set[int],
+        session: ExperimentSession | None,
+        reporter: ProgressReporter,
+        label: str,
+    ) -> tuple[dict[int, TaskResult], list[tuple[int, Task[Target]]]]:
+        """Run the *rerun* set concurrently, streaming progress + persisting.
+
+        Only tasks in *rerun* execute; kept tasks are pre-loaded by the caller.
+        Each runs under a fresh target, with per-task diagnostics attributed via
+        the ``current_task`` contextvar and, when a session is given, its own
+        staging dir published atomically on completion.  Returns
+        ``(reran_results_by_index, skipped)`` where *skipped* pairs the 1-based
+        index with the ``Task`` that raised ``NotApplicable``.
+        """
+        sem = asyncio.Semaphore(self._target_factory.concurrency)
+
+        async def run_one(
+            index: int, task: Task[Target]
+        ) -> tuple[str, int, TaskResult | Task[Target]]:
+            async with sem:
+                token = current_task.set((label, index))
+                try:
+                    reporter.on_task_start(
+                        TaskStartEvent(task_index=index, goal=task.goal.description)
+                    )
+                    if session is not None:
+                        session.begin_task(index, task.goal.description)
+                    started = datetime.now(UTC)
+                    outcome = await self._execute_task(index, task, reporter)
+                    ended = datetime.now(UTC)
+                finally:
+                    current_task.reset(token)
+                if isinstance(outcome, TaskResult):
+                    outcome = replace(outcome, started_at=started, ended_at=ended)
+                    if session is not None:
+                        try:
+                            session.publish_task(index, outcome)
+                        except Exception:
+                            logger.exception(
+                                "Task %r: failed to persist (continuing)", task.goal.description
+                            )
+                    reporter.on_task_complete(_task_complete_event(index, outcome))
+                    return "result", index, outcome
+                reporter.on_task_skipped(
+                    TaskSkippedEvent(task_index=index, goal=task.goal.description)
+                )
+                if session is not None:
+                    session.mark_skipped(index, task.goal.description)
+                return "skip", index, task
+
+        outcomes = await asyncio.gather(*(run_one(i, tasks[i - 1]) for i in sorted(rerun)))
+
+        reran: dict[int, TaskResult] = {}
+        skipped: list[tuple[int, Task[Target]]] = []
+        for kind, index, obj in outcomes:
+            if kind == "result":
+                reran[index] = cast("TaskResult", obj)
+            else:
+                skipped.append((index, cast("Task[Target]", obj)))
+        return reran, skipped
+
+    async def _execute_task(
+        self, index: int, task: Task[Target], reporter: ProgressReporter
+    ) -> TaskResult | Task[Target]:
+        """Resolve scope, create the target, run the loop, tear down.
+
+        Contains every per-task error so one bad task cannot abort the threat
+        model.  Returns a :class:`TaskResult` (success/error/budget) or the
+        ``Task`` itself when it raised ``NotApplicable`` (skipped).
+        """
+        try:
+            task_scope = self._task_scope_for(task)
+        except NotApplicable:
+            logger.info("Task %r not applicable (scope resolver), skipping", task.goal.description)
+            return task
+        except Exception as exc:
+            logger.exception(
+                "Task %r: scope resolver failed, recording as error", task.goal.description
+            )
+            return _synthesize_empty_task_result(
+                task,
+                stop_reason="error",
+                rationale="Scope resolver failed before run loop started.",
+                exc=exc,
+            )
+        try:
+            target = self._target_factory.create()
+        except Exception as exc:
+            logger.exception(
+                "Task %r: target_factory.create() failed, recording as error",
+                task.goal.description,
+            )
+            return _synthesize_empty_task_result(
+                task,
+                stop_reason="error",
+                rationale="Unexpected error before run loop started.",
+                exc=exc,
+                scope=task_scope.write,
+                read_only=task_scope.read_only,
+            )
+        try:
+            try:
+                return await self._run_task(task, target, task_scope, reporter, index)
+            except NotApplicable:
+                logger.info("Task %r not applicable, skipping", task.goal.description)
+                return task
+            except Exception as exc:
+                logger.exception(
+                    "Task %r: unexpected error before run loop, recording as error",
+                    task.goal.description,
+                )
+                return _synthesize_empty_task_result(
+                    task,
+                    stop_reason="error",
+                    rationale="Unexpected error before run loop started.",
+                    exc=exc,
+                    scope=task_scope.write,
+                    read_only=task_scope.read_only,
+                )
+        finally:
+            await _swallow(target.teardown(), "target.teardown post-task")
 
     # ------------------------------------------------------------------
     # Per-task run
@@ -711,6 +911,8 @@ class Controller:
         task: Task[Target],
         target: Target,
         task_scope: _TaskScope,
+        reporter: ProgressReporter,
+        index: int,
     ) -> TaskResult:
         """Run the optimizer loop for a single task.
 
@@ -805,12 +1007,14 @@ class Controller:
         # the safety cap was reached.
         stop_reason: StopReason = "max_runs"
         error_text: str | None = None
+        prev_usage = LLMUsage()
 
         try:
             for run_number in range(1, self._max_runs_per_task + 1):
                 # Trajectory is owned by _run_task (not _run_single) so the
                 # partial trajectory survives any exception inside the run.
                 trajectory = Trajectory(filtered_scope=task_scope.visibility)
+                run_started = datetime.now(UTC)
                 try:
                     evaluation, done = await self._run_single(
                         task,
@@ -847,24 +1051,42 @@ class Controller:
                         rationale=f"Run {run_number} failed: {type(exc).__name__}: {exc}",
                     )
                     run_usage = llm_client.usage if llm_client else LLMUsage()
-                    runs.append(
-                        RunResult(
-                            trajectory=trajectory,
-                            evaluation=error_eval,
-                            llm_usage=run_usage,
-                        )
+                    error_run = RunResult(
+                        trajectory=trajectory,
+                        evaluation=error_eval,
+                        llm_usage=run_usage,
+                        run_usage_delta=_usage_delta(prev_usage, run_usage),
+                        started_at=run_started,
+                        ended_at=datetime.now(UTC),
+                        evaluated=False,
+                        errored=True,
+                        done=False,
+                    )
+                    prev_usage = run_usage
+                    runs.append(error_run)
+                    reporter.on_run_complete(
+                        _run_complete_event(index, task.goal.description, run_number, error_run)
                     )
                     stop_reason = "error"
                     break
 
                 # _run_single succeeded — record the run.
                 run_usage = llm_client.usage if llm_client else LLMUsage()
-                runs.append(
-                    RunResult(
-                        trajectory=trajectory,
-                        evaluation=evaluation,
-                        llm_usage=run_usage,
-                    )
+                run_result = RunResult(
+                    trajectory=trajectory,
+                    evaluation=evaluation,
+                    llm_usage=run_usage,
+                    run_usage_delta=_usage_delta(prev_usage, run_usage),
+                    started_at=run_started,
+                    ended_at=datetime.now(UTC),
+                    evaluated=True,
+                    errored=False,
+                    done=done,
+                )
+                prev_usage = run_usage
+                runs.append(run_result)
+                reporter.on_run_complete(
+                    _run_complete_event(index, task.goal.description, run_number, run_result)
                 )
                 if best_score is None or evaluation.primary_score.value > best_score.value:
                     best_score = evaluation.primary_score
@@ -1030,47 +1252,3 @@ class Controller:
         )
 
         return evaluation, done
-
-    # ------------------------------------------------------------------
-    # CLI output
-    # ------------------------------------------------------------------
-
-    def _print_summary(self, tmr: ThreatModelResult) -> None:
-        """Print a human-readable summary of one threat model."""
-        model_name = tmr.llm_config.model if tmr.llm_config else "(no LLM)"
-        if tmr.scope_label is not None:
-            # Dynamic mode: no single run scope; show the label.
-            scope_desc = f"{tmr.scope_label} (per-task)"
-        else:
-            scope_names = ", ".join(sorted(t.name for t in tmr.scope)) or "(none)"
-            if tmr.read_only:
-                ro_names = ", ".join(sorted(t.name for t in tmr.read_only))
-                scope_desc = f"[{scope_names}] read_only=[{ro_names}]"
-            else:
-                scope_desc = f"[{scope_names}]"
-        print("\n" + "=" * 60)
-        print(f"Threat model: scope={scope_desc} model={model_name}")
-        print("=" * 60)
-
-        for tr in tmr.task_results:
-            status = "SUCCEEDED" if tr.success else "FAILED"
-            print(
-                f"\n  [{status}] {tr.task.goal.description}"
-                f"\n    Best score: {tr.best_score.value:.4f}"
-                f"\n    Runs: {len(tr.runs)}"
-                f"\n    LLM usage: {tr.llm_usage.calls} calls,"
-                f" ${tr.llm_usage.cost:.6f}"
-            )
-
-        if tmr.skipped_tasks:
-            print(f"\n  Skipped: {len(tmr.skipped_tasks)} task(s) (NotApplicable)")
-
-        if tmr.task_results:
-            best = max(tr.best_score.value for tr in tmr.task_results)
-            total_success = sum(1 for tr in tmr.task_results if tr.success)
-            print(
-                f"\n  Overall: {total_success}/{len(tmr.task_results)} tasks succeeded"
-                f"\n  Highest score: {best:.4f}"
-            )
-
-        print("=" * 60 + "\n")

@@ -32,11 +32,14 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import logging
 import os
 import sys
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import IO, Literal, Protocol, TextIO, runtime_checkable
 
@@ -910,3 +913,62 @@ def _reset_for_tests() -> None:
         _DEFAULT_DASHBOARD = None
     with _ACTIVE_LIVE_LOCK:
         _ACTIVE_LIVE = None
+
+
+# ---------------------------------------------------------------------------
+# Logging bridge: Python logging -> reporter + per-task sink
+# ---------------------------------------------------------------------------
+
+# Set per task by the controller (label, 1-based index).  Contextvars propagate
+# across ``await`` within an asyncio task, so a log record emitted anywhere in a
+# task's coroutine chain reads the correct attribution.  Records from worker
+# threads that did not inherit the contextvar read ``None`` (experiment-level).
+current_task: ContextVar[tuple[str, int] | None] = ContextVar("superred_current_task", default=None)
+
+DiagnosticSink = Callable[[DiagnosticEvent], None]
+
+
+def _level_name(levelno: int) -> DiagnosticLevel:
+    if levelno >= logging.ERROR:
+        return "error"
+    if levelno >= logging.WARNING:
+        return "warning"
+    return "info"
+
+
+class LoggingBridge(logging.Handler):
+    """A ``logging.Handler`` that forwards records to a reporter + optional sink.
+
+    Attribution comes from the :data:`current_task` contextvar.  A record whose
+    context belongs to a *different* controller (different label) is ignored, so
+    concurrently-gathered controllers each handle only their own tasks' records;
+    unattributed records (``None`` context, e.g. worker threads) are handled at
+    experiment scope (``task_index=None``).
+    """
+
+    def __init__(
+        self, label: str, reporter: ProgressReporter, sink: DiagnosticSink | None = None
+    ) -> None:
+        super().__init__()
+        self._label = label
+        self._reporter = reporter
+        self._sink = sink
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            ref = current_task.get()
+            if ref is not None and ref[0] != self._label:
+                return
+            index = ref[1] if ref is not None else None
+            ev = DiagnosticEvent(
+                label=self._label,
+                task_index=index,
+                level=_level_name(record.levelno),
+                message=record.getMessage(),
+                logger_name=record.name,
+            )
+            self._reporter.on_diagnostic(ev)
+            if self._sink is not None:
+                self._sink(ev)
+        except Exception:  # a logging handler must never raise into user code
+            pass
