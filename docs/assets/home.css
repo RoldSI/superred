@@ -347,16 +347,16 @@ a { color: var(--ink); }
   will-change: opacity;
 }
 @keyframes aura-wash {
-  0%   { opacity: 0.30; }
-  16%  { opacity: 0.55; }
-  33%  { opacity: 0.72; }  /* near white */
-  50%  { opacity: 0.40; }
-  66%  { opacity: 0.78; }  /* whitest */
-  83%  { opacity: 0.52; }
-  100% { opacity: 0.30; }
+  0%   { opacity: 0.12; }
+  16%  { opacity: 0.28; }
+  33%  { opacity: 0.40; }  /* lightest bloom, still holds red */
+  50%  { opacity: 0.18; }
+  66%  { opacity: 0.44; }
+  83%  { opacity: 0.26; }
+  100% { opacity: 0.12; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .hero-aura::after { animation: none; opacity: 0.45; }
+  .hero-aura::after { animation: none; opacity: 0.22; }
 }
 .hero > *:not(.hero-aura) { position: relative; z-index: 1; }
 
@@ -547,7 +547,7 @@ a { color: var(--ink); }
   text-shadow: -8px 8px 0 #ed2121;
   -webkit-text-stroke: 0.5px #ed2121;
 }
-/* two clean red speed bars under "Super" — no box-shadow doubling (that read as
+/* two clean red speed bars under "Super": no box-shadow doubling (that read as
    extra stray lines). They echo the drop-shadow's down-left offset: the lower
    bar sits a touch shorter and inset, so they read as motion lines, not a stack. */
 .hero .wm-super::before,
@@ -1418,6 +1418,8 @@ a { color: var(--ink); }
   position: relative;
   width: 100%;
   overflow: hidden;
+  /* vertical room so the hover raise on a logo is not clipped by overflow */
+  padding: 0.5rem 0;
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
   mask-image: linear-gradient(to right, transparent 0, #000 12%, #000 88%, transparent 100%);
 }
@@ -1438,7 +1440,7 @@ a { color: var(--ink); }
 .marquee:hover .marquee-track { animation-play-state: paused; }
 @keyframes marquee-scroll {
   from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(-50%, 0, 0); }   /* half the track = one full set */
+  to   { transform: translate3d(-25%, 0, 0); }   /* one of four copies = one full set */
 }
 /* Real brand logo SVGs (official marks, bundled under assets/img/logos). They
    rest desaturated so the strip reads as one calm row, then bloom into full

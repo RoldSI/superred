@@ -6,7 +6,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   {% include head-meta.html
-     title="SuperRed: open-source AI red-teaming framework for LLM security"
+     title="SuperRed: Open-source AI red-teaming and AI system security framework"
      description="SuperRed is a modular Python framework for red-teaming AI systems: run any attacker against any AI system under any threat model, and score it on standard safety benchmarks." %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -175,7 +175,7 @@
     <h2>Attackers, targets, and benchmarks are all first-class</h2>
     </div>
     <div class="section-body">
-    <p>Attack, system, and benchmark are the same kind of thing here — interchangeable modules. Hold any one fixed to evaluate it; every contribution strengthens a shared toolbox.</p>
+    <p>Attack, system, and benchmark are the same kind of thing here: interchangeable modules. Hold any one fixed to evaluate it; every contribution strengthens a shared toolbox.</p>
     <div class="audience">
       <article class="aud-card">
         <h3 class="aud-title">For red-teamers</h3>
@@ -369,17 +369,18 @@ await controller.run()
 
   <!-- ===== USED BY ===== -->
   <!-- Honest framing: individuals (researchers, students, engineers) from these
-       orgs use SuperRed — not an institutional license or endorsement. The
+       orgs use SuperRed, not an institutional license or endorsement. The
        heading attributes to people, and the marks are plain text wordmarks
        (not official brand logo files) to avoid misusing trademarked assets. -->
   <section class="usedby" id="usedby" aria-label="Who uses SuperRed">
-    <p class="usedby-kicker" tabindex="0" data-tip="Named individuals — researchers, students and engineers — not institutional endorsements.">Used by researchers and builders from</p>
+    <p class="usedby-kicker" tabindex="0" data-tip="Named individuals, not institutional endorsements.">Used by researchers from</p>
     <div class="marquee" aria-hidden="true">
       <div class="marquee-track">
         {%- comment -%}
-          Brand-styled text logos (not official logo files). Each set is
-          duplicated so the marquee loops seamlessly. Captured in a snippet so
-          the two copies stay identical.
+          Brand-styled text logos (not official logo files). The set is
+          repeated four times so the track always stays wider than the viewport
+          and the -25% loop is seamless. Captured in a snippet so every copy
+          stays identical.
         {%- endcomment -%}
         {% capture ub_set %}
           <img class="ub-logo ub-aws" src="/assets/img/logos/aws.svg" alt="AWS" width="101" height="60" loading="lazy">
@@ -388,7 +389,7 @@ await controller.run()
           <img class="ub-logo ub-berkeley" src="/assets/img/logos/berkeley.svg" alt="UC Berkeley" width="191" height="60" loading="lazy">
           <img class="ub-logo ub-meta" src="/assets/img/logos/meta.svg" alt="Meta" width="298" height="60" loading="lazy">
         {% endcapture %}
-        {{ ub_set }}{{ ub_set }}
+        {{ ub_set }}{{ ub_set }}{{ ub_set }}{{ ub_set }}
       </div>
     </div>
   </section>
@@ -396,7 +397,7 @@ await controller.run()
   {% include site-footer.html %}
 
   <!-- Runnable demo: a scripted, honest simulation of what a real superred run
-       looks like. No backend, no code execution — the lines are pre-written and
+       looks like. No backend, no code execution; the lines are pre-written and
        typed out to convey the attack loop (attacker → target → score → result).
        Respects prefers-reduced-motion by rendering the final state at once. -->
   <script>
