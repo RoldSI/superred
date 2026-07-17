@@ -5,129 +5,283 @@ permalink: /modules
 ---
 {% capture suit_tip %}<b>chatbot</b>: a conversational model.<br><b>agentic</b>: a tool-calling agent with domain-specific tools (e.g. an HR system).<br><b>assistant</b>: a general-purpose tool-calling agent with computer and execution access.{% endcapture %}
 {% capture prov_tip %}<b>Author provided</b>: contributed by the original authors of the work.<br><b>Community port</b>: a re-implementation of published work, by us or the community.{% endcapture %}
-{% capture agentic_tip %}<b>Agentic extended</b>: the attack was generalized to run against any target, not only the specific setup of the original paper.{% endcapture %}
-<section class="section">
-  <div class="section-head">
-    <p class="eyebrow">Modules</p>
-    <h2>Attacks, targets, and benchmarks</h2>
-  </div>
-  <div class="section-body">
-    <p>Every attacker, target, and benchmark is an independent package that anyone can write and publish. To get you started, we provide a ready-to-use set of {{ site.data.modules.optimizers | size }} attackers, {{ site.data.modules.targets | size }} targets, and {{ site.data.modules.security_claims | size }} security claims for chatbot, agentic, and assistant use cases, growing with first-party modules and community ports. Each links to how to use it. The <code>⚠️</code> marks packages not yet published on PyPI.</p>
 
-    <div class="tabs">
-      <input type="radio" name="modtab" id="tab-attackers" checked>
-      <input type="radio" name="modtab" id="tab-targets">
-      <input type="radio" name="modtab" id="tab-claims">
-      <div class="tablist">
-        <label for="tab-attackers">Attackers <span class="n">{{ site.data.modules.optimizers | size }}</span></label>
-        <label for="tab-targets">Targets <span class="n">{{ site.data.modules.targets | size }}</span></label>
-        <label for="tab-claims">Security claims <span class="n">{{ site.data.modules.security_claims | size }}</span></label>
-        <span class="mod-filters">
-          <div class="dropdown" data-key="suit">
-            <button type="button" class="dropdown-toggle" data-default="Any target">Any target</button>
-            <div class="dropdown-menu">
-              <button type="button" data-value="">Any target</button>
-              <button type="button" data-value="assistant"><span class="mod-suit mod-suit-assistant">assistant</span></button>
-              <button type="button" data-value="agentic"><span class="mod-suit mod-suit-agentic">agentic</span></button>
-              <button type="button" data-value="chatbot"><span class="mod-suit mod-suit-chatbot">chatbot</span></button>
-            </div>
-          </div>
-          <div class="dropdown" data-key="prov">
-            <button type="button" class="dropdown-toggle" data-default="Any source">Any source</button>
-            <div class="dropdown-menu">
-              <button type="button" data-value="">Any source</button>
-              <button type="button" data-value="first"><span class="mod-src mod-src-first">Author provided</span></button>
-              <button type="button" data-value="port"><span class="mod-tag mod-tag-port">Community port</span></button>
-            </div>
-          </div>
-        </span>
+{%- comment -%}
+  One flat catalogue rendered as tiles. Each list (optimizers / targets /
+  security_claims) becomes a `type`, and every tile carries data-* attributes so
+  the sidebar (search + type + suit + source) can filter it entirely client-side.
+  Clicking a tile opens a modal with install / import / use instructions plus
+  links to the paper (and HuggingFace dataset, for benchmarks). Glyph is chosen
+  by type, tinted by the module's primary suit.
+{%- endcomment -%}
+{% assign attacker_n = site.data.modules.optimizers | size %}
+{% assign target_n = site.data.modules.targets | size %}
+{% assign claim_n = site.data.modules.security_claims | size %}
+{% assign total_n = attacker_n | plus: target_n | plus: claim_n %}
+
+<section class="section modules">
+  <div class="section-body mod-layout">
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Sidebar: search + type + suit + source                            -->
+    <!-- ---------------------------------------------------------------- -->
+    <aside class="mod-sidebar" aria-label="Filter modules">
+      <div class="mod-search">
+        <svg class="mod-search-icon" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+          <circle cx="9" cy="9" r="6"></circle><line x1="14" y1="14" x2="18" y2="18" stroke-linecap="round"></line>
+        </svg>
+        <input type="search" id="mod-q" placeholder="Search modules…" autocomplete="off" aria-label="Search modules by name or description">
       </div>
 
-      <div class="tabpanel panel-attackers">
-        <div class="mod-grid">
-          {% for m in site.data.modules.optimizers %}
-          <div class="mod-row" data-suit="{{ m.suit | join: ' ' }}" data-prov="{% if m.first_party %}first{% else %}port{% endif %}">
-            <div class="mod-name">
-              <span class="mod-title">{{ m.name }} <a class="mod-pip" href="/guide/using-modules#using-an-optimizer" title="Not yet published on PyPI">{{ m.pip }} ⚠️</a></span>
-              <span class="mod-meta">{% for s in m.suit %}<span class="hint"><span class="mod-suit mod-suit-{{ s }}">{{ s }}</span><span class="tip">{{ suit_tip }}</span></span>{% endfor %}{% unless m.first_party %}<span class="hint"><span class="mod-tag mod-tag-port">Community port</span><span class="tip">{{ prov_tip }}</span></span>{% endunless %}<span class="hint"><span class="mod-tag mod-tag-agentic">Agentic extended</span><span class="tip">{{ agentic_tip }}</span></span></span>
+      <nav class="mod-facet" aria-label="Module type">
+        <p class="mod-facet-h">Type</p>
+        <button type="button" class="mod-type is-active" data-type=""><span>All</span><span class="mod-count">{{ total_n }}</span></button>
+        <button type="button" class="mod-type" data-type="attacker"><span>Attackers</span><span class="mod-count">{{ attacker_n }}</span></button>
+        <button type="button" class="mod-type" data-type="target"><span>Targets</span><span class="mod-count">{{ target_n }}</span></button>
+        <button type="button" class="mod-type" data-type="claim"><span>Benchmarks</span><span class="mod-count">{{ claim_n }}</span></button>
+      </nav>
+
+      <fieldset class="mod-facet">
+        <legend class="mod-facet-h">Suit</legend>
+        <label class="mod-check"><input type="checkbox" class="f-suit" value="chatbot"><span class="mod-suit mod-suit-chatbot">chatbot</span></label>
+        <label class="mod-check"><input type="checkbox" class="f-suit" value="agentic"><span class="mod-suit mod-suit-agentic">agentic</span></label>
+        <label class="mod-check"><input type="checkbox" class="f-suit" value="assistant"><span class="mod-suit mod-suit-assistant">assistant</span></label>
+      </fieldset>
+
+      <fieldset class="mod-facet">
+        <legend class="mod-facet-h">Source</legend>
+        <label class="mod-check"><input type="checkbox" class="f-prov" value="first"><span class="mod-tag mod-tag-first">Author provided</span></label>
+        <label class="mod-check"><input type="checkbox" class="f-prov" value="port"><span class="mod-tag mod-tag-port">Community port</span></label>
+      </fieldset>
+
+      <button type="button" id="mod-reset" class="mod-reset" hidden>Reset filters</button>
+    </aside>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Tile grid: all three lists flattened into one grid                -->
+    <!-- ---------------------------------------------------------------- -->
+    <div class="mod-main">
+      <p class="mod-resultbar"><span id="mod-shown">{{ total_n }}</span> of {{ total_n }} modules</p>
+
+      <div class="mod-cards" id="mod-cards">
+        {%- assign groups = "attacker,target,claim" | split: "," -%}
+        {%- for g in groups -%}
+          {%- case g -%}
+            {%- when "attacker" -%}{% assign list = site.data.modules.optimizers %}{% assign href = "/guide/using-modules#using-an-optimizer" %}{% assign kind = "optimizer" %}
+            {%- when "target" -%}{% assign list = site.data.modules.targets %}{% assign href = "/guide/using-modules#using-a-target" %}{% assign kind = "target" %}
+            {%- when "claim" -%}{% assign list = site.data.modules.security_claims %}{% assign href = "/guide/using-modules#using-a-security-claim" %}{% assign kind = "security claim" %}
+          {%- endcase -%}
+          {%- for m in list -%}
+          {%- assign primary = m.suit | first -%}
+          <button type="button" class="mod-card"
+             data-type="{{ g }}"
+             data-kind="{{ kind }}"
+             data-name="{{ m.name | escape }}"
+             data-pip="{{ m.pip }}"
+             data-sym="{{ m.sym }}"
+             data-suit="{{ m.suit | join: ' ' }}"
+             data-prov="{% if m.first_party %}first{% else %}port{% endif %}"
+             data-blurb="{{ m.blurb | escape }}"
+             data-href="{{ href }}"
+             data-paper="{{ m.paper }}"
+             data-hf="{{ m.hf }}"
+             data-search="{{ m.name | downcase }} {{ m.blurb | downcase }} {{ m.pip }}">
+            <div class="mod-card-top">
+              <span class="mod-glyph mod-glyph-{{ primary }}" aria-hidden="true">{{ m.emoji }}</span>
             </div>
-            <div class="mod-desc">{{ m.blurb }}</div>
-          </div>
-          {% endfor %}
-        </div>
+            <div class="mod-card-name">{{ m.name }}</div>
+            <div class="mod-card-blurb">{{ m.blurb }}</div>
+          </button>
+          {%- endfor -%}
+        {%- endfor -%}
       </div>
 
-      <div class="tabpanel panel-targets">
-        <div class="mod-grid">
-          {% for m in site.data.modules.targets %}
-          <div class="mod-row" data-suit="{{ m.suit | join: ' ' }}" data-prov="{% if m.first_party %}first{% else %}port{% endif %}">
-            <div class="mod-name">
-              <span class="mod-title">{{ m.name }} <a class="mod-pip" href="/guide/using-modules#using-a-target" title="Not yet published on PyPI">{{ m.pip }} ⚠️</a></span>
-              <span class="mod-meta">{% for s in m.suit %}<span class="hint"><span class="mod-suit mod-suit-{{ s }}">{{ s }}</span><span class="tip">{{ suit_tip }}</span></span>{% endfor %}{% unless m.first_party %}<span class="hint"><span class="mod-tag mod-tag-port">Community port</span><span class="tip">{{ prov_tip }}</span></span>{% endunless %}</span>
-            </div>
-            <div class="mod-desc">{{ m.blurb }}</div>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-
-      <div class="tabpanel panel-claims">
-        <div class="mod-grid">
-          {% for m in site.data.modules.security_claims %}
-          <div class="mod-row" data-suit="{{ m.suit | join: ' ' }}" data-prov="{% if m.first_party %}first{% else %}port{% endif %}">
-            <div class="mod-name">
-              <span class="mod-title">{{ m.name }} <a class="mod-pip" href="/guide/using-modules#using-a-security-claim" title="Not yet published on PyPI">{{ m.pip }} ⚠️</a></span>
-              <span class="mod-meta">{% for s in m.suit %}<span class="hint"><span class="mod-suit mod-suit-{{ s }}">{{ s }}</span><span class="tip">{{ suit_tip }}</span></span>{% endfor %}{% unless m.first_party %}<span class="hint"><span class="mod-tag mod-tag-port">Community port</span><span class="tip">{{ prov_tip }}</span></span>{% endunless %}</span>
-            </div>
-            <div class="mod-desc">{{ m.blurb }}</div>
-          </div>
-          {% endfor %}
-        </div>
+      <div class="mod-empty" id="mod-empty" hidden>
+        <p>No modules match these filters.</p>
+        <button type="button" class="mod-reset" data-clear>Clear filters</button>
       </div>
     </div>
-
-    <p class="muted" style="margin-top: 2.6rem">Built your own attack, target, or benchmark on SuperRed? Reach out to have your implementation featured here.</p>
   </div>
 </section>
 
+<!-- ------------------------------------------------------------------ -->
+<!-- Modal: how to install / import / use the selected module            -->
+<!-- ------------------------------------------------------------------ -->
+<div class="mod-modal" id="mod-modal" hidden>
+  <div class="mod-modal-backdrop" data-close></div>
+  <div class="mod-modal-panel" role="dialog" aria-modal="true" aria-labelledby="mod-modal-title">
+    <button type="button" class="mod-modal-x" data-close aria-label="Close">
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="5" y1="5" x2="15" y2="15"/><line x1="15" y1="5" x2="5" y2="15"/></svg>
+    </button>
+    <div class="mod-modal-head">
+      <span class="mod-glyph" id="mod-modal-glyph" aria-hidden="true"></span>
+      <div>
+        <p class="mod-modal-kind" id="mod-modal-kind"></p>
+        <h3 class="mod-modal-title" id="mod-modal-title"></h3>
+      </div>
+    </div>
+    <p class="mod-modal-blurb" id="mod-modal-blurb"></p>
+
+    <div class="mod-modal-body" id="mod-modal-body"><!-- filled by JS --></div>
+
+    <div class="mod-modal-links" id="mod-modal-links"><!-- filled by JS --></div>
+  </div>
+</div>
+
 <script>
 (function () {
-  var rank = { assistant: 0, agentic: 1, chatbot: 2 };
-  function minRank(row) {
-    return Math.min.apply(null, row.dataset.suit.split(" ").map(function (s) { return rank[s] ?? 9; }));
-  }
-  document.querySelectorAll(".mod-grid").forEach(function (grid) {
-    Array.prototype.slice.call(grid.querySelectorAll(".mod-row"))
-      .sort(function (a, b) { return minRank(a) - minRank(b); })
-      .forEach(function (row) { grid.appendChild(row); });
-  });
-  var filters = { suit: "", prov: "" };
+  var cards = Array.prototype.slice.call(document.querySelectorAll(".mod-card"));
+  var q = document.getElementById("mod-q");
+  var typeBtns = Array.prototype.slice.call(document.querySelectorAll(".mod-type"));
+  var suitBoxes = Array.prototype.slice.call(document.querySelectorAll(".f-suit"));
+  var provBoxes = Array.prototype.slice.call(document.querySelectorAll(".f-prov"));
+  var shown = document.getElementById("mod-shown");
+  var empty = document.getElementById("mod-empty");
+  var resetBtn = document.getElementById("mod-reset");
+
+  /* ---------------------------- filtering ---------------------------- */
+  var state = { type: "", suit: [], prov: [], q: "" };
+  function anyActive() { return state.type || state.suit.length || state.prov.length || state.q; }
+
   function apply() {
-    document.querySelectorAll(".mod-row").forEach(function (row) {
-      var ok = (!filters.suit || row.dataset.suit.split(" ").indexOf(filters.suit) >= 0)
-            && (!filters.prov || row.dataset.prov === filters.prov);
-      row.style.display = ok ? "contents" : "none";
+    var n = 0;
+    var needle = state.q.trim().toLowerCase();
+    cards.forEach(function (card) {
+      var suits = card.dataset.suit.split(" ");
+      var ok =
+        (!state.type || card.dataset.type === state.type) &&
+        (!state.suit.length || state.suit.some(function (s) { return suits.indexOf(s) >= 0; })) &&
+        (!state.prov.length || state.prov.indexOf(card.dataset.prov) >= 0) &&
+        (!needle || card.dataset.search.indexOf(needle) >= 0);
+      card.hidden = !ok;
+      if (ok) n++;
     });
+    shown.textContent = n;
+    empty.hidden = n > 0;
+    resetBtn.hidden = !anyActive();
   }
-  document.querySelectorAll(".dropdown").forEach(function (dd) {
-    var key = dd.dataset.key;
-    var toggle = dd.querySelector(".dropdown-toggle");
-    toggle.addEventListener("click", function (e) {
-      e.stopPropagation();
-      document.querySelectorAll(".dropdown.open").forEach(function (o) { if (o !== dd) o.classList.remove("open"); });
-      dd.classList.toggle("open");
+
+  q.addEventListener("input", function () { state.q = q.value; apply(); });
+  typeBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      state.type = btn.dataset.type;
+      typeBtns.forEach(function (b) { b.classList.toggle("is-active", b === btn); });
+      apply();
     });
-    dd.querySelectorAll(".dropdown-menu button").forEach(function (opt) {
-      opt.addEventListener("click", function () {
-        filters[key] = opt.dataset.value;
-        toggle.innerHTML = opt.dataset.value ? opt.innerHTML : toggle.dataset.default;
-        dd.classList.remove("open");
+  });
+  function bindGroup(boxes, key) {
+    boxes.forEach(function (box) {
+      box.addEventListener("change", function () {
+        state[key] = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
         apply();
       });
     });
-  });
-  document.addEventListener("click", function () {
-    document.querySelectorAll(".dropdown.open").forEach(function (o) { o.classList.remove("open"); });
+  }
+  bindGroup(suitBoxes, "suit");
+  bindGroup(provBoxes, "prov");
+  function reset() {
+    state = { type: "", suit: [], prov: [], q: "" };
+    q.value = "";
+    suitBoxes.concat(provBoxes).forEach(function (b) { b.checked = false; });
+    typeBtns.forEach(function (b) { b.classList.toggle("is-active", b.dataset.type === ""); });
+    apply();
+  }
+  document.querySelectorAll("[data-clear], #mod-reset").forEach(function (b) { b.addEventListener("click", reset); });
+  apply();
+
+  /* ------------------------------ modal ------------------------------ */
+  var modal = document.getElementById("mod-modal");
+  var mGlyph = document.getElementById("mod-modal-glyph");
+  var mKind = document.getElementById("mod-modal-kind");
+  var mTitle = document.getElementById("mod-modal-title");
+  var mBlurb = document.getElementById("mod-modal-blurb");
+  var mBody = document.getElementById("mod-modal-body");
+  var mLinks = document.getElementById("mod-modal-links");
+  var lastFocus = null;
+
+  // Type-specific import/use pattern, mirroring /guide/using-modules, using the
+  // module's real exported symbol. The Python package name is the pip name with
+  // dashes as underscores.
+  function usage(type, pip, sym) {
+    var mod = pip.replace(/-/g, "_");
+    if (type === "attacker") {
+      return "from " + mod + " import " + sym + "\n\n" +
+             "controller = Controller(\n" +
+             "    optimizer_factory=lambda: " + sym + "(),\n" +
+             "    ...\n)";
+    }
+    if (type === "target") {
+      return "from " + mod + " import " + sym + "\n\n" +
+             "target_factory = TargetFactory(\n" +
+             "    create=lambda: " + sym + "(...),\n)";
+    }
+    return "from " + mod + " import " + sym + "\n\n" +
+           "controller = Controller(\n" +
+           "    security_claim=" + sym + "(),\n" +
+           "    ...\n)";
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c];
+    });
+  }
+
+  function codeBlock(label, code) {
+    return '<div class="mod-code">' +
+             '<div class="mod-code-head"><span>' + esc(label) + '</span>' +
+             '<button type="button" class="mod-copy" data-code="' + esc(code) + '">Copy</button></div>' +
+             '<pre><code>' + esc(code) + '</code></pre>' +
+           '</div>';
+  }
+
+  function open(card) {
+    var d = card.dataset;
+    var glyphSvg = card.querySelector(".mod-glyph").innerHTML;
+    var primary = d.suit.split(" ")[0];
+
+    mGlyph.className = "mod-glyph mod-glyph-" + primary;
+    mGlyph.innerHTML = glyphSvg;
+    mKind.textContent = d.kind;
+    mTitle.textContent = d.name;
+    mBlurb.textContent = d.blurb;
+
+    mBody.innerHTML =
+      codeBlock("Install", "pip install " + d.pip) +
+      codeBlock("Import & use", usage(d.type, d.pip, d.sym));
+
+    var links = "";
+    if (d.paper) links += '<a class="mod-link" href="' + d.paper + '" target="_blank" rel="noopener noreferrer">Paper &#8599;</a>';
+    if (d.hf) links += '<a class="mod-link mod-link-hf" href="' + d.hf + '" target="_blank" rel="noopener noreferrer">HuggingFace &#8599;</a>';
+    links += '<a class="mod-link" href="' + d.href + '">Guide &#8599;</a>';
+    mLinks.innerHTML = links;
+
+    lastFocus = document.activeElement;
+    modal.hidden = false;
+    document.body.classList.add("mod-modal-lock");
+    modal.querySelector(".mod-modal-x").focus();
+  }
+
+  function close() {
+    modal.hidden = true;
+    document.body.classList.remove("mod-modal-lock");
+    if (lastFocus) lastFocus.focus();
+  }
+
+  cards.forEach(function (card) { card.addEventListener("click", function () { open(card); }); });
+  modal.querySelectorAll("[data-close]").forEach(function (el) { el.addEventListener("click", close); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });
+
+  // Copy buttons inside the modal (delegated).
+  mBody.addEventListener("click", function (e) {
+    var btn = e.target.closest(".mod-copy");
+    if (!btn) return;
+    var code = btn.dataset.code;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(code).then(function () {
+        var t = btn.textContent; btn.textContent = "Copied"; btn.classList.add("is-copied");
+        setTimeout(function () { btn.textContent = t; btn.classList.remove("is-copied"); }, 1400);
+      });
+    }
   });
 })();
 </script>

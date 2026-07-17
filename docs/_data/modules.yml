@@ -1,45 +1,50 @@
 # Catalogue of available modules, rendered on /modules.
 # pip:  intended PyPI package name (nothing is published yet).
+# sym:  the public symbol the package exports — an optimizer/target class or a
+#       security-claim factory function — used to build the modal's import snippet.
+# emoji: a distinctive glyph shown on the tile, chosen to evoke the technique.
 # suit: which target classes it fits (chatbot / agentic / assistant); a list.
 # first_party: an original module by its own authors (otherwise it is a
 #              community port of someone else's published work).
+# paper: canonical publication (arXiv abstract page where one exists).
+# hf:    HuggingFace dataset page (benchmarks only).
 optimizers:
-  - { name: PAIR,            pip: pair-optimizer,            suit: [chatbot], blurb: "Iterative prompt refinement with an attacker LLM" }
-  - { name: TAP,             pip: tap-optimizer,             suit: [chatbot], blurb: "Tree-of-attacks with pruning" }
-  - { name: AutoDAN-Turbo,   pip: autodan-turbo-optimizer,   suit: [chatbot], blurb: "Lifelong strategy-discovery jailbreak" }
-  - { name: Crescendo,       pip: crescendo-optimizer,       suit: [chatbot], blurb: "Gradual multi-turn escalation" }
-  - { name: GPTFuzzer,       pip: gptfuzzer-optimizer,       suit: [chatbot], blurb: "Mutation-based jailbreak fuzzing" }
-  - { name: Many-Shot,       pip: many-shot-optimizer,       suit: [chatbot], blurb: "Many in-context demonstrations" }
-  - { name: GOAT,            pip: goat-optimizer,            suit: [chatbot], blurb: "Generative offensive agent tester (multi-turn)" }
-  - { name: FlipAttack,      pip: flip-attack-optimizer,     suit: [chatbot], blurb: "Single-turn flip-based obfuscation" }
-  - { name: CodeChameleon,   pip: code-chameleon-optimizer,  suit: [chatbot], blurb: "Code-encryption obfuscation jailbreak" }
-  - { name: DRA,             pip: dra-optimizer,             suit: [chatbot], blurb: "Disguise-and-reconstruction attack" }
-  - { name: Bijection Learning, pip: bijection-optimizer,    suit: [chatbot], blurb: "Bijection-cipher jailbreak" }
-  - { name: FITD,            pip: fitd-optimizer,            suit: [chatbot], blurb: "Foot-in-the-door multi-turn escalation" }
-  - { name: GEPA,            pip: gepa-optimizer,            suit: [chatbot], blurb: "Reflective prompt evolution" }
-  - { name: GEPA (agentic),  pip: gepa-agentic-optimizer,    suit: [agentic, assistant], blurb: "Reflective prompt evolution for agent targets" }
-  - { name: AgentVigil,      pip: agentvigil-websentinel-optimizer, suit: [agentic, assistant], blurb: "Indirect prompt injection for agent targets" }
-  - { name: MINJA,           pip: minja-optimizer,           suit: [agentic, assistant], blurb: "Memory-injection attack for agent targets" }
-  - { name: PoisonedRAG,     pip: poisonedrag-optimizer,     suit: [agentic, assistant], blurb: "Knowledge-base / RAG corruption" }
-  - { name: Chord/XTHP,      pip: chord-xthp-optimizer,      suit: [agentic, assistant], blurb: "Tool-control-flow hijack for agents" }
-  - { name: EIA,             pip: eia-agent-optimizer,       suit: [agentic, assistant], blurb: "Environmental injection for web agents" }
-  - { name: MUZZLE,          pip: muzzle-optimizer,          suit: [agentic, assistant], blurb: "Adaptive indirect prompt injection for agents" }
-  - { name: Goal passthrough, pip: goal-passthrough-optimizer, suit: [chatbot, agentic, assistant], first_party: true, blurb: "Direct-request baseline (no attack)" }
+  - { name: PAIR,            pip: pair-optimizer,            sym: PAIROptimizer,            emoji: "🔁", suit: [chatbot], blurb: "Iterative prompt refinement with an attacker LLM", paper: "https://arxiv.org/abs/2310.08419" }
+  - { name: TAP,             pip: tap-optimizer,             sym: TapOptimizer,             emoji: "🌳", suit: [chatbot], blurb: "Tree-of-attacks with pruning", paper: "https://arxiv.org/abs/2312.02119" }
+  - { name: AutoDAN-Turbo,   pip: autodan-turbo-optimizer,   sym: AutoDANTurboOptimizer,    emoji: "📚", suit: [chatbot], blurb: "Lifelong strategy-discovery jailbreak", paper: "https://arxiv.org/abs/2410.05295" }
+  - { name: Crescendo,       pip: crescendo-optimizer,       sym: CrescendoOptimizer,       emoji: "📈", suit: [chatbot], blurb: "Gradual multi-turn escalation", paper: "https://arxiv.org/abs/2404.01833" }
+  - { name: GPTFuzzer,       pip: gptfuzzer-optimizer,       sym: GPTFuzzerOptimizer,       emoji: "🎲", suit: [chatbot], blurb: "Mutation-based jailbreak fuzzing", paper: "https://arxiv.org/abs/2309.10253" }
+  - { name: Many-Shot,       pip: many-shot-optimizer,       sym: ManyShotOptimizer,        emoji: "🗂️", suit: [chatbot], blurb: "Many in-context demonstrations", paper: "https://www.anthropic.com/research/many-shot-jailbreaking" }
+  - { name: GOAT,            pip: goat-optimizer,            sym: GOATOptimizer,            emoji: "🐐", suit: [chatbot], blurb: "Generative offensive agent tester (multi-turn)", paper: "https://arxiv.org/abs/2410.01606" }
+  - { name: FlipAttack,      pip: flip-attack-optimizer,     sym: FlipAttackOptimizer,      emoji: "🔃", suit: [chatbot], blurb: "Single-turn flip-based obfuscation", paper: "https://arxiv.org/abs/2410.02832" }
+  - { name: CodeChameleon,   pip: code-chameleon-optimizer,  sym: CodeChameleonOptimizer,   emoji: "🦎", suit: [chatbot], blurb: "Code-encryption obfuscation jailbreak", paper: "https://arxiv.org/abs/2402.16717" }
+  - { name: DRA,             pip: dra-optimizer,             sym: DraOptimizer,             emoji: "🎭", suit: [chatbot], blurb: "Disguise-and-reconstruction attack", paper: "https://arxiv.org/abs/2402.18104" }
+  - { name: Bijection Learning, pip: bijection-optimizer,    sym: BijectionOptimizer,       emoji: "🔤", suit: [chatbot], blurb: "Bijection-cipher jailbreak", paper: "https://arxiv.org/abs/2410.01294" }
+  - { name: FITD,            pip: fitd-optimizer,            sym: FITDOptimizer,            emoji: "🚪", suit: [chatbot], blurb: "Foot-in-the-door multi-turn escalation", paper: "https://arxiv.org/abs/2502.19820" }
+  - { name: GEPA,            pip: gepa-optimizer,            sym: GEPAOptimizer,            emoji: "🪞", suit: [chatbot], blurb: "Reflective prompt evolution", paper: "https://arxiv.org/abs/2507.19457" }
+  - { name: GEPA (agentic),  pip: gepa-agentic-optimizer,    sym: GEPAAgenticOptimizer,     emoji: "🧬", suit: [agentic, assistant], blurb: "Reflective prompt evolution for agent targets", paper: "https://arxiv.org/abs/2507.19457" }
+  - { name: AgentVigil,      pip: agentvigil-websentinel-optimizer, sym: AgentVigilWebSentinelOptimizer, emoji: "🕵️", suit: [agentic, assistant], blurb: "Indirect prompt injection for agent targets", paper: "https://arxiv.org/abs/2505.05849" }
+  - { name: MINJA,           pip: minja-optimizer,           sym: MinjaOptimizer,           emoji: "🧠", suit: [agentic, assistant], blurb: "Memory-injection attack for agent targets", paper: "https://arxiv.org/abs/2503.03704" }
+  - { name: PoisonedRAG,     pip: poisonedrag-optimizer,     sym: PoisonedRAGOptimizer,     emoji: "☠️", suit: [agentic, assistant], blurb: "Knowledge-base / RAG corruption", paper: "https://arxiv.org/abs/2402.07867" }
+  - { name: Chord/XTHP,      pip: chord-xthp-optimizer,      sym: ChordXTHPOptimizer,       emoji: "🪝", suit: [agentic, assistant], blurb: "Tool-control-flow hijack for agents", paper: "https://arxiv.org/abs/2504.03111" }
+  - { name: EIA,             pip: eia-agent-optimizer,       sym: EIAAgentOptimizer,        emoji: "🕸️", suit: [agentic, assistant], blurb: "Environmental injection for web agents", paper: "https://arxiv.org/abs/2409.11295" }
+  - { name: MUZZLE,          pip: muzzle-optimizer,          sym: MuzzleOptimizer,          emoji: "🤐", suit: [agentic, assistant], blurb: "Adaptive indirect prompt injection for agents", paper: "https://arxiv.org/abs/2602.09222" }
+  - { name: Goal passthrough, pip: goal-passthrough-optimizer, sym: GoalPassthroughOptimizer, emoji: "➡️", suit: [chatbot, agentic, assistant], first_party: true, blurb: "Direct-request baseline (no attack)" }
 
 targets:
-  - { name: Chatbot,             pip: chatbot-target,        suit: [chatbot], first_party: true, blurb: "Any LLM as a single- or multi-turn chatbot" }
-  - { name: AgentDojo,           pip: agentdojo-target,      suit: [agentic], blurb: "Tool-using agent across all four AgentDojo suites" }
-  - { name: Agent Security Bench, pip: asb-target,           suit: [agentic], blurb: "Plan-then-execute agent loop (ASB)" }
-  - { name: Inspect agent,       pip: inspect-agent-target,  suit: [agentic], first_party: true, blurb: "General inspect-ai tool-calling agent" }
-  - { name: Claude Code (DTAP),  pip: dtap-claudecode-target, suit: [assistant], blurb: "Claude Code coding agent with execution access" }
-  - { name: OpenClaw (DTAP),     pip: dtap-openclaw-target,  suit: [assistant], blurb: "OpenClaw computer-use assistant" }
+  - { name: Chatbot,             pip: chatbot-target,        sym: ChatbotTarget,          emoji: "💬", suit: [chatbot], first_party: true, blurb: "Any LLM as a single- or multi-turn chatbot" }
+  - { name: AgentDojo,           pip: agentdojo-target,      sym: AgentDojoTarget,        emoji: "🥷", suit: [agentic], blurb: "Tool-using agent across all four AgentDojo suites", paper: "https://arxiv.org/abs/2406.13352" }
+  - { name: Agent Security Bench, pip: asb-target,           sym: AsbTarget,              emoji: "🏋️", suit: [agentic], blurb: "Plan-then-execute agent loop (ASB)", paper: "https://arxiv.org/abs/2410.02644" }
+  - { name: Inspect agent,       pip: inspect-agent-target,  sym: InspectAgentTarget,     emoji: "🔍", suit: [agentic], first_party: true, blurb: "General inspect-ai tool-calling agent", paper: "https://inspect.aisi.org.uk" }
+  - { name: Claude Code (DTAP),  pip: dtap-claudecode-target, sym: ClaudeCodeDtapTarget,  emoji: "💻", suit: [assistant], blurb: "Claude Code coding agent with execution access" }
+  - { name: OpenClaw (DTAP),     pip: dtap-openclaw-target,  sym: OpenClawDtapTarget,     emoji: "🖱️", suit: [assistant], blurb: "OpenClaw computer-use assistant" }
 
 security_claims:
-  - { name: HarmBench,           pip: secclaim-harmbench,          suit: [chatbot], blurb: "Standardized red-teaming benchmark" }
-  - { name: StrongREJECT,        pip: strongreject-claim,          suit: [chatbot], blurb: "Jailbreak benchmark (Souly et al., 2024)" }
-  - { name: SORRY-Bench,         pip: security-claim-sorry-bench,  suit: [chatbot], blurb: "Fine-grained safety-refusal benchmark" }
-  - { name: AgentHarm,           pip: security-claim-agentharm,    suit: [agentic], blurb: "Harmful agent-behavior benchmark (176 behaviors)" }
-  - { name: AgentDojo,           pip: security-claim-agentdojo,    suit: [agentic], blurb: "Prompt-injection tasks + purpose-violation goals" }
-  - { name: Agent Security Bench, pip: security-claim-asb,         suit: [agentic], blurb: "Attack-success / utility / refusal tasks" }
-  - { name: DecodingTrust-Agent, pip: security-claim-dtap,         suit: [assistant], blurb: "Agent trustworthiness across 14 domains" }
-  - { name: Chatbot suite,       pip: security-claim-chatbot-suite, suit: [chatbot], first_party: true, blurb: "HarmBench + SORRY-Bench + StrongREJECT combined" }
+  - { name: HarmBench,           pip: secclaim-harmbench,          sym: harmbench_claim,      emoji: "📊", suit: [chatbot], blurb: "Standardized red-teaming benchmark", paper: "https://arxiv.org/abs/2402.04249", hf: "https://huggingface.co/datasets/walledai/HarmBench" }
+  - { name: StrongREJECT,        pip: strongreject-claim,          sym: strongreject_claim,   emoji: "🚫", suit: [chatbot], blurb: "Jailbreak benchmark (Souly et al., 2024)", paper: "https://arxiv.org/abs/2402.10260", hf: "https://huggingface.co/datasets/walledai/StrongREJECT" }
+  - { name: SORRY-Bench,         pip: security-claim-sorry-bench,  sym: sorry_bench_claim,    emoji: "🙅", suit: [chatbot], blurb: "Fine-grained safety-refusal benchmark", paper: "https://arxiv.org/abs/2406.14598", hf: "https://huggingface.co/datasets/sorry-bench/sorry-bench-202406" }
+  - { name: AgentHarm,           pip: security-claim-agentharm,    sym: agentharm_claim,      emoji: "😈", suit: [agentic], blurb: "Harmful agent-behavior benchmark (176 behaviors)", paper: "https://arxiv.org/abs/2410.09024", hf: "https://huggingface.co/datasets/ai-safety-institute/AgentHarm" }
+  - { name: AgentDojo,           pip: security-claim-agentdojo,    sym: agentdojo_layer1_claim, emoji: "📋", suit: [agentic], blurb: "Prompt-injection tasks + purpose-violation goals", paper: "https://arxiv.org/abs/2406.13352" }
+  - { name: Agent Security Bench, pip: security-claim-asb,         sym: asb_claim,            emoji: "🧮", suit: [agentic], blurb: "Attack-success / utility / refusal tasks", paper: "https://arxiv.org/abs/2410.02644" }
+  - { name: DecodingTrust-Agent, pip: security-claim-dtap,         sym: dtap_claim,           emoji: "🧭", suit: [assistant], blurb: "Agent trustworthiness across 14 domains", paper: "https://arxiv.org/abs/2605.04808" }
+  - { name: Chatbot suite,       pip: security-claim-chatbot-suite, sym: chatbot_suite_claim, emoji: "📦", suit: [chatbot], first_party: true, blurb: "HarmBench + SORRY-Bench + StrongREJECT combined" }
