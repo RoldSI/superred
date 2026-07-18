@@ -844,16 +844,14 @@ function renderEmpty(){
   if (isFile){
     n.appendChild(h("p", {text:"Browsers block fetch() from file:// URLs, so this dashboard cannot read its JSON when opened directly."}));
     n.appendChild(h("p", {},
-      "Serve this directory over http and reopen. From here run ",
-      h("code", {text:"python -m http.server"}),
-      ", then visit ",
-      h("code", {text:"http://localhost:8000/dashboard.html"}),
-      "."));
+      "Serve the results directory instead. The simplest way is ",
+      h("code", {text:"superred serve <results-dir>"}),
+      " — it serves the folder and opens this page for you."));
   } else {
     n.appendChild(h("p", {text:"This page must sit inside a superred results directory — next to a manifest.json (an experiment) or an experiments.json (a results root)."}));
     n.appendChild(h("p", {},
-      "Serve from a superred results directory, e.g. ",
-      h("code", {text:"python -m http.server"}),
+      "Serve one with ",
+      h("code", {text:"superred serve <results-dir>"}),
       "."));
   }
   app.appendChild(n);

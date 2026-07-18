@@ -286,9 +286,17 @@ for row in load_experiments_index("superred-results")["experiments"]:
 > credentials out of prompts, observables, and config values (they flow verbatim
 > into the trajectory files). The default `./superred-results/` is gitignored.
 
-The framework also ships a generic static HTML dashboard for the tree; point it
-at a results root to browse the metrics, filter tasks by outcome, and drill into
-runs and trajectories.
+The framework also ships a generic static HTML dashboard (dropped into the tree
+on write) to browse the metrics, filter tasks by outcome, and drill into runs
+and trajectories. Open it with the bundled CLI, which serves the directory and
+opens your browser:
+
+```bash
+superred serve ./superred-results
+```
+
+(The page fetches the JSON in its directory, so a browser cannot read it from a
+`file://` URL; `superred serve` runs the tiny local server for you.)
 
 ## include_feedback: modelling a blind attacker
 

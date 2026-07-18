@@ -64,6 +64,10 @@ Documentation = "https://superred.simonsure.com"
 Repository = "https://github.com/RoldSI/superred"
 Issues = "https://github.com/RoldSI/superred/issues"
 
+# `superred serve <results-dir>` serves the results website + opens the browser.
+[project.scripts]
+superred = "superred.cli:main"
+
 # Single source of truth for the version: src/superred/__init__.py (__version__).
 # The release workflow checks the git tag matches this value before publishing.
 [tool.hatch.version]
