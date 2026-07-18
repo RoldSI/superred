@@ -12,6 +12,7 @@ Each test pins one confirmed fix so it cannot silently regress:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -38,6 +39,7 @@ from tests.conftest import (
     EXTERNAL_TAG,
     STUB_LLM_CONFIG,
     CountingOptimizer,
+    NotApplicableTask,
     StubTarget,
     StubTask,
 )
@@ -271,3 +273,28 @@ def test_iterations_delta_distinct_from_cumulative() -> None:
     # The delta-vs-cumulative distinction is the whole point: summing deltas
     # gives the task total; summing cumulatives would double-count.
     assert abs(sum(r["usage_delta"]["cost"] for r in runs) - 1.2) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# A skipped task leaves no stray staging dir
+# ---------------------------------------------------------------------------
+
+
+async def test_skipped_task_leaves_no_stray_staging(tmp_path: object) -> None:
+    reporting._reset_for_tests()
+    controller = Controller(
+        optimizer_factory=lambda: CountingOptimizer(stop_after=1),
+        target_factory=TargetFactory(create=lambda: StubTarget()),
+        security_claim=SecurityClaim.from_tasks([StubTask(goal_text="a"), NotApplicableTask()]),
+        scope=frozenset({EXTERNAL_TAG}),
+        llm_config=STUB_LLM_CONFIG,
+        max_runs_per_task=1,
+        persist=True,
+        results_dir=str(tmp_path),
+        report=False,
+    )
+    result = await controller.run()
+    assert len(result.skipped_tasks) == 1
+    exp = next(d for d in Path(str(tmp_path)).iterdir() if d.is_dir())
+    stray = list((exp / "tasks").glob("*.wip")) + list((exp / "tasks").glob("*.old"))
+    assert stray == [], f"skipped task left stray staging dirs: {stray}"

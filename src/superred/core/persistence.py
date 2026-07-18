@@ -948,6 +948,11 @@ class ExperimentSession:
 
     def mark_skipped(self, index: int, goal: str) -> None:
         self._skipped.append((index, goal))
+        # A skipped task's ``begin_task`` staging dir is never published; drop it
+        # so a skip leaves no stray ``*.wip`` in the tree.
+        staging = self._staging.pop(index, None)
+        if staging is not None and staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
 
     # -- Finalize ----------------------------------------------------------
 
