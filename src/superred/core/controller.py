@@ -237,6 +237,9 @@ class TaskResult:
     error: str | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    # Explicit run count for a resumed (lightweight) result whose ``runs`` list
+    # is empty; ``None`` means use ``len(runs)`` (the normal fresh-run case).
+    n_runs: int | None = None
 
 
 @dataclass(frozen=True)
@@ -384,7 +387,9 @@ def _task_complete_event(index: int, tr: TaskResult) -> TaskCompleteEvent:
         success=tr.success,
         stop_reason=tr.stop_reason,
         best_score=tr.best_score.value,
-        n_runs=len(tr.runs),
+        # n_runs override: a kept (resumed) task carries runs=[] in memory but
+        # its real count on disk, so the reported count matches a fresh run.
+        n_runs=tr.n_runs if tr.n_runs is not None else len(tr.runs),
         cost_usd=tr.llm_usage.cost,
         calls=tr.llm_usage.calls,
         error=tr.error,
@@ -399,7 +404,10 @@ def _threat_model_end_event(
 ) -> ThreatModelEndEvent:
     trs = result.task_results
     completed_reasons = ("done", "max_runs", "budget_exhausted")
-    n_success = sum(1 for t in trs if t.success)
+    # Count a success only among completed tasks: a task can be success=True yet
+    # stop_reason="error" (goal met, then reset_ephemeral_state failed), so an
+    # unguarded numerator would push ASR above 100%.
+    n_success = sum(1 for t in trs if t.success and t.stop_reason in completed_reasons)
     n_completed = sum(1 for t in trs if t.stop_reason in completed_reasons)
     n_error = sum(1 for t in trs if t.stop_reason == "error")
     n_budget = sum(1 for t in trs if t.stop_reason == "budget_exhausted")
@@ -417,6 +425,31 @@ def _threat_model_end_event(
         mean_primary_score=(sum(scores) / len(scores)) if scores else None,
         total_calls=sum(t.llm_usage.calls for t in trs),
         total_cost_usd=sum(t.llm_usage.cost for t in trs),
+        duration_s=(ended_at - started_at).total_seconds(),
+    )
+
+
+def _aborted_end_event(
+    ctx: ThreatModelContext, started_at: datetime, ended_at: datetime
+) -> ThreatModelEndEvent:
+    """A zeroed end event for a run that aborted before producing a result.
+
+    Emitted from ``run()``'s ``finally`` so the reporter lane always ends (and
+    the shared live canvas is freed) even when the run raised mid-way.
+    """
+    return ThreatModelEndEvent(
+        context=ctx,
+        n_tasks=0,
+        n_success=0,
+        n_completed=0,
+        n_error=0,
+        n_budget_exhausted=0,
+        n_skipped=0,
+        asr=None,
+        max_primary_score=None,
+        mean_primary_score=None,
+        total_calls=0,
+        total_cost_usd=0.0,
         duration_s=(ended_at - started_at).total_seconds(),
     )
 
@@ -647,60 +680,83 @@ class Controller:
         reporter.on_threat_model_start(ctx)
 
         session: ExperimentSession | None = None
-        if self._persist:
-            root = resolve_results_root(self._results_dir)
-            session = ExperimentSession.open(
-                root, meta, [t.goal.description for t in tasks], overwrite=self._overwrite
-            )
-            logger.info("superred: writing results to %s", session.experiment_dir)
-
-        rerun = set(session.plan.rerun) if session is not None else set(range(1, len(tasks) + 1))
-        keep = set(session.plan.keep) if session is not None else set()
-
-        # Kept tasks are already on disk: pre-fill them into the live view and
-        # the merged result without re-running or re-reading their trajectories.
-        kept_results: dict[int, TaskResult] = {}
-        for i in sorted(keep):
-            assert session is not None
-            kept = reconstruct_kept_task_result(session.experiment_dir, i, tasks[i - 1])
-            kept_results[i] = kept
-            reporter.on_task_complete(_task_complete_event(i, kept))
-
-        # Bridge Python logging -> reporter (side pane) + per-task JSONL sink for
-        # the duration of the run; removed afterwards so the framework never
-        # leaves a handler on the root logger.
-        bridge = LoggingBridge(label, reporter, self._diagnostic_sink(session))
-        root_logger = logging.getLogger()
-        root_logger.addHandler(bridge)
+        result: ThreatModelResult | None = None
         try:
-            reran, skipped = await self._iterate_tasks(tasks, rerun, session, reporter, label)
-        finally:
-            root_logger.removeHandler(bridge)
+            if self._persist:
+                root = resolve_results_root(self._results_dir)
+                session = ExperimentSession.open(
+                    root, meta, [t.goal.description for t in tasks], overwrite=self._overwrite
+                )
+                logger.info("superred: writing results to %s", session.experiment_dir)
 
-        task_results = [
-            reran[i] if i in reran else kept_results[i]
-            for i in range(1, len(tasks) + 1)
-            if i in reran or i in kept_results
-        ]
-        ended_at = datetime.now(UTC)
-        result = ThreatModelResult(
-            scope=self._naming_scope,
-            read_only=self._naming_read_only,
-            llm_config=self._llm_config,
-            task_cost_cap_usd=self._task_cost_cap_usd,
-            task_results=task_results,
-            skipped_tasks=[t for _, t in skipped],
-            scope_label=self._scope_label,
-            started_at=started_at,
-            ended_at=ended_at,
-        )
-        reporter.on_threat_model_end(_threat_model_end_event(ctx, result, started_at, ended_at))
-        if session is not None:
+            rerun = (
+                set(session.plan.rerun) if session is not None else set(range(1, len(tasks) + 1))
+            )
+            keep = set(session.plan.keep) if session is not None else set()
+
+            # Kept tasks are already on disk: pre-fill them into the live view
+            # and the merged result without re-running or re-reading trajectories.
+            kept_results: dict[int, TaskResult] = {}
+            for i in sorted(keep):
+                assert session is not None
+                kept = reconstruct_kept_task_result(session.experiment_dir, i, tasks[i - 1])
+                kept_results[i] = kept
+                reporter.on_task_complete(_task_complete_event(i, kept))
+
+            # Bridge Python logging -> reporter (side pane) + per-task JSONL sink
+            # for the run; removed afterwards so the framework never leaves a
+            # handler on the root logger.
+            bridge = LoggingBridge(label, reporter, self._diagnostic_sink(session))
+            root_logger = logging.getLogger()
+            root_logger.addHandler(bridge)
             try:
-                session.finalize(started_at, ended_at)
+                reran, skipped = await self._iterate_tasks(tasks, rerun, session, reporter, label)
+            finally:
+                root_logger.removeHandler(bridge)
+
+            task_results = [
+                reran[i] if i in reran else kept_results[i]
+                for i in range(1, len(tasks) + 1)
+                if i in reran or i in kept_results
+            ]
+            result = ThreatModelResult(
+                scope=self._naming_scope,
+                read_only=self._naming_read_only,
+                llm_config=self._llm_config,
+                task_cost_cap_usd=self._task_cost_cap_usd,
+                task_results=task_results,
+                skipped_tasks=[t for _, t in skipped],
+                scope_label=self._scope_label,
+                started_at=started_at,
+                ended_at=datetime.now(UTC),
+            )
+            if session is not None:
+                try:
+                    session.finalize(started_at, result.ended_at)
+                    session = None  # lock released by finalize; nothing to abort
+                except Exception:
+                    logger.exception("superred: failed to finalize results (continuing)")
+            return result
+        finally:
+            # Always end the reporter lane (frees the shared live canvas) and
+            # release the experiment lock, even if the run aborted before a
+            # result was built (e.g. an unexpected I/O error opening the dir).
+            ended_at = (
+                result.ended_at
+                if result is not None and result.ended_at is not None
+                else datetime.now(UTC)
+            )
+            end_ev = (
+                _threat_model_end_event(ctx, result, started_at, ended_at)
+                if result is not None
+                else _aborted_end_event(ctx, started_at, ended_at)
+            )
+            try:
+                reporter.on_threat_model_end(end_ev)
             except Exception:
-                logger.exception("superred: failed to finalize results (continuing)")
-        return result
+                logger.exception("superred: reporter on_threat_model_end failed")
+            if session is not None:
+                session.abort()
 
     # ------------------------------------------------------------------
     # Experiment identity + reporting helpers
@@ -810,25 +866,46 @@ class Controller:
                     started = datetime.now(UTC)
                     outcome = await self._execute_task(index, task, reporter)
                     ended = datetime.now(UTC)
+                    if isinstance(outcome, TaskResult):
+                        outcome = replace(outcome, started_at=started, ended_at=ended)
+                        if session is not None:
+                            try:
+                                session.publish_task(index, outcome)
+                            except Exception:
+                                logger.exception(
+                                    "Task %r: failed to persist (continuing)",
+                                    task.goal.description,
+                                )
+                        reporter.on_task_complete(_task_complete_event(index, outcome))
+                        return "result", index, outcome
+                    reporter.on_task_skipped(
+                        TaskSkippedEvent(task_index=index, goal=task.goal.description)
+                    )
+                    if session is not None:
+                        session.mark_skipped(index, task.goal.description)
+                    return "skip", index, task
+                except Exception as exc:
+                    # An unexpected orchestration failure (a reporter callback,
+                    # begin_task I/O, ...) must not abort the whole threat model
+                    # via gather's first-exception behaviour: contain it as an
+                    # error task so the other tasks still complete.
+                    logger.exception(
+                        "Task %r: orchestration error, recording as error",
+                        task.goal.description,
+                    )
+                    tr = _synthesize_empty_task_result(
+                        task,
+                        stop_reason="error",
+                        rationale="Unexpected orchestration error.",
+                        exc=exc,
+                    )
+                    try:
+                        reporter.on_task_complete(_task_complete_event(index, tr))
+                    except Exception:  # pragma: no cover - reporter already failing
+                        pass
+                    return "result", index, tr
                 finally:
                     current_task.reset(token)
-                if isinstance(outcome, TaskResult):
-                    outcome = replace(outcome, started_at=started, ended_at=ended)
-                    if session is not None:
-                        try:
-                            session.publish_task(index, outcome)
-                        except Exception:
-                            logger.exception(
-                                "Task %r: failed to persist (continuing)", task.goal.description
-                            )
-                    reporter.on_task_complete(_task_complete_event(index, outcome))
-                    return "result", index, outcome
-                reporter.on_task_skipped(
-                    TaskSkippedEvent(task_index=index, goal=task.goal.description)
-                )
-                if session is not None:
-                    session.mark_skipped(index, task.goal.description)
-                return "skip", index, task
 
         outcomes = await asyncio.gather(*(run_one(i, tasks[i - 1]) for i in sorted(rerun)))
 

@@ -522,6 +522,7 @@ class Dashboard:
         self._canvas_ok = False
         self._started = False
         self._stopped = False
+        self._live_stopped = False
         self._atexit_registered = False
 
     # -- Public API --------------------------------------------------------
@@ -585,34 +586,46 @@ class Dashboard:
             self._request_refresh()
 
     def _shutdown(self) -> None:
-        """Last lane finished: paint the final frame, stop, print the summary."""
+        """Last lane finished: paint the final frame, stop, print the summary.
+
+        The render is best-effort and MUST NOT skip the ``Live.stop()`` — a
+        render exception that left the canvas running would strand the terminal
+        in alt-screen / hidden-cursor state.  Stopping the ``Live`` is delegated
+        to :meth:`_stop_live` (idempotent), which the ``atexit``/``__exit__``
+        safety net also calls, so the terminal is always restored.
+        """
         if self._stopped:
             return
         self._stopped = True
+        try:
+            if self._live is not None and self._canvas_ok:
+                self._live.update(self._render(), refresh=True)
+        except Exception:  # pragma: no cover - a render error must not skip the stop
+            pass
+        self._stop_live()
+        if self._console is not None:
+            try:
+                self._console.print(self._render_final_summary())
+            except Exception:  # pragma: no cover - final summary print is best-effort
+                pass
+
+    def _stop_live(self) -> None:
+        """Stop the ``Live`` and release the process-wide canvas (idempotent)."""
         global _ACTIVE_LIVE
-        if self._live is not None and self._canvas_ok:
-            self._live.update(self._render(), refresh=True)
+        if self._live is None or self._live_stopped:
+            return
+        self._live_stopped = True
+        try:
             with _ACTIVE_LIVE_LOCK:
                 self._live.stop()
                 if _ACTIVE_LIVE is self._live:
                     _ACTIVE_LIVE = None
-        if self._console is not None:
-            self._console.print(self._render_final_summary())
+        except Exception:  # pragma: no cover - teardown must never raise
+            pass
 
     def _force_stop(self) -> None:
         """Belt-and-suspenders teardown (atexit / context exit)."""
-        if self._stopped:
-            return
-        self._stopped = True
-        global _ACTIVE_LIVE
-        if self._live is not None:
-            try:
-                with _ACTIVE_LIVE_LOCK:
-                    self._live.stop()
-                    if _ACTIVE_LIVE is self._live:
-                        _ACTIVE_LIVE = None
-            except Exception:  # pragma: no cover - belt-and-suspenders teardown must never raise
-                pass
+        self._stop_live()
 
     # -- Metric updates (loop thread) -------------------------------------
 
@@ -637,7 +650,11 @@ class Dashboard:
         lane.total_cost += ev.cost_usd
         lane.total_calls += ev.calls
         lane.best_score = max(lane.best_score, ev.best_score)
-        if ev.success:
+        completed = ev.stop_reason in ("done", "max_runs", "budget_exhausted")
+        # Count a success only among completed tasks so the lane ASR
+        # (n_success / n_completed) stays in [0, 1]: a task can be success=True
+        # yet stop_reason="error" (goal met, then reset_ephemeral_state failed).
+        if ev.success and completed:
             lane.n_success += 1
         if ev.stop_reason in ("done", "max_runs"):
             lane.n_completed += 1
@@ -874,10 +891,17 @@ class _RichLane:
 
 
 def get_default_dashboard() -> Dashboard:
-    """Return the lazily-created process-global :class:`Dashboard`."""
+    """Return the process-global :class:`Dashboard`, re-arming it if spent.
+
+    A ``Dashboard`` is single-use: once its last lane ends it stops the ``Live``
+    and marks itself stopped.  Sequential sweeps (one ``Controller.run()`` after
+    another, a supported pattern) must each get a fresh canvas, so a stopped
+    default is replaced here rather than silently reused (which would swallow
+    all output for every threat model after the first).
+    """
     global _DEFAULT_DASHBOARD
     with _DEFAULT_DASHBOARD_LOCK:
-        if _DEFAULT_DASHBOARD is None:
+        if _DEFAULT_DASHBOARD is None or _DEFAULT_DASHBOARD._stopped:
             _DEFAULT_DASHBOARD = Dashboard()
         return _DEFAULT_DASHBOARD
 

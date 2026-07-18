@@ -425,6 +425,12 @@ def test_session_open_resume_snapshots_prior_then_republishes(tmp_path: Path) ->
 
     current = iter_task_dirs(session.experiment_dir)[0]
     assert load_task(current)["success"] is True  # current now reflects the rerun
+    # ...and the snapshot RETAINED the pre-rerun errored result after the
+    # republish over current (snapshot-before-rerun immutability, the guarantee).
+    snap_task = iter_task_dirs(session.experiment_dir / "previous_01")[0]
+    snap = load_task(snap_task)
+    assert snap["success"] is False
+    assert snap["stop_reason"] == "error"
 
 
 def test_session_open_releases_lock_on_error(

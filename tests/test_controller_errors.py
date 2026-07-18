@@ -171,7 +171,12 @@ async def test_diagnostic_sink_writes_per_task_jsonl(tmp_path: Path) -> None:
     result = await controller.run()
 
     assert len(result.task_results) == 1
-    # The per-task JSONL sink wrote the warning into the published task's log.
-    logs = list(tmp_path.rglob("diagnostics.log"))
-    combined = "\n".join(p.read_text(encoding="utf-8") for p in logs)
-    assert "configuring for logs a warning" in combined
+    # The record must land in THIS task's own log (attributed via the contextvar),
+    # not merely somewhere in the tree — assert the specific published task dir.
+    from superred.core.persistence import iter_task_dirs
+
+    exp_dir = next(d for d in tmp_path.iterdir() if d.is_dir())
+    task_dirs = iter_task_dirs(exp_dir)
+    assert len(task_dirs) == 1
+    task_log = (task_dirs[0] / "logs" / "diagnostics.log").read_text(encoding="utf-8")
+    assert "configuring for logs a warning" in task_log

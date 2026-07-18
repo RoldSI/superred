@@ -338,7 +338,10 @@ def test_dashboard_context_manager_force_stops() -> None:
             # Leave the block WITHOUT ending the lane -> __exit__ -> _force_stop.
 
     asyncio.run(drive())
-    assert captured["d"]._stopped is True
+    # __exit__ -> _force_stop stops the Live (releases the canvas) without
+    # marking a full shutdown (_stopped): the two are deliberately distinct so a
+    # render error in _shutdown cannot disarm this fallback.
+    assert captured["d"]._live_stopped is True
     assert reporting._ACTIVE_LIVE is None
     reporting._reset_for_tests()
 
@@ -398,12 +401,11 @@ def test_dashboard_without_running_loop_degrades_to_plain() -> None:
     assert "Threat model:" in out
     assert "Overall:" in out
 
-    # Force-stop with no live canvas is a safe no-op; a second call
-    # short-circuits on the already-stopped guard.
+    # Force-stop with no live canvas is a safe, idempotent no-op (there is no
+    # Live to release, so the shared canvas stays unheld).
     dashboard._force_stop()
-    assert dashboard._stopped is True
     dashboard._force_stop()
-    assert dashboard._stopped is True
+    assert reporting._ACTIVE_LIVE is None
     reporting._reset_for_tests()
 
 

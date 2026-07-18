@@ -405,7 +405,10 @@ def _build_trajectory_json(trajectory: Trajectory, run_number: int) -> dict[str,
 
 def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
     completed_reasons = ("done", "max_runs", "budget_exhausted")
-    n_success = sum(1 for v in views if v.success)
+    # Count a success only among completed tasks: a task can be success=True yet
+    # stop_reason="error" (goal met, then reset_ephemeral_state failed), which
+    # would otherwise make the numerator exceed the denominator (ASR > 100%).
+    n_success = sum(1 for v in views if v.success and v.stop_reason in completed_reasons)
     n_completed = sum(1 for v in views if v.stop_reason in completed_reasons)
     n_budget = sum(1 for v in views if v.stop_reason == "budget_exhausted")
     n_error = sum(1 for v in views if v.stop_reason == "error")
@@ -704,7 +707,14 @@ def snapshot_current(experiment_dir: Path) -> Path | None:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
     for p in have:
-        if p.is_dir():
+        if p.name == "logs" and p.is_dir():
+            # The experiment-level diagnostics log is appended in place during a
+            # resume (open("a")), so hardlinking it would mutate the snapshot
+            # through the shared inode. Copy it (small vs trajectories). Task
+            # dirs are safe to hardlink: a rerun republishes a fresh inode and
+            # never writes back into the old one.
+            shutil.copytree(p, staging / p.name)
+        elif p.is_dir():
             _link_tree(p, staging / p.name)
         else:
             _link_or_copy(p, staging / p.name)
@@ -719,31 +729,45 @@ def update_experiments_index(
     status: str,
     completed_at: str | None,
 ) -> None:
-    """Append/update this experiment's row in ``experiments.json`` (atomic)."""
+    """Append/update this experiment's row in ``experiments.json`` (atomic).
+
+    The read-modify-write is guarded by a root-level ``.experiments.lock`` flock
+    so two processes finalizing *different* experiments into the same results
+    root cannot clobber each other's row (nor collide on the shared temp file).
+    """
     path = results_root / "experiments.json"
+    lock_fh = None
+    if fcntl is not None:
+        lock_fh = open(results_root / ".experiments.lock", "w")
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
     try:
-        rows = _read_json(path).get("experiments", [])
-    except Exception:
-        rows = []
-    rows = [r for r in rows if r.get("dir") != meta.dirname()]
-    rows.append(
-        {
-            "dir": meta.dirname(),
-            "slug": meta.slug(),
-            "hash": meta.identity_hash(),
-            "status": status,
-            "experiment": meta.experiment_block(),
-            "summary": {
-                "asr": summary.get("asr"),
-                "n_success": summary.get("n_success"),
-                "n_completed": summary.get("n_completed"),
-                "total_llm_usage": summary.get("total_llm_usage"),
-            },
-            "completed_at": completed_at,
-        }
-    )
-    rows.sort(key=lambda r: r.get("dir", ""))
-    _atomic_write_json(path, {"schema_version": SCHEMA_VERSION, "experiments": rows})
+        try:
+            rows = _read_json(path).get("experiments", [])
+        except Exception:
+            rows = []
+        rows = [r for r in rows if r.get("dir") != meta.dirname()]
+        rows.append(
+            {
+                "dir": meta.dirname(),
+                "slug": meta.slug(),
+                "hash": meta.identity_hash(),
+                "status": status,
+                "experiment": meta.experiment_block(),
+                "summary": {
+                    "asr": summary.get("asr"),
+                    "n_success": summary.get("n_success"),
+                    "n_completed": summary.get("n_completed"),
+                    "total_llm_usage": summary.get("total_llm_usage"),
+                },
+                "completed_at": completed_at,
+            }
+        )
+        rows.sort(key=lambda r: r.get("dir", ""))
+        _atomic_write_json(path, {"schema_version": SCHEMA_VERSION, "experiments": rows})
+    finally:
+        if lock_fh is not None:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+            lock_fh.close()
 
 
 def write_dashboard(dest_dir: Path) -> None:
@@ -1051,6 +1075,9 @@ def reconstruct_kept_task_result(experiment_dir: Path, index: int, task: Task[An
             error=data.get("error"),
             started_at=_parse_iso(timing.get("started_at")),
             ended_at=_parse_iso(timing.get("ended_at")),
+            # runs=[] is intentional (trajectories stay on disk); carry the real
+            # count so the reporter + returned result match a fresh run.
+            n_runs=int(data.get("n_runs", 0)),
         )
     raise FileNotFoundError(f"no persisted task with index {index} in {experiment_dir}")
 
