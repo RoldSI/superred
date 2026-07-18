@@ -4,9 +4,9 @@ Complements ``tests/test_reporting.py`` (which drives the observer contract
 through a real Controller and a single-lane canvas) by exercising the rich
 :class:`Dashboard` internals that a single-lane happy path never reaches:
 
-* a multi-lane canvas driven through every ``stop_reason`` + skip + a
-  loop-thread diagnostic, then torn down to the final-results table;
-* an off-loop diagnostic marshalled from a worker thread;
+* a multi-lane canvas driven through every ``stop_reason`` + skip, then torn
+  down to the final-results table;
+* per-threat-model active-task rows (running tasks listed beneath a lane);
 * a second Dashboard degrading to :class:`PlainReporter` when the single live
   canvas is already held;
 * the context-manager force-stop, the ``_bar`` / ``_fmt_dur`` formatting edges,
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from io import StringIO
 from typing import Any
 
@@ -166,7 +165,7 @@ def test_dashboard_two_lanes_all_stop_reasons() -> None:
         lane1.on_threat_model_start(_ctx("lane-1", n_tasks=5))
         lane2.on_threat_model_start(_ctx("lane-2", n_tasks=1))
         assert dashboard._canvas_ok is True
-        assert dashboard._header_size() == 5  # multi-lane header
+        assert len(dashboard._lanes) == 2  # two threat-model blocks
 
         # lane-1: one task per stop_reason (done/max_runs/budget/error) + a skip.
         for i, (stop_reason, ok) in enumerate(
@@ -179,7 +178,7 @@ def test_dashboard_two_lanes_all_stop_reasons() -> None:
                 _task_complete(i, ok, stop_reason, error="boom" if stop_reason == "error" else None)
             )
         lane1.on_task_skipped(TaskSkippedEvent(task_index=5, goal="skip me"))
-        # A loop-thread diagnostic lands in the side pane deque.
+        # on_diagnostic is a safe no-op on the canvas now (there is no pane).
         lane1.on_diagnostic(
             DiagnosticEvent(label="lane-1", task_index=1, level="warning", message="heads up")
         )
@@ -223,51 +222,42 @@ def test_dashboard_two_lanes_all_stop_reasons() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (b) Off-loop diagnostic from a worker thread
+# (b) Active tasks render indented beneath their threat model
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_diagnostic_from_worker_thread() -> None:
+def _render_to_str(dashboard: Dashboard) -> str:
+    cap = Console(file=StringIO(), width=140, color_system=None)
+    cap.print(dashboard._render())
+    return cap.file.getvalue()
+
+
+def test_dashboard_shows_active_tasks_under_each_lane() -> None:
     reporting._reset_for_tests()
-    sink = StringIO()
-    console = Console(file=sink, force_terminal=True, color_system=None)
+    console = Console(file=StringIO(), force_terminal=True, width=140, color_system=None)
     dashboard = Dashboard(console=console, redirect=False)
+    captured: dict[str, str] = {}
 
     async def drive() -> None:
-        lane = dashboard.reporter_for("worker")
-        lane.on_threat_model_start(_ctx("worker"))
-        submitted = threading.Event()
-
-        def worker() -> None:
-            dashboard.submit_diagnostic(
-                DiagnosticEvent(
-                    label="worker", task_index=None, level="error", message="from another thread"
-                )
-            )
-            submitted.set()
-
-        t = threading.Thread(target=worker)
-        t.start()
-        assert submitted.wait(2.0)
-        t.join()
-        # Let call_soon_threadsafe drain the marshalled apply onto the loop.
+        lane = dashboard.reporter_for("lane")
+        lane.on_threat_model_start(_ctx("lane", n_tasks=4, max_runs_per_task=8))
+        # Two tasks running (started, not completed) + one already done.
+        lane.on_task_start(TaskStartEvent(task_index=1, goal="Leak the secret [x]"))
+        lane.on_run_complete(_run_complete(task_index=1, run_number=3, success=False))
+        lane.on_task_start(TaskStartEvent(task_index=2, goal="Exfiltrate data"))
+        # Task 3 starts then completes (every completed task was started first).
+        lane.on_task_start(TaskStartEvent(task_index=3, goal="already breached"))
+        lane.on_task_complete(_task_complete(3, True, "done"))
         await asyncio.sleep(_REFRESH_INTERVAL_S * 2.5)
-        assert any(d.message == "from another thread" for d in dashboard._diagnostics)
-        lane.on_threat_model_end(_end(_ctx("worker")))
+        captured["body"] = _render_to_str(dashboard)
+        lane.on_threat_model_end(_end(_ctx("lane", n_tasks=4)))
 
     asyncio.run(drive())
-    assert dashboard._stopped is True
-    reporting._reset_for_tests()
-
-
-def test_submit_diagnostic_before_start_applies_inline() -> None:
-    """A diagnostic submitted before the loop is bound applies synchronously."""
-    reporting._reset_for_tests()
-    dashboard = Dashboard(redirect=False)  # never started, no loop bound
-    dashboard.submit_diagnostic(
-        DiagnosticEvent(label="x", task_index=None, level="info", message="early")
-    )
-    assert any(d.message == "early" for d in dashboard._diagnostics)
+    body = captured["body"]
+    assert "Leak the secret [x]" in body  # untrusted markup rendered literally
+    assert "Exfiltrate data" in body  # both running tasks are listed
+    assert "run 3/8" in body  # live per-task status
+    assert "running 2" in body  # two tasks in-flight
     reporting._reset_for_tests()
 
 

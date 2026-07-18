@@ -37,15 +37,14 @@ import os
 import sys
 import threading
 import time
-from collections import deque
 from collections.abc import Callable
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import IO, Literal, Protocol, TextIO, runtime_checkable
 
-from rich.console import Console
-from rich.layout import Layout
+from rich.console import Console, Group
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -438,7 +437,6 @@ def should_use_plain(
 # Coalesce repaints to at most one per this interval (trailing-edge, so the
 # last event before the run goes quiet is always painted).
 _REFRESH_INTERVAL_S = 0.1
-_DIAG_MAXLEN = 400
 
 # Process-wide single-``Live`` guard.  rich allows only one ``Live`` per
 # terminal; a second silently stomps the first.  At most one Dashboard holds
@@ -467,6 +465,16 @@ def _bar(fraction: float, width: int = 12) -> str:
 
 
 @dataclass
+class _ActiveTask:
+    """Live status of one currently-running task (shown indented under its lane)."""
+
+    goal: str
+    run_number: int = 0
+    score: float = 0.0
+    cost: float = 0.0
+
+
+@dataclass
 class _LaneState:
     """Mutable per-Controller display state (mutated only on the loop thread)."""
 
@@ -483,6 +491,7 @@ class _LaneState:
     total_calls: int = 0
     total_cost: float = 0.0
     best_score: float = 0.0
+    active: dict[int, _ActiveTask] = field(default_factory=dict)  # index -> running task
     end_ev: ThreatModelEndEvent | None = None
 
 
@@ -490,15 +499,16 @@ class Dashboard:
     """A shared ``rich`` live canvas coordinating one or many Controllers.
 
     One ``Dashboard`` owns exactly one ``rich`` ``Console`` and one ``Live``.
-    Each Controller is given a *lane* (one row) via :meth:`reporter_for`.
-    Multiple concurrently-gathered Controllers therefore render into a single
-    terminal view, never fighting over the screen.
+    Each Controller is given a *lane* via :meth:`reporter_for`; the canvas shows
+    a top bar (brand + overall progress) plus one block per threat model (its
+    own attacker/target/model/scope identity + metrics) with the currently-
+    running tasks listed beneath it, each with a live status.  Multiple
+    concurrently-gathered Controllers therefore render into a single terminal
+    view, never fighting over the screen.
 
     Threading: all lane callbacks arrive on the asyncio loop thread and mutate
-    lane state directly.  Off-loop diagnostics (the logging bridge) are
-    marshalled onto the loop thread via ``call_soon_threadsafe`` before they
-    touch any shared state, so there is no cross-thread mutation and no lock on
-    the display state.  The only lock is the process-wide single-``Live`` guard.
+    lane state directly, so there is no cross-thread mutation and no lock on the
+    display state.  The only lock is the process-wide single-``Live`` guard.
 
     Args:
         console: A ``rich`` ``Console`` to render into (default: a fresh one).
@@ -513,10 +523,8 @@ class Dashboard:
         self._console: Console | None = None
         self._live: Live | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._loop_thread_id: int | None = None
         self._lanes: dict[str, _LaneState] = {}
-        self._diagnostics: deque[DiagnosticEvent] = deque(maxlen=_DIAG_MAXLEN)
-        self._diag_lock = threading.Lock()
+        self._start_monotonic: float | None = None  # overall run start (first lane)
         self._active_lanes = 0
         self._flush_scheduled = False
         self._canvas_ok = False
@@ -545,7 +553,6 @@ class Dashboard:
         self._started = True
         try:
             self._loop = asyncio.get_running_loop()
-            self._loop_thread_id = threading.get_ident()
         except RuntimeError:
             self._loop = None
         self._console = self._console_arg or Console()
@@ -571,6 +578,8 @@ class Dashboard:
             self._atexit_registered = True
 
     def _lane_start(self, label: str, ctx: ThreatModelContext) -> None:
+        if self._start_monotonic is None:
+            self._start_monotonic = time.monotonic()
         self._lanes[label] = _LaneState(ctx=ctx, started_at=time.monotonic())
         self._active_lanes += 1
         self._request_refresh()
@@ -633,18 +642,25 @@ class Dashboard:
         lane = self._lanes.get(label)
         if lane is not None:
             lane.in_flight += 1
+            lane.active[ev.task_index] = _ActiveTask(goal=ev.goal)
         self._request_refresh()
 
     def _run_complete(self, label: str, ev: RunCompleteEvent) -> None:
         lane = self._lanes.get(label)
         if lane is not None:
             lane.n_runs += 1
+            task = lane.active.get(ev.task_index)
+            if task is not None:
+                task.run_number = ev.run_number
+                task.score = ev.primary_score
+                task.cost = ev.cumulative_cost_usd
         self._request_refresh()
 
     def _task_complete(self, label: str, ev: TaskCompleteEvent) -> None:
         lane = self._lanes.get(label)
         if lane is None:
             return
+        lane.active.pop(ev.task_index, None)
         lane.in_flight = max(0, lane.in_flight - 1)
         lane.n_terminal += 1
         lane.total_cost += ev.cost_usd
@@ -668,22 +684,10 @@ class Dashboard:
     def _task_skipped(self, label: str, ev: TaskSkippedEvent) -> None:
         lane = self._lanes.get(label)
         if lane is not None:
+            lane.active.pop(ev.task_index, None)
+            lane.in_flight = max(0, lane.in_flight - 1)
             lane.n_terminal += 1
             lane.n_skipped += 1
-        self._request_refresh()
-
-    # -- Diagnostics (any thread) -----------------------------------------
-
-    def submit_diagnostic(self, ev: DiagnosticEvent) -> None:
-        """Deliver a diagnostic, marshalling onto the loop thread if needed."""
-        if self._loop is None or threading.get_ident() == self._loop_thread_id:
-            self._apply_diagnostic(ev)
-        else:
-            self._loop.call_soon_threadsafe(self._apply_diagnostic, ev)
-
-    def _apply_diagnostic(self, ev: DiagnosticEvent) -> None:
-        with self._diag_lock:
-            self._diagnostics.append(ev)
         self._request_refresh()
 
     # -- Rendering (loop thread) ------------------------------------------
@@ -701,102 +705,86 @@ class Dashboard:
         if self._live is not None and self._canvas_ok and not self._stopped:
             self._live.update(self._render(), refresh=True)
 
-    def _render(self) -> Layout:
-        layout = Layout()
-        layout.split_row(
-            Layout(name="main", ratio=2),
-            Layout(self._render_side(), name="side", ratio=1, minimum_size=28),
-        )
-        layout["main"].split_column(
-            Layout(self._render_header(), name="header", size=self._header_size()),
-            Layout(self._render_body(), name="body"),
-        )
-        return layout
-
-    def _header_size(self) -> int:
-        return 11 if len(self._lanes) == 1 else 5
+    def _render(self) -> Group:
+        return Group(self._render_header(), self._render_body())
 
     def _render_header(self) -> Panel:
-        if len(self._lanes) == 1:
-            (lane,) = self._lanes.values()
-            ctx = lane.ctx
-            grid = Table.grid(padding=(0, 2))
-            grid.add_column(style="bold cyan", justify="right")
-            grid.add_column()
-            budget = (
-                "unlimited"
-                if ctx.task_cost_cap_usd is None
-                else f"${ctx.task_cost_cap_usd:g} / task"
-            )
-            grid.add_row("attacker", ctx.attacker)
-            grid.add_row("target", ctx.target)
-            grid.add_row("claim", ctx.claim)
-            grid.add_row("model", ctx.model or "(no LLM)")
-            grid.add_row("scope", ctx.scope_desc)
-            grid.add_row("budget", budget)
-            n_tasks = ctx.n_tasks if ctx.n_tasks is not None else "?"
-            elapsed = _fmt_dur(time.monotonic() - lane.started_at)
-            grid.add_row(
-                "run",
-                f"{n_tasks} tasks · concurrency {ctx.concurrency} · elapsed {elapsed}",
-            )
-            return Panel(grid, title="[bold]superred[/bold]", border_style="cyan")
-        # Multi-lane sweep: a compact aggregate line.
-        total_tasks = sum(la.ctx.n_tasks or 0 for la in self._lanes.values())
-        done = sum(la.n_terminal for la in self._lanes.values())
-        succ = sum(la.n_success for la in self._lanes.values())
-        comp = sum(la.n_completed for la in self._lanes.values())
-        cost = sum(la.total_cost for la in self._lanes.values())
+        """A neutral top bar: the brand + overall progress across all lanes.
+
+        Per-threat-model identity (attacker/target/model/scope) lives on each
+        lane row instead, so a sweep of differing threat models stays accurate.
+        """
+        lanes = self._lanes.values()
+        total = sum(la.ctx.n_tasks or 0 for la in lanes)
+        done = sum(la.n_terminal for la in lanes)
+        succ = sum(la.n_success for la in lanes)
+        comp = sum(la.n_completed for la in lanes)
+        cost = sum(la.total_cost for la in lanes)
+        running = sum(la.in_flight for la in lanes)
         asr = f"{(succ / comp):.1%}" if comp else "n/a"
+        start = self._start_monotonic
+        elapsed = _fmt_dur(time.monotonic() - start) if start is not None else "0s"
+        n_tm = len(self._lanes)
+        tm_word = "threat model" if n_tm == 1 else "threat models"
         text = Text.from_markup(
-            f"[bold]{len(self._lanes)}[/bold] threat models · "
-            f"[bold]{done}/{total_tasks}[/bold] tasks · "
-            f"ASR [bold]{asr}[/bold] · "
-            f"[green]{succ}[/green] success · "
-            f"cost [bold]${cost:.4f}[/bold]"
+            "[bold]super[/][bold #ed2121]red[/]   "
+            f"[bold]{done}/{total}[/] tasks   ASR [bold]{asr}[/]   "
+            f"running [bold]{running}[/]   cost [bold]${cost:.4f}[/]   "
+            f"[dim]{n_tm} {tm_word} · {elapsed}[/]"
         )
-        return Panel(text, title="[bold]superred[/bold]", border_style="cyan")
+        return Panel(text, border_style="cyan", padding=(0, 1))
 
     def _render_body(self) -> Panel:
-        table = Table(expand=True, pad_edge=False, box=None)
-        table.add_column("threat model", style="bold", ratio=3, no_wrap=True)
-        table.add_column("progress", ratio=3, no_wrap=True)
-        table.add_column("ASR", justify="right", ratio=1)
-        table.add_column("ok/fail/err/skip", justify="center", ratio=2, no_wrap=True)
-        table.add_column("live", justify="right", ratio=1)
-        table.add_column("cost", justify="right", ratio=1)
-        for label, lane in self._lanes.items():
-            n = lane.ctx.n_tasks or 0
-            frac = (lane.n_terminal / n) if n else (1.0 if lane.end_ev else 0.0)
-            asr = f"{(lane.n_success / lane.n_completed):.0%}" if lane.n_completed else "-"
-            fail = lane.n_completed - lane.n_success
-            counts = (
-                f"[green]{lane.n_success}[/green]/[yellow]{fail}[/yellow]/"
-                f"[red]{lane.n_error}[/red]/[dim]{lane.n_skipped}[/dim]"
-            )
-            done_mark = "[green]✓[/green] " if lane.end_ev is not None else ""
-            table.add_row(
-                f"{done_mark}{label}",
-                f"[cyan]{_bar(frac)}[/cyan] {lane.n_terminal}/{n}",
-                asr,
-                counts,
-                str(lane.in_flight) if lane.in_flight else "[dim]0[/dim]",
-                f"${lane.total_cost:.4f}",
-            )
-        return Panel(table, title="tasks", border_style="blue")
+        """One block per threat model: an identity + metrics line, then the
+        currently-running tasks indented beneath it with a live status each."""
+        rows: list[Text] = []
+        for lane in self._lanes.values():
+            rows.append(self._lane_identity_line(lane))
+            rows.append(self._lane_metrics_line(lane))
+            if lane.end_ev is not None:
+                pass  # finished: the ✓ on the identity line says so
+            elif lane.active:
+                for index in sorted(lane.active):
+                    rows.append(self._active_task_line(lane, index, lane.active[index]))
+            else:
+                rows.append(Text.from_markup("      [dim]· waiting for a slot…[/]"))
+            rows.append(Text(""))  # a blank line between threat models
+        while rows and rows[-1].plain == "":
+            rows.pop()
+        if not rows:
+            rows = [Text("(starting…)", style="dim")]
+        return Panel(Group(*rows), title="threat models", border_style="blue", padding=(0, 1))
 
-    def _render_side(self) -> Panel:
-        with self._diag_lock:
-            items = list(self._diagnostics)[-40:]
-        style = {"info": "dim", "warning": "yellow", "error": "bold red"}
-        body = Text()
-        for ev in items:
-            where = f"t{ev.task_index}" if ev.task_index is not None else "exp"
-            body.append(f"{where} ", style="dim")
-            body.append(ev.message + "\n", style=style.get(ev.level, "dim"))
-        if not items:
-            body = Text("(no diagnostics)", style="dim")
-        return Panel(body, title="diagnostics / errors", border_style="grey37")
+    def _lane_identity_line(self, lane: _LaneState) -> Text:
+        ctx = lane.ctx
+        mark = "[green]✓[/]" if lane.end_ev is not None else "[cyan]▸[/]"
+        budget = "∞" if ctx.task_cost_cap_usd is None else f"${ctx.task_cost_cap_usd:g}/task"
+        return Text.from_markup(
+            f"{mark} [bold cyan]{escape(ctx.attacker)}[/] → [bold]{escape(ctx.target)}[/]  "
+            f"[dim]{escape(ctx.model or 'no-LLM')} · {escape(ctx.claim)}[/]  "
+            f"scope [magenta]{escape(ctx.scope_desc)}[/]  [dim]budget {budget}[/]"
+        )
+
+    def _lane_metrics_line(self, lane: _LaneState) -> Text:
+        n = lane.ctx.n_tasks or 0
+        frac = (lane.n_terminal / n) if n else (1.0 if lane.end_ev is not None else 0.0)
+        asr = f"{(lane.n_success / lane.n_completed):.0%}" if lane.n_completed else "–"
+        fail = lane.n_completed - lane.n_success
+        return Text.from_markup(
+            f"    [cyan]{_bar(frac)}[/] {lane.n_terminal}/{n}  ASR [bold]{asr}[/]  "
+            f"ok [green]{lane.n_success}[/] fail [yellow]{fail}[/] "
+            f"err [red]{lane.n_error}[/] skip [dim]{lane.n_skipped}[/]  "
+            f"running [bold]{lane.in_flight}[/]  [dim]${lane.total_cost:.4f}[/]"
+        )
+
+    def _active_task_line(self, lane: _LaneState, index: int, task: _ActiveTask) -> Text:
+        goal = task.goal if len(task.goal) <= 44 else task.goal[:43] + "…"
+        max_runs = lane.ctx.max_runs_per_task or 0
+        run = f"{task.run_number}/{max_runs}" if max_runs else str(task.run_number)
+        return Text.from_markup(
+            f"      [green]●[/] [dim]#{index:<3}[/] {escape(goal)}  "
+            f"[dim]run[/] {run}  [dim]score[/] {task.score:.2f}  [dim]${task.cost:.4f}[/]"
+        )
 
     def _render_final_summary(self) -> Table:
         table = Table(title="superred · final results", expand=True)
@@ -877,7 +865,9 @@ class _RichLane:
     def on_diagnostic(self, ev: DiagnosticEvent) -> None:
         if not self._d._canvas_ok:
             return self._plain_reporter().on_diagnostic(ev)
-        self._d.submit_diagnostic(ev)
+        # The live dashboard has no diagnostics pane; the per-task JSONL logs
+        # (written by the controller's sink) are the durable record. No-op here.
+        return None
 
     def on_threat_model_end(self, ev: ThreatModelEndEvent) -> None:
         if not self._d._canvas_ok:

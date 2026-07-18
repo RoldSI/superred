@@ -108,16 +108,18 @@ evaluates each run, then tears everything down. Tasks run concurrently up to
 The Controller streams live progress the whole way through (it no longer prints a
 single block at the end):
 
-- On a real interactive terminal you get a **live dashboard**: a header with the
-  experiment parameters (attacker, target, claim, scope, budget, model, task
-  count, concurrency), a live metrics table (progress, attack-success rate,
-  success/failure/error/skipped counts, cost), and a diagnostics/errors pane. A
+- On a real interactive terminal you get a **live dashboard**: a top bar with
+  overall progress (tasks done, attack-success rate, running count, cost,
+  elapsed), then one block per threat model showing its own identity
+  (attacker/target/model/scope/budget) and metrics, with the tasks currently
+  running listed indented beneath it (each with its live run/score/cost). A
   final results view renders when the run ends.
 - On a non-TTY, in CI, under `NO_COLOR`, or when output is piped, it degrades
   automatically to **plain lines**: a start banner, one line per task, and an
   end summary (which mirrors the old end-of-run summary block).
 - Several Controllers run together with `asyncio.gather` on a TTY share **one**
-  dashboard, one row each.
+  dashboard, one block each (so a sweep of differing threat models stays
+  accurate: each block carries its own identity).
 
 **Turning it off.** Pass `report=False` for silence, or inject your own observer
 with `reporter=` (a `ProgressReporter` from `superred.core.reporting`).
