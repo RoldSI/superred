@@ -480,18 +480,13 @@ class _LaneState:
     """Mutable per-Controller display state (mutated only on the loop thread)."""
 
     ctx: ThreatModelContext
-    started_at: float
     in_flight: int = 0
     n_terminal: int = 0  # tasks reaching any terminal state (incl. skipped)
     n_success: int = 0
     n_completed: int = 0  # done + max_runs + budget_exhausted (ASR denominator)
     n_error: int = 0
-    n_budget: int = 0
     n_skipped: int = 0
-    n_runs: int = 0
-    total_calls: int = 0
     total_cost: float = 0.0
-    best_score: float = 0.0
     active: dict[int, _ActiveTask] = field(default_factory=dict)  # index -> running task
     end_ev: ThreatModelEndEvent | None = None
     pending: bool = False  # pre-registered (queued) but its Controller has not started yet
@@ -563,7 +558,7 @@ class Dashboard:
         place for the running one.  Idempotent per label."""
         self._ensure_started()
         if label not in self._lanes:
-            self._lanes[label] = _LaneState(ctx=ctx, started_at=time.monotonic(), pending=True)
+            self._lanes[label] = _LaneState(ctx=ctx, pending=True)
         self._request_refresh()
 
     def __enter__(self) -> Dashboard:
@@ -609,12 +604,11 @@ class Dashboard:
             self._start_monotonic = time.monotonic()
         lane = self._lanes.get(label)
         if lane is None:
-            self._lanes[label] = _LaneState(ctx=ctx, started_at=time.monotonic())
+            self._lanes[label] = _LaneState(ctx=ctx)
         else:
             # A pre-registered (queued) lane is starting: keep its row in place,
             # swap in the run-time context (real n_tasks), and mark it active.
             lane.ctx = ctx
-            lane.started_at = time.monotonic()
             lane.pending = False
         self._active_lanes += 1
         self._request_refresh()
@@ -650,7 +644,7 @@ class Dashboard:
         try:
             if self._live is not None and self._canvas_ok:
                 self._live.update(self._render(), refresh=True)
-        except Exception:  # pragma: no cover - a render error must not skip the stop
+        except Exception:  # a render error must not skip the stop below
             pass
         self._stop_live()
 
@@ -684,7 +678,6 @@ class Dashboard:
     def _run_complete(self, label: str, ev: RunCompleteEvent) -> None:
         lane = self._lanes.get(label)
         if lane is not None:
-            lane.n_runs += 1
             task = lane.active.get(ev.task_index)
             if task is not None:
                 task.run_number = ev.run_number
@@ -700,19 +693,14 @@ class Dashboard:
         lane.in_flight = max(0, lane.in_flight - 1)
         lane.n_terminal += 1
         lane.total_cost += ev.cost_usd
-        lane.total_calls += ev.calls
-        lane.best_score = max(lane.best_score, ev.best_score)
         completed = ev.stop_reason in ("done", "max_runs", "budget_exhausted")
         # Count a success only among completed tasks so the lane ASR
         # (n_success / n_completed) stays in [0, 1]: a task can be success=True
         # yet stop_reason="error" (goal met, then reset_ephemeral_state failed).
         if ev.success and completed:
             lane.n_success += 1
-        if ev.stop_reason in ("done", "max_runs"):
+        if completed:
             lane.n_completed += 1
-        elif ev.stop_reason == "budget_exhausted":
-            lane.n_completed += 1
-            lane.n_budget += 1
         elif ev.stop_reason == "error":
             lane.n_error += 1
         self._request_refresh()
@@ -738,8 +726,16 @@ class Dashboard:
 
     def _flush_refresh(self) -> None:
         self._flush_scheduled = False
-        if self._live is not None and self._canvas_ok and not self._stopped:
+        if self._live is None or not self._canvas_ok or self._stopped:
+            return
+        try:
             self._live.update(self._render(), refresh=True)
+        except Exception:
+            # This repaint runs inside a loop.call_later callback; letting a
+            # render exception escape would spam the asyncio exception handler
+            # (corrupting the canvas) and repeat every refresh. Drop the frame —
+            # the next _request_refresh repaints. Mirrors the guard in _shutdown.
+            pass
 
     def _render(self) -> Group:
         return Group(self._render_header(), self._render_body())

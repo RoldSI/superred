@@ -649,3 +649,71 @@ def test_resolve_reporter_all_branches(monkeypatch: Any) -> None:
     assert isinstance(lane, reporting._RichLane)
 
     reporting._reset_for_tests()
+
+
+# ---------------------------------------------------------------------------
+# (k) A render bug never crashes the run and never strands the terminal
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_render_exception_never_crashes_the_run() -> None:
+    # Both the steady-state repaint (_flush_refresh, inside a loop callback) and
+    # the final paint (_shutdown) render best-effort: a raising _render must drop
+    # the frame / still stop the canvas, never escape into the asyncio loop or
+    # leave the terminal in alt-screen state.
+    reporting._reset_for_tests()
+    console = Console(file=StringIO(), force_terminal=True, width=140, color_system=None)
+    dashboard = Dashboard(console=console, redirect=False)
+
+    async def drive() -> None:
+        lane = dashboard.reporter_for("lane-1")
+        lane.on_threat_model_start(_ctx("lane-1", n_tasks=1))
+        assert dashboard._canvas_ok is True
+
+        # Break rendering only after the canvas is up.
+        def boom() -> object:
+            raise RuntimeError("render blew up")
+
+        dashboard._render = boom  # type: ignore[method-assign]
+
+        # Steady-state repaint swallows the render error and keeps the canvas.
+        dashboard._flush_refresh()
+        assert dashboard._stopped is False
+        assert dashboard._canvas_ok is True
+
+        # Final paint (last lane ends -> _shutdown) still stops cleanly.
+        lane.on_task_complete(_task_complete(1, True, "done"))
+        lane.on_threat_model_end(_end(_ctx("lane-1", n_tasks=1)))
+
+    asyncio.run(drive())
+
+    assert dashboard._stopped is True
+    assert dashboard._live_stopped is True
+    assert reporting._ACTIVE_LIVE is None  # canvas released for the next run
+    reporting._reset_for_tests()
+
+
+def test_dashboard_lane_asr_stays_within_100pct_on_success_error() -> None:
+    # A task can be success=True yet stop_reason="error" (goal met, then
+    # reset_ephemeral_state failed). That success must NOT count toward the lane
+    # ASR numerator, or n_success/n_completed would exceed 100%.
+    reporting._reset_for_tests()
+    console = Console(file=StringIO(), force_terminal=True, width=140, color_system=None)
+    dashboard = Dashboard(console=console, redirect=False)
+
+    async def drive() -> None:
+        lane_r = dashboard.reporter_for("lane-1")
+        lane_r.on_threat_model_start(_ctx("lane-1", n_tasks=2))
+        lane_r.on_task_complete(_task_complete(1, True, "done"))  # completed success
+        lane_r.on_task_complete(  # success=True but errored -> excluded from ASR
+            _task_complete(2, True, "error", error="reset failed")
+        )
+        lane = dashboard._lanes["lane-1"]
+        assert lane.n_completed == 1  # only the 'done' task is a completed denominator
+        assert lane.n_success == 1  # the errored success is not counted
+        assert lane.n_error == 1
+        assert lane.n_success <= lane.n_completed  # ASR <= 100%
+        lane_r.on_threat_model_end(_end(_ctx("lane-1", n_tasks=2)))
+
+    asyncio.run(drive())
+    reporting._reset_for_tests()

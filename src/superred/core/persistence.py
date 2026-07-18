@@ -722,6 +722,27 @@ def snapshot_current(experiment_dir: Path) -> Path | None:
     return final
 
 
+def _stale_task_dirs(experiment_dir: Path, goals: list[str]) -> list[Path]:
+    """Current task dirs that do not belong to the live claim.
+
+    On a resume against an edited / reordered / removed goal, the prior run's
+    dir for the old ``(index, goal)`` survives under a different name than the
+    live claim's :func:`_task_dirname`, and nothing else prunes it, so
+    :func:`iter_tasks` would count the orphan and inflate ``result.json`` plus
+    the ``experiments.json`` sweep row.  Reserved staging suffixes
+    (``.wip`` / ``.old``) are excluded (handled by :func:`_gc_staging`).
+    """
+    tasks = experiment_dir / "tasks"
+    if not tasks.is_dir():
+        return []
+    valid = {_task_dirname(i, g) for i, g in enumerate(goals, start=1)}
+    return [
+        d
+        for d in tasks.iterdir()
+        if d.is_dir() and d.name not in valid and not d.name.endswith((".wip", ".old"))
+    ]
+
+
 def update_experiments_index(
     results_root: Path,
     meta: ExperimentMeta,
@@ -888,10 +909,20 @@ class ExperimentSession:
         try:
             _gc_staging(experiment_dir)
             plan = plan_resume(experiment_dir, goals, overwrite)
-            # Snapshot the prior state before touching current, but only when a
-            # rerun will actually modify current.
-            if not plan.is_fresh and plan.rerun:
-                snapshot_current(experiment_dir)
+            # Snapshot prior state before touching current, then reconcile
+            # current with the live claim.  A rerun republishes task dirs, and a
+            # resume against an edited / reordered / shrunk claim leaves prior
+            # dirs whose (index, goal) no longer matches under a stale name that
+            # nothing else prunes (so iter_tasks would double-count and inflate
+            # result.json + the experiments.json row).  Both mutate current, so
+            # snapshot when either applies (history stays complete), then drop
+            # the orphans.
+            if not plan.is_fresh:
+                stale = _stale_task_dirs(experiment_dir, goals)
+                if plan.rerun or stale:
+                    snapshot_current(experiment_dir)
+                for d in stale:
+                    shutil.rmtree(d, ignore_errors=True)
             (experiment_dir / "tasks").mkdir(exist_ok=True)
             (experiment_dir / "logs").mkdir(exist_ok=True)
             session = cls(root, experiment_dir, meta, plan, lock)

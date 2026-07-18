@@ -30,6 +30,7 @@ from superred.core.persistence import (
     goal_hash,
     iter_task_dirs,
     iter_tasks,
+    load_experiments_index,
     load_iterations,
     load_manifest,
     load_result,
@@ -442,6 +443,67 @@ def test_snapshot_current_returns_none_when_nothing(tmp_path: Path) -> None:
     exp = tmp_path / "empty"
     exp.mkdir()
     assert snapshot_current(exp) is None
+
+
+# ---------------------------------------------------------------------------
+# (5b) Resume reconciles current with the live claim (stale-dir pruning)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        # Edit one goal's text: its prior dir is orphaned under a stale slug.
+        (["goal alpha original", "goal beta"], ["goal alpha edited now", "goal beta"]),
+        # Reorder: every index's goal_hash changes, so all prior dirs go stale.
+        (["goal alpha", "goal beta"], ["goal beta", "goal alpha"]),
+        # Shrink: the dropped task's dir has no live index to overwrite it.
+        (["goal a", "goal b", "goal c"], ["goal a", "goal b"]),
+    ],
+    ids=["edited-goal", "reordered", "shrunk-claim"],
+)
+def test_resume_prunes_stale_task_dirs(tmp_path: Path, first: list[str], second: list[str]) -> None:
+    # A resume against an edited / reordered / shrunk claim used to leave the
+    # prior run's now-mismatched task dirs on disk, so iter_tasks + result.json
+    # + the experiments.json row double-counted them (inflating n_tasks / ASR).
+    # open() now reconciles current with the live claim.
+    _write_tree(tmp_path, BASE_META, [_make_task_result(g) for g in first])
+    exp = _write_tree(tmp_path, BASE_META, [_make_task_result(g) for g in second])
+
+    assert len(iter_tasks(exp)) == len(second)
+    assert load_result(exp)["summary"]["n_tasks"] == len(second)
+    row = load_experiments_index(tmp_path)["experiments"][0]["summary"]
+    assert row["n_completed"] == len(second)
+
+
+def test_resume_prune_preserves_pruned_task_in_snapshot(tmp_path: Path) -> None:
+    # Pruning must be loss-free: a task dropped from the claim on resume leaves
+    # current but survives in the immutable previous_NN snapshot.
+    _write_tree(tmp_path, BASE_META, [_make_task_result(g) for g in ("goal a", "goal b", "goal c")])
+    exp = _write_tree(tmp_path, BASE_META, [_make_task_result(g) for g in ("goal a", "goal b")])
+
+    assert not any("goal_c" in d.name for d in (exp / "tasks").iterdir())  # gone from current
+    hist = [d.name for snap in exp.glob("previous_*/tasks") for d in snap.iterdir()]
+    assert any("goal_c" in name for name in hist)  # preserved in history
+
+
+def test_experiments_index_dedups_on_rerun_and_sorts_rows(tmp_path: Path) -> None:
+    # Re-running the SAME experiment updates its single row in place (no
+    # duplicate), and multiple experiments in one root are listed sorted by dir.
+    _write_tree(tmp_path, BASE_META, [_make_task_result("goal one")])
+    _write_tree(tmp_path, BASE_META, [_make_task_result("goal one")])  # rerun, same identity
+    rows = load_experiments_index(tmp_path)["experiments"]
+    assert len(rows) == 1  # rerun updated the row, not appended
+
+    # A second experiment whose dir sorts BEFORE the first, inserted AFTER it,
+    # must still come out first -> proves the rows are sorted, not insertion-order.
+    other = ExperimentMeta(
+        attacker="aaa", target="tgt", claim="clm", model="test-model", scope=("external",)
+    )
+    _write_tree(tmp_path, other, [_make_task_result("goal two")])
+    dirs = [r["dir"] for r in load_experiments_index(tmp_path)["experiments"]]
+    assert len(dirs) == 2
+    assert dirs == sorted(dirs) and dirs[0].startswith("aaa")
 
 
 # ---------------------------------------------------------------------------
