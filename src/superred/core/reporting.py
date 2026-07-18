@@ -596,7 +596,8 @@ class Dashboard:
             self._request_refresh()
 
     def _shutdown(self) -> None:
-        """Last lane finished: paint the final frame, stop, print the summary.
+        """Last lane finished: paint the final frame (every threat model ✓, its
+        final counts + ASR + cost) and stop, leaving that frame as the summary.
 
         The render is best-effort and MUST NOT skip the ``Live.stop()`` — a
         render exception that left the canvas running would strand the terminal
@@ -613,11 +614,6 @@ class Dashboard:
         except Exception:  # pragma: no cover - a render error must not skip the stop
             pass
         self._stop_live()
-        if self._console is not None:
-            try:
-                self._console.print(self._render_final_summary())
-            except Exception:  # pragma: no cover - final summary print is best-effort
-                pass
 
     def _stop_live(self) -> None:
         """Stop the ``Live`` and release the process-wide canvas (idempotent)."""
@@ -730,28 +726,31 @@ class Dashboard:
         text = Text.from_markup(
             "[bold]super[/][bold #ed2121]red[/]   "
             f"[bold]{done}/{total}[/] tasks   ASR [bold]{asr}[/]   "
-            f"running [bold]{running}[/]   cost [bold]${cost:.4f}[/]   "
+            f"running [bold]{running}[/]   attacker [bold]${cost:.4f}[/]   "
             f"[dim]{n_tm} {tm_word} · {elapsed}[/]"
         )
         return Panel(text, border_style="cyan", padding=(0, 1))
 
     def _render_body(self) -> Panel:
-        """An aligned table: one bold row per threat model (its identity +
-        metrics), then a row per currently-running task indented beneath it.
-        Sharing columns keeps progress / ASR-score / outcome / cost lined up
-        vertically across every row so it scans cleanly."""
+        """An aligned table: one bold row per threat model (its identity + rate),
+        then a row per currently-running task indented beneath it. Shared columns
+        line up vertically so it scans cleanly. ``ASR`` (a per-threat-model rate)
+        and ``score`` (per task) are separate columns so neither is mistaken for
+        the other, and ``attacker $`` is the attacker optimizer's own LLM spend
+        (not a grand total, and not the judge's or target's cost)."""
         table = Table(box=box.SIMPLE, expand=True, pad_edge=False, header_style="dim")
         # Only the name column flexes (and ellipsizes); the numeric columns
         # size to their content so cost/score/progress never truncate.
         table.add_column("threat model · task", ratio=1, no_wrap=True, overflow="ellipsis")
         table.add_column("progress", no_wrap=True)
+        table.add_column("ASR", justify="right", no_wrap=True)
         table.add_column("score", justify="right", no_wrap=True)
-        table.add_column("outcome", justify="center", no_wrap=True)
-        table.add_column("cost", justify="right", no_wrap=True)
+        table.add_column("ok/fail/err/skip", justify="center", no_wrap=True)
+        table.add_column("attacker $", justify="right", no_wrap=True)
 
         lanes = list(self._lanes.values())
         if not lanes:
-            table.add_row("[dim](starting…)[/]", "", "", "", "")
+            table.add_row("[dim](starting…)[/]", "", "", "", "", "")
             return Panel(table, title="threat models", border_style="blue")
 
         for i, lane in enumerate(lanes):
@@ -763,10 +762,10 @@ class Dashboard:
                     for index in sorted(lane.active):
                         table.add_row(*self._task_cells(lane, index, lane.active[index]))
                 else:
-                    table.add_row("    [dim]· waiting for a slot…[/]", "", "", "", "")
+                    table.add_row("    [dim]· waiting for a slot…[/]", "", "", "", "", "")
         return Panel(table, title="threat models", border_style="blue")
 
-    def _lane_cells(self, lane: _LaneState) -> tuple[str, str, str, str, str]:
+    def _lane_cells(self, lane: _LaneState) -> tuple[str, str, str, str, str, str]:
         ctx = lane.ctx
         n = ctx.n_tasks or 0
         frac = (lane.n_terminal / n) if n else (1.0 if lane.end_ev is not None else 0.0)
@@ -780,52 +779,26 @@ class Dashboard:
         return (
             name,
             f"[cyan]{_bar(frac)}[/] {lane.n_terminal}/{n}",
-            f"[bold]{asr}[/]",
+            f"[bold]{asr}[/]",  # ASR: a per-threat-model success rate
+            "",  # score is per task, not per threat model
             f"[green]{lane.n_success}[/]/[yellow]{fail}[/]/[red]{lane.n_error}[/]/[dim]{lane.n_skipped}[/]",
             f"${lane.total_cost:.4f}",
         )
 
     def _task_cells(
         self, lane: _LaneState, index: int, task: _ActiveTask
-    ) -> tuple[str, str, str, str, str]:
+    ) -> tuple[str, str, str, str, str, str]:
         goal = task.goal if len(task.goal) <= 60 else task.goal[:59] + "…"
         max_runs = lane.ctx.max_runs_per_task or 0
         run = f"{task.run_number}/{max_runs}" if max_runs else str(task.run_number)
         return (
             f"    [green]●[/] [dim]#{index}[/] {escape(goal)}",
             f"[dim]run[/] {run}",
-            f"{task.score:.2f}",
-            "[green]running[/]",
+            "",  # ASR is per threat model, not per task
+            f"{task.score:.2f}",  # score: this task's current run score
+            "",  # counts are per threat model; the ● already marks it running
             f"[dim]${task.cost:.4f}[/]",
         )
-
-    def _render_final_summary(self) -> Table:
-        table = Table(title="superred · final results", expand=True)
-        table.add_column("threat model", style="bold")
-        table.add_column("ASR", justify="right")
-        table.add_column("success", justify="right")
-        table.add_column("error", justify="right")
-        table.add_column("skip", justify="right")
-        table.add_column("best", justify="right")
-        table.add_column("cost", justify="right")
-        for label, lane in self._lanes.items():
-            ev = lane.end_ev
-            asr = "n/a" if ev is None or ev.asr is None else f"{ev.asr:.1%}"
-            best = (
-                "n/a"
-                if ev is None or ev.max_primary_score is None
-                else f"{ev.max_primary_score:.4f}"
-            )
-            table.add_row(
-                label,
-                asr,
-                f"{lane.n_success}/{lane.n_completed}",
-                str(lane.n_error),
-                str(lane.n_skipped),
-                best,
-                f"${lane.total_cost:.4f}",
-            )
-        return table
 
 
 class _RichLane:

@@ -5,7 +5,7 @@ through a real Controller and a single-lane canvas) by exercising the rich
 :class:`Dashboard` internals that a single-lane happy path never reaches:
 
 * a multi-lane canvas driven through every ``stop_reason`` + skip, then torn
-  down to the final-results table;
+  down cleanly (the last live frame is the summary);
 * per-threat-model active-task rows (running tasks listed beneath a lane);
 * a second Dashboard degrading to :class:`PlainReporter` when the single live
   canvas is already held;
@@ -214,10 +214,12 @@ def test_dashboard_two_lanes_all_stop_reasons() -> None:
 
     assert dashboard._stopped is True
     assert reporting._ACTIVE_LIVE is None
-    out = sink.getvalue()
-    assert "superred" in out
-    assert "final results" in out  # the shutdown summary table
-    assert "lane-1" in out and "lane-2" in out
+    assert "superred" in sink.getvalue()
+    # The last frame (both threat models ✓) is itself the summary; there is no
+    # separate final-results table. Render it at a controlled width to assert.
+    frame = _render_to_str(dashboard)
+    assert "atk" in frame and "tgt" in frame  # per-threat-model identity is shown
+    assert "ASR" in frame and "attacker $" in frame  # the metrics columns
     reporting._reset_for_tests()
 
 

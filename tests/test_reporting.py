@@ -408,10 +408,13 @@ def test_dashboard_canvas_lifecycle() -> None:
     # After the last lane ended the canvas is released.
     assert dashboard._stopped is True
     assert reporting._ACTIVE_LIVE is None
-    # The console captured the header + final summary table.
-    out = sink.getvalue()
-    assert "superred" in out
-    assert "lane-1" in out
+    # The last frame is itself the summary (there is no separate table): the
+    # live console captured the brand; render at a controlled width to assert
+    # the per-threat-model identity is shown.
+    assert "superred" in sink.getvalue()
+    cap = Console(file=StringIO(), width=140, color_system=None)
+    cap.print(dashboard._render())
+    assert "atk" in cap.file.getvalue()
 
     reporting._reset_for_tests()
 
