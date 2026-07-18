@@ -17,7 +17,7 @@ from rich.console import Console
 
 from superred.core import reporting
 from superred.core.controller import run_all
-from superred.core.reporting import Dashboard, NullReporter
+from superred.core.reporting import Dashboard, NullReporter, ThreatModelContext
 
 
 class _Tracker:
@@ -37,6 +37,12 @@ class _StubController:
     @property
     def label(self) -> str:
         return self._label
+
+    @property
+    def context(self) -> ThreatModelContext:
+        return ThreatModelContext(
+            label=self._label, attacker="atk", target="tgt", claim="clm", model="mdl", n_tasks=1
+        )
 
     async def run(self, *, reporter: Any = None) -> int:
         self.reporter = reporter

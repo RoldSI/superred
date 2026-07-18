@@ -670,6 +670,15 @@ class Controller:
         key in a shared dashboard and as the persistence directory stem."""
         return self._build_meta(n_tasks=0).dirname()
 
+    @property
+    def context(self) -> ThreatModelContext:
+        """This threat model's display identity, used to pre-register a lane on a
+        shared dashboard before the run starts (see :func:`run_all`).  Counts the
+        security claim for ``n_tasks``; the claim is re-iterable, so ``run``
+        re-counts it."""
+        n_tasks = sum(1 for _ in self._security_claim)
+        return self._build_context(self._build_meta(n_tasks=n_tasks))
+
     async def run(self, *, reporter: ProgressReporter | None = None) -> ThreatModelResult:
         """Evaluate the security claim under this controller's threat model.
 
@@ -1358,7 +1367,8 @@ async def run_all(
     process-wide dashboard.  Under a concurrency cap the latter stops and
     re-arms the canvas between waves, leaving a garbled mix of stacked canvases
     and plain-reporter fallbacks; running through ``run_all`` keeps one clean
-    canvas from start to finish.
+    canvas from start to finish.  Every threat model is shown from the outset,
+    the ones still queued behind the concurrency cap dimmed until a slot frees.
 
     Args:
         controllers: The threat models to run, one ``Controller`` each.  They
@@ -1384,6 +1394,10 @@ async def run_all(
     if report is not False and not should_use_plain():
         dashboard = Dashboard()
         dashboard.expect(len(controllers))
+        # Show every threat model from the start (queued ones dimmed) rather than
+        # popping a lane in only when the semaphore admits it.
+        for controller in controllers:
+            dashboard.preregister(controller.label, controller.context)
 
     def reporter_for(controller: Controller) -> ProgressReporter:
         if dashboard is not None:

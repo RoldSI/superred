@@ -494,6 +494,7 @@ class _LaneState:
     best_score: float = 0.0
     active: dict[int, _ActiveTask] = field(default_factory=dict)  # index -> running task
     end_ev: ThreatModelEndEvent | None = None
+    pending: bool = False  # pre-registered (queued) but its Controller has not started yet
 
 
 class Dashboard:
@@ -555,6 +556,16 @@ class Dashboard:
         started."""
         self._shutdown()
 
+    def preregister(self, label: str, ctx: ThreatModelContext) -> None:
+        """Show a lane before its Controller starts, so queued sweep members are
+        visible (dimmed, "queued") from the outset instead of popping in only
+        when a slot frees.  :meth:`_lane_start` later swaps the queued row in
+        place for the running one.  Idempotent per label."""
+        self._ensure_started()
+        if label not in self._lanes:
+            self._lanes[label] = _LaneState(ctx=ctx, started_at=time.monotonic(), pending=True)
+        self._request_refresh()
+
     def __enter__(self) -> Dashboard:
         return self
 
@@ -596,7 +607,15 @@ class Dashboard:
     def _lane_start(self, label: str, ctx: ThreatModelContext) -> None:
         if self._start_monotonic is None:
             self._start_monotonic = time.monotonic()
-        self._lanes[label] = _LaneState(ctx=ctx, started_at=time.monotonic())
+        lane = self._lanes.get(label)
+        if lane is None:
+            self._lanes[label] = _LaneState(ctx=ctx, started_at=time.monotonic())
+        else:
+            # A pre-registered (queued) lane is starting: keep its row in place,
+            # swap in the run-time context (real n_tasks), and mark it active.
+            lane.ctx = ctx
+            lane.started_at = time.monotonic()
+            lane.pending = False
         self._active_lanes += 1
         self._request_refresh()
 
@@ -777,7 +796,7 @@ class Dashboard:
             if i:
                 table.add_section()  # a divider between threat models
             table.add_row(*self._lane_cells(lane))
-            if lane.end_ev is None:
+            if lane.end_ev is None and not lane.pending:
                 if lane.active:
                     for index in sorted(lane.active):
                         table.add_row(*self._task_cells(lane, index, lane.active[index]))
@@ -787,6 +806,16 @@ class Dashboard:
 
     def _lane_cells(self, lane: _LaneState) -> tuple[str, str, str, str, str, str]:
         ctx = lane.ctx
+        if lane.pending:
+            budget = (
+                "unlimited" if ctx.task_cost_cap_usd is None else f"${ctx.task_cost_cap_usd:g}/task"
+            )
+            name = (
+                f"[dim]○ {escape(ctx.attacker)} → {escape(ctx.target)} · "
+                f"{escape(ctx.claim)} · {escape(ctx.model or 'no-LLM')} · "
+                f"{escape(ctx.scope_desc)} · {budget}[/]"
+            )
+            return (name, "[dim]queued[/]", "[dim]–[/]", "", "[dim]0/0/0/0[/]", "[dim]$0.0000[/]")
         n = ctx.n_tasks or 0
         frac = (lane.n_terminal / n) if n else (1.0 if lane.end_ev is not None else 0.0)
         asr = f"{(lane.n_success / lane.n_completed):.0%}" if lane.n_completed else "–"

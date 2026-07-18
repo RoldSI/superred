@@ -277,6 +277,31 @@ def test_dashboard_expect_keeps_canvas_alive_across_zero_active() -> None:
     asyncio.run(drive())
 
 
+def test_dashboard_preregister_shows_queued_then_running() -> None:
+    # A pre-registered lane shows up dimmed ("queued") before its Controller
+    # starts; when it starts, the SAME row swaps to the running one in place.
+    reporting._reset_for_tests()
+    console = Console(file=StringIO(), force_terminal=True, width=160, color_system=None)
+    dashboard = Dashboard(console=console, redirect=False)
+
+    async def drive() -> None:
+        dashboard.preregister("a", _ctx("a", attacker="atk-x", n_tasks=5))
+        frame = _render_to_str(dashboard)
+        assert "queued" in frame and "atk-x" in frame  # visible before it runs
+        assert dashboard._lanes["a"].pending is True
+        assert dashboard._active_lanes == 0  # queued does not count as running
+
+        lane = dashboard.reporter_for("a")
+        lane.on_threat_model_start(_ctx("a", attacker="atk-x", n_tasks=5))
+        assert dashboard._lanes["a"].pending is False  # same lane, now running
+        assert dashboard._active_lanes == 1
+        running_frame = _render_to_str(dashboard)
+        assert "queued" not in running_frame
+        assert "0/5" in running_frame  # the running row shows real progress
+
+    asyncio.run(drive())
+
+
 def test_dashboard_shows_active_tasks_under_each_lane() -> None:
     reporting._reset_for_tests()
     console = Console(file=StringIO(), force_terminal=True, width=140, color_system=None)
