@@ -415,6 +415,7 @@ def test_dashboard_canvas_lifecycle() -> None:
     cap = Console(file=StringIO(), width=140, color_system=None)
     cap.print(dashboard._render())
     assert "atk" in cap.file.getvalue()
+    assert "clm" in cap.file.getvalue()  # the security claim renders on the identity line
 
     reporting._reset_for_tests()
 

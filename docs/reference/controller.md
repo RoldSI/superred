@@ -259,7 +259,7 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 The controller does not print anything itself. It narrates the run through a **reporter**, an observer object it calls at each lifecycle point (threat-model start, task start, each run, task complete, task skipped, diagnostics, threat-model end). Two constructor arguments choose the reporter:
 
 - **`report: bool | Literal["auto"] = "auto"`**. `True`/`"auto"` show progress; `False` is silent. What "show" means degrades automatically to the terminal:
-  - On a real interactive terminal you get a **live dashboard** (a `rich` canvas): a top bar with overall progress (tasks done, attack-success rate, running count, cost, elapsed), then one block per threat model carrying its own identity (attacker/target/model/scope/budget) and metrics, with the currently-running tasks listed indented beneath it (each with a live run/score/cost). A final results view renders when the run ends.
+  - On a real interactive terminal you get a **live dashboard** (a `rich` canvas): a top bar with overall progress (tasks done, attack-success rate, running count, cost, elapsed), then one block per threat model carrying its own identity (attacker/target/model/scope/claim/budget) and metrics, with the currently-running tasks listed indented beneath it (each with a live run/score/cost). A final results view renders when the run ends.
   - On a non-TTY, in CI (`CI` set), under `NO_COLOR`, on a dumb terminal, or when output is piped, it falls back to **plain line output**: a start banner, one line per task completion, and an end summary. The plain banner and summary reproduce the content of the old `_print_summary`, so nothing is lost.
   - `SUPERRED_NO_DASHBOARD` forces plain output even on a TTY.
 - **`reporter: ProgressReporter | None = None`**. Inject your own observer (a custom sink, a metrics pipe, a test double). It wins over `report`. `ProgressReporter` is a `Protocol` in `superred.core.reporting`; every method is called on the asyncio loop thread and must not block or await.
@@ -329,7 +329,7 @@ from superred.core.persistence import (
 
 ### Results website
 
-The framework ships a single self-contained static HTML dashboard (`dashboard.html`) for the results tree. Point it at (or serve) a results root and it reads the JSON files, shows the metrics, filters tasks by outcome (breached / held / errored), and drills into each task's runs and trajectories. It is generic and needs no build step; its internals are out of scope here.
+The framework ships a single self-contained static HTML dashboard (`dashboard.html`) for the results tree. Point it at (or serve) a results root and it reads the JSON files, shows the metrics, filters tasks by outcome (success / failure / error), and drills into each task's runs and trajectories. It is generic and needs no build step; its internals are out of scope here.
 
 ## Middleware (how filtering is implemented)
 

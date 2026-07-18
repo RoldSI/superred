@@ -219,6 +219,7 @@ def test_dashboard_two_lanes_all_stop_reasons() -> None:
     # separate final-results table. Render it at a controlled width to assert.
     frame = _render_to_str(dashboard)
     assert "atk" in frame and "tgt" in frame  # per-threat-model identity is shown
+    assert "clm" in frame  # the security claim renders on the identity line
     assert "ASR" in frame and "attacker $" in frame  # the metrics columns
     reporting._reset_for_tests()
 

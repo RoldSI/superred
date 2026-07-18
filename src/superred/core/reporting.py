@@ -745,7 +745,7 @@ class Dashboard:
         table.add_column("progress", no_wrap=True)
         table.add_column("ASR", justify="right", no_wrap=True)
         table.add_column("score", justify="right", no_wrap=True)
-        table.add_column("ok/fail/err/skip", justify="center", no_wrap=True)
+        table.add_column("success/fail/err/skip", justify="center", no_wrap=True)
         table.add_column("attacker $", justify="right", no_wrap=True)
 
         lanes = list(self._lanes.values())
@@ -774,7 +774,8 @@ class Dashboard:
         mark = "[green]✓[/]" if lane.end_ev is not None else "[cyan]▸[/]"
         name = (
             f"{mark} [bold cyan]{escape(ctx.attacker)}[/] → [bold]{escape(ctx.target)}[/] "
-            f"[dim]{escape(ctx.model or 'no-LLM')} · {escape(ctx.scope_desc)}[/]"
+            f"[dim]{escape(ctx.model or 'no-LLM')} · {escape(ctx.scope_desc)} · "
+            f"{escape(ctx.claim)}[/]"
         )
         return (
             name,

@@ -154,7 +154,7 @@ whole results root as sensitive. It is gitignored by default.
 
 The framework ships a single self-contained static HTML dashboard for the results
 tree. It reads the JSON files, shows the metrics, filters tasks by outcome
-(breached / held / errored), and drills into each task's runs and trajectories.
+(success / failure / error), and drills into each task's runs and trajectories.
 It is generic and needs no build step.
 
 ## v0.2.0
