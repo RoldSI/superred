@@ -42,6 +42,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import IO, Literal, Protocol, TextIO, runtime_checkable
 
+from rich import box
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markup import escape
@@ -735,55 +736,67 @@ class Dashboard:
         return Panel(text, border_style="cyan", padding=(0, 1))
 
     def _render_body(self) -> Panel:
-        """One block per threat model: an identity + metrics line, then the
-        currently-running tasks indented beneath it with a live status each."""
-        rows: list[Text] = []
-        for lane in self._lanes.values():
-            rows.append(self._lane_identity_line(lane))
-            rows.append(self._lane_metrics_line(lane))
-            if lane.end_ev is not None:
-                pass  # finished: the ✓ on the identity line says so
-            elif lane.active:
-                for index in sorted(lane.active):
-                    rows.append(self._active_task_line(lane, index, lane.active[index]))
-            else:
-                rows.append(Text.from_markup("      [dim]· waiting for a slot…[/]"))
-            rows.append(Text(""))  # a blank line between threat models
-        while rows and rows[-1].plain == "":
-            rows.pop()
-        if not rows:
-            rows = [Text("(starting…)", style="dim")]
-        return Panel(Group(*rows), title="threat models", border_style="blue", padding=(0, 1))
+        """An aligned table: one bold row per threat model (its identity +
+        metrics), then a row per currently-running task indented beneath it.
+        Sharing columns keeps progress / ASR-score / outcome / cost lined up
+        vertically across every row so it scans cleanly."""
+        table = Table(box=box.SIMPLE, expand=True, pad_edge=False, header_style="dim")
+        # Only the name column flexes (and ellipsizes); the numeric columns
+        # size to their content so cost/score/progress never truncate.
+        table.add_column("threat model · task", ratio=1, no_wrap=True, overflow="ellipsis")
+        table.add_column("progress", no_wrap=True)
+        table.add_column("score", justify="right", no_wrap=True)
+        table.add_column("outcome", justify="center", no_wrap=True)
+        table.add_column("cost", justify="right", no_wrap=True)
 
-    def _lane_identity_line(self, lane: _LaneState) -> Text:
+        lanes = list(self._lanes.values())
+        if not lanes:
+            table.add_row("[dim](starting…)[/]", "", "", "", "")
+            return Panel(table, title="threat models", border_style="blue")
+
+        for i, lane in enumerate(lanes):
+            if i:
+                table.add_section()  # a divider between threat models
+            table.add_row(*self._lane_cells(lane))
+            if lane.end_ev is None:
+                if lane.active:
+                    for index in sorted(lane.active):
+                        table.add_row(*self._task_cells(lane, index, lane.active[index]))
+                else:
+                    table.add_row("    [dim]· waiting for a slot…[/]", "", "", "", "")
+        return Panel(table, title="threat models", border_style="blue")
+
+    def _lane_cells(self, lane: _LaneState) -> tuple[str, str, str, str, str]:
         ctx = lane.ctx
-        mark = "[green]✓[/]" if lane.end_ev is not None else "[cyan]▸[/]"
-        budget = "∞" if ctx.task_cost_cap_usd is None else f"${ctx.task_cost_cap_usd:g}/task"
-        return Text.from_markup(
-            f"{mark} [bold cyan]{escape(ctx.attacker)}[/] → [bold]{escape(ctx.target)}[/]  "
-            f"[dim]{escape(ctx.model or 'no-LLM')} · {escape(ctx.claim)}[/]  "
-            f"scope [magenta]{escape(ctx.scope_desc)}[/]  [dim]budget {budget}[/]"
-        )
-
-    def _lane_metrics_line(self, lane: _LaneState) -> Text:
-        n = lane.ctx.n_tasks or 0
+        n = ctx.n_tasks or 0
         frac = (lane.n_terminal / n) if n else (1.0 if lane.end_ev is not None else 0.0)
         asr = f"{(lane.n_success / lane.n_completed):.0%}" if lane.n_completed else "–"
         fail = lane.n_completed - lane.n_success
-        return Text.from_markup(
-            f"    [cyan]{_bar(frac)}[/] {lane.n_terminal}/{n}  ASR [bold]{asr}[/]  "
-            f"ok [green]{lane.n_success}[/] fail [yellow]{fail}[/] "
-            f"err [red]{lane.n_error}[/] skip [dim]{lane.n_skipped}[/]  "
-            f"running [bold]{lane.in_flight}[/]  [dim]${lane.total_cost:.4f}[/]"
+        mark = "[green]✓[/]" if lane.end_ev is not None else "[cyan]▸[/]"
+        name = (
+            f"{mark} [bold cyan]{escape(ctx.attacker)}[/] → [bold]{escape(ctx.target)}[/] "
+            f"[dim]{escape(ctx.model or 'no-LLM')} · {escape(ctx.scope_desc)}[/]"
+        )
+        return (
+            name,
+            f"[cyan]{_bar(frac)}[/] {lane.n_terminal}/{n}",
+            f"[bold]{asr}[/]",
+            f"[green]{lane.n_success}[/]/[yellow]{fail}[/]/[red]{lane.n_error}[/]/[dim]{lane.n_skipped}[/]",
+            f"${lane.total_cost:.4f}",
         )
 
-    def _active_task_line(self, lane: _LaneState, index: int, task: _ActiveTask) -> Text:
-        goal = task.goal if len(task.goal) <= 44 else task.goal[:43] + "…"
+    def _task_cells(
+        self, lane: _LaneState, index: int, task: _ActiveTask
+    ) -> tuple[str, str, str, str, str]:
+        goal = task.goal if len(task.goal) <= 60 else task.goal[:59] + "…"
         max_runs = lane.ctx.max_runs_per_task or 0
         run = f"{task.run_number}/{max_runs}" if max_runs else str(task.run_number)
-        return Text.from_markup(
-            f"      [green]●[/] [dim]#{index:<3}[/] {escape(goal)}  "
-            f"[dim]run[/] {run}  [dim]score[/] {task.score:.2f}  [dim]${task.cost:.4f}[/]"
+        return (
+            f"    [green]●[/] [dim]#{index}[/] {escape(goal)}",
+            f"[dim]run[/] {run}",
+            f"{task.score:.2f}",
+            "[green]running[/]",
+            f"[dim]${task.cost:.4f}[/]",
         )
 
     def _render_final_summary(self) -> Table:
