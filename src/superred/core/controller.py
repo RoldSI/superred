@@ -768,7 +768,7 @@ class Controller:
                 )
                 with open(session.task_log_path(ev.task_index), "a", encoding="utf-8") as fh:
                     fh.write(line + "\n")
-            except Exception:
+            except Exception:  # pragma: no cover - per-task log I/O must never break a run
                 pass
 
         return sink

@@ -611,7 +611,7 @@ class Dashboard:
                     self._live.stop()
                     if _ACTIVE_LIVE is self._live:
                         _ACTIVE_LIVE = None
-            except Exception:
+            except Exception:  # pragma: no cover - belt-and-suspenders teardown must never raise
                 pass
 
     # -- Metric updates (loop thread) -------------------------------------
@@ -970,5 +970,5 @@ class LoggingBridge(logging.Handler):
             self._reporter.on_diagnostic(ev)
             if self._sink is not None:
                 self._sink(ev)
-        except Exception:  # a logging handler must never raise into user code
+        except Exception:  # pragma: no cover - a logging handler must never raise into user code
             pass

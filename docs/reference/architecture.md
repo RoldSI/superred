@@ -62,7 +62,8 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
 
 1. Controller constructed with optimizer_factory, target_factory,
    security_claim, scope (required), llm_config (optional),
-   max_runs_per_task (optional), results_dir (optional)
+   max_runs_per_task (optional); output knobs report / persist /
+   results_dir / overwrite / reporter (all optional; persist on by default)
 
 2. await controller.run():
 
@@ -103,10 +104,13 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
         await optimizer_task, optimizer.teardown()
         target.reset_ephemeral_state() (final) and target.teardown(), instance is discarded
 
-   3. Per-task detail files were written incrementally as each task
-      finished (when results_dir set).  Write the claim-level summary
-      file now as the completion marker.
-   4. Print summary to stdout
+   Live progress is streamed to a reporter throughout (a shared rich
+   dashboard on a TTY, plain lines otherwise; report=False silences it).
+
+   3. Each task's directory was published to disk as it finished (unless
+      persist=False), resuming any prior run of the same experiment.  Write
+      result.json now as the completion marker.
+   4. Render the final results view
    5. Return ThreatModelResult
 
 Sweeping multiple (scope, llm_config) combinations is the caller's job:
@@ -165,8 +169,10 @@ src/superred/core/
   llm.py               -- LLMClient (constrained LLM proxy for optimizers)
   middleware.py         -- Middleware type, compose(), security_domain_filter(),
                           trajectory_recorder()
-  persistence.py       -- per-threat-model JSON serialization (used when the
-                          Controller is given a results_dir; module-private)
+  persistence.py       -- v4 result tree writers + resume engine, plus a public
+                          reader API (load_result, iter_tasks, ...); on by default
+  reporting.py         -- ProgressReporter seam + shared rich live dashboard /
+                          plain-line fallback (live progress output)
   interfaces/
     optimizer.py       -- Optimizer ABC (actor model: run, on_event, _dispatch)
     target.py          -- Target ABC, EventHandler type alias

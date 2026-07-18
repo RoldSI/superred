@@ -52,6 +52,7 @@ exfiltrated content.  Treat the results root as sensitive; it is gitignored.
 from __future__ import annotations
 
 import hashlib
+import importlib.resources
 import json
 import os
 import re
@@ -745,6 +746,22 @@ def update_experiments_index(
     _atomic_write_json(path, {"schema_version": SCHEMA_VERSION, "experiments": rows})
 
 
+def write_dashboard(dest_dir: Path) -> None:
+    """Drop the bundled static results dashboard into ``dest_dir/dashboard.html``.
+
+    The dashboard is a single self-contained page that fetches the JSON in its
+    own directory: at a results root it reads ``experiments.json`` (the sweep
+    index); inside an experiment dir it reads ``manifest.json`` and drills into
+    the per-task files.  Best-effort: a missing asset or write error never
+    breaks a run (the JSON is the source of truth; the page is a convenience).
+    """
+    try:
+        data = (importlib.resources.files("superred.core") / "dashboard.html").read_bytes()
+        (dest_dir / "dashboard.html").write_bytes(data)
+    except Exception:  # pragma: no cover - best-effort convenience asset
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Locking
 # ---------------------------------------------------------------------------
@@ -931,6 +948,10 @@ class ExperimentSession:
                 started_at=started_at,
             )
             update_experiments_index(self.results_root, self.meta, summary, "complete", completed)
+            # Drop the static browser dashboard next to the JSON it reads (both
+            # the experiment view and the sweep index at the root).
+            write_dashboard(self.experiment_dir)
+            write_dashboard(self.results_root)
             return self.experiment_dir / "result.json"
         finally:
             self._lock.release()

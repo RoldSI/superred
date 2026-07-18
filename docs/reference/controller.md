@@ -41,7 +41,15 @@ controller = Controller(
     task_cost_cap_usd=5.00,                   # per-task attacker budget (USD); None = unlimited
     max_runs_per_task=100,                    # safety limit, default 100
     include_feedback=True,                    # populate RunEndEvent.evaluation (default True)
-    results_dir="results/run-1",              # optional, persist threat-model JSON
+    # --- output (new in 0.3.0) ---
+    persist=True,                             # write a results tree (default True)
+    results_dir=None,                         # results ROOT; None = SUPERRED_RESULTS_DIR or ./superred-results/
+    overwrite=False,                          # True re-runs a resumable experiment from scratch
+    report="auto",                            # live dashboard on a TTY, plain lines otherwise; False = silent
+    reporter=None,                            # inject a custom ProgressReporter (wins over report)
+    attacker_label="my-optimizer",            # short names for the experiment folder + dashboard
+    target_label="my-target",
+    claim_label="my-claim",
 )
 # `scope` is what the attacker can read AND write; `read_only` adds tags it
 # can only read. To see the whole system but inject only the prompt:
@@ -127,7 +135,7 @@ For each task:
    - On exception inside the run: the partial trajectory is preserved as a final `RunResult` with a zero-score evaluation; the formatted exception lands on `TaskResult.error`; `stop_reason = "error"`; loop ends.
 8. Close channel, await optimizer task, `optimizer.teardown()`. Final `target.reset_ephemeral_state()` (in `finally`) followed by `target.teardown()`; the per-task target instance is then discarded.
 
-As each task finishes, its per-task detail JSON is written immediately (when `results_dir` is set), so an interrupted run still leaves every completed task on disk. After all tasks finish, the claim-level summary file is written as a completion marker, the controller prints a summary to stdout, and returns the `ThreatModelResult`.
+Throughout the run the controller streams live progress to a **reporter** (a shared live dashboard on an interactive terminal, plain lines otherwise; see [Live progress reporting](#live-progress-reporting)). Unless `persist=False`, each task's directory is published to disk the moment it finishes, so an interrupted run leaves every completed task on disk. Re-running the same experiment resumes: tasks that already produced a valid measurement are kept, only errored or missing tasks recompute (see [Resume](#resume-re-running-the-same-experiment)). After all tasks finish, `result.json` is written as a completion marker, a final results view is rendered, and the controller returns the `ThreatModelResult`.
 
 ### Internal structure
 
@@ -180,6 +188,11 @@ One target execution + evaluation:
 - `trajectory: Trajectory`, the run trajectory.
 - `evaluation: EvaluationResult`, the evaluation result for this run.
 - `llm_usage: LLMUsage`, cumulative optimizer LLM usage after this run. This is a cumulative snapshot, each successive run includes all prior usage, enabling budget-vs-performance tracking.
+- `run_usage_delta: LLMUsage` (default empty), **this run's own** usage: `llm_usage` minus the previous run's cumulative snapshot. Summing `run_usage_delta` across a task's runs equals the task total; summing `llm_usage` over-counts (it would multiply-count the cumulative snapshots). Use the delta for per-run cost, the cumulative for budget curves.
+- `started_at: datetime | None` / `ended_at: datetime | None` (both default `None`), wall-clock UTC bounds of this run.
+- `evaluated: bool` (default `True`), whether the score came from the evaluator; `False` for the synthetic zero-score run appended on an error or budget path.
+- `errored: bool` (default `False`), whether the run raised mid-execution.
+- `done: bool` (default `False`), whether the optimizer signalled it wanted to stop after this run.
 
 ### TaskResult (frozen)
 
@@ -194,6 +207,7 @@ All runs for one task:
 - `scope: Scope` (default `frozenset()`): the read & write scope enforced for **this** task. In static mode it equals the controller's `scope` for every task; with a `ScopeResolver` it is the per-task resolved scope.
 - `read_only: Scope` (default `frozenset()`): the read-only scope enforced for **this** task. In static mode it equals the controller's `read_only` for every task; with a `ScopeResolver` it is the per-task resolved read-only scope.
 - `error: str | None`: formatted exception (type + message + traceback) when something went wrong, `None` otherwise. Set whenever the controller observes an exception associated with the task. Most commonly populated with `stop_reason="error"`, but also populated as a bonus diagnostic when the run loop classified the task cleanly (`"done"` / `"max_runs"` / `"budget_exhausted"`) yet the optimizer task subsequently raised during teardown. Consumers should treat `error` and `stop_reason` as independent fields: `error is not None` does not imply `stop_reason == "error"`, and vice versa is the common (but not required) case.
+- `started_at: datetime | None` / `ended_at: datetime | None` (both default `None`), wall-clock UTC bounds of the task's whole run loop.
 
 ### ThreatModelResult (frozen)
 
@@ -202,8 +216,12 @@ Results for one (scope, llm_config) combination:
 - `read_only: Scope`: extra visible-but-not-injectable tags (empty for an all-read & write run; also empty in dynamic mode).
 - `scope_label: str | None` (default `None`): `None` in static mode (unchanged); in dynamic mode it is the label passed to the controller and names the run (since `scope`/`read_only` are empty here).
 - `llm_config: LLMConfig | None`, the LLM configuration used, or `None` when no LLM configs were provided.
-- `task_results: list[TaskResult]`, results for each evaluated task.
+- `task_cost_cap_usd: float | None` (default `None`), the attacker's per-task cost cap in USD, or `None` for unlimited.
+- `task_results: list[TaskResult]`, results for each evaluated task (kept and reran tasks merged in claim order).
 - `skipped_tasks: list[Task[Target]]`: tasks that raised `NotApplicable` (during `configure_target` or, in dynamic mode, from the resolver).
+- `started_at: datetime | None` / `ended_at: datetime | None` (both default `None`), wall-clock UTC bounds of the whole threat-model run.
+
+> **Resume note.** Kept tasks (not re-run) are reconstructed from disk into `task_results` with faithful scalar metrics but an **empty `runs` list**: their full trajectories stay on disk and are not re-loaded into memory. Reran tasks carry their full `runs`.
 
 ## LLM access and budget tracking
 
@@ -214,8 +232,8 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 - **Non-LLM optimizers**: When `llm_config` is `None`/omitted, the optimizer receives a noop `LLMClient` that raises `BudgetExhaustedError` on any call.
 - **Constrained client**: The `LLMClient` locks the model, API base, and API key. The optimizer cannot override them.
 - **Cost-based budget enforcement**: Pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches the client's cost cap (`task_cost_cap_usd` for the attacker). Cost is computed per call via `litellm.completion_cost()`, which uses the model's pricing to convert token usage to USD.
-- **Usage tracking**: Each `RunResult` includes a cumulative `llm_usage` snapshot (calls, cost). Each `TaskResult` includes the total `llm_usage`. This enables budget-vs-performance analysis across runs.
-- **Summary output**: The evaluation summary includes call counts and cost.
+- **Usage tracking**: Each `RunResult` includes a cumulative `llm_usage` snapshot (calls, cost) plus a `run_usage_delta` (that run's own spend). Each `TaskResult` includes the total `llm_usage`. This enables both per-run cost and budget-vs-performance analysis across runs.
+- **Summary output**: The live progress reporter and the persisted `summary` include the attack-success rate, a stop-reason histogram, and total call counts and cost (see [Live progress reporting](#live-progress-reporting)).
 
 ## Design decisions
 
@@ -234,34 +252,84 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 - **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ThreatModelResult` provides structured output for programmatic use.
 - **LLM access as threat model parameter**: The model and budget are experiment-level settings, not optimizer choices. The controller creates a constrained `LLMClient` per task and the optimizer cannot escape the configured model/credentials. Budget limits are a fairness measure for comparing optimizer strategies.
 - **Per-task LLM budget**: Each task gets a fresh `LLMClient` with reset counters. This ensures budget fairness when evaluating across multiple tasks and enables per-task budget analysis.
-- **Cumulative usage snapshots**: `RunResult.llm_usage` is cumulative (includes all prior runs) rather than per-run delta. This is more useful for budget-vs-performance curves, each point shows (total_budget_spent, score_at_that_point).
+- **Cumulative usage snapshots plus per-run delta**: `RunResult.llm_usage` is cumulative (includes all prior runs), which is what budget-vs-performance curves want, each point shows (total_budget_spent, score_at_that_point). `RunResult.run_usage_delta` carries the same run's own spend so per-run cost is available without differencing snapshots. Summing deltas across a task equals the task total; summing the cumulative snapshots does not.
 
-## Persistence (`results_dir`)
+## Live progress reporting
 
-When `results_dir` is provided, the controller writes a two-level layout for the threat model when `run()` completes:
+The controller does not print anything itself. It narrates the run through a **reporter**, an observer object it calls at each lifecycle point (threat-model start, task start, each run, task complete, task skipped, diagnostics, threat-model end). Two constructor arguments choose the reporter:
+
+- **`report: bool | Literal["auto"] = "auto"`**. `True`/`"auto"` show progress; `False` is silent. What "show" means degrades automatically to the terminal:
+  - On a real interactive terminal you get a **live dashboard** (a `rich` canvas): a header with the experiment parameters (attacker, target, claim, scope, budget, model, tasks, concurrency), a live metrics table (progress, attack-success rate, success/failure/error/skipped counts, cost), and a diagnostics/errors pane. A final results view renders when the run ends.
+  - On a non-TTY, in CI (`CI` set), under `NO_COLOR`, on a dumb terminal, or when output is piped, it falls back to **plain line output**: a start banner, one line per task completion, and an end summary. The plain banner and summary reproduce the content of the old `_print_summary`, so nothing is lost.
+  - `SUPERRED_NO_DASHBOARD` forces plain output even on a TTY.
+- **`reporter: ProgressReporter | None = None`**. Inject your own observer (a custom sink, a metrics pipe, a test double). It wins over `report`. `ProgressReporter` is a `Protocol` in `superred.core.reporting`; every method is called on the asyncio loop thread and must not block or await.
+
+**Concurrent controllers share one dashboard.** When several controllers run together under `asyncio.gather` on a TTY, they render into a single shared live canvas, one row (lane) each, rather than fighting over the terminal. `rich` (`>=14,<15`) is a core dependency.
+
+## Persistence (schema v4)
+
+Persistence is **on by default** (`persist=True`). Set `persist=False` to write nothing. Each run lands in one self-describing directory tree that the [reader API](#reading-results-back), the [resume engine](#resume-re-running-the-same-experiment), and a static results website can consume without globbing.
 
 ```
-results_dir/
-├── {scope}__{model}.json            ← claim-level summary
-└── {scope}__{model}/
-    ├── 00001__{goal}.json            ← per-task detail (one per task)
-    └── ...
+{results_root}/
+├── experiments.json                      ← cross-experiment index (sweep landing)
+└── {slug}-{hash8}/                        ← one experiment (one threat model)
+    ├── manifest.json                      ← index: params + summary + tasks[]
+    ├── result.json                        ← claim-level final metrics (completion marker)
+    ├── logs/diagnostics.log               ← experiment-level diagnostics
+    ├── tasks/
+    │   └── 00001__{goalslug}/             ← CURRENT (latest) result for this task
+    │       ├── task.json                  ← per-task result + metrics
+    │       ├── iterations.json            ← per-run score/metric progression (the accumulator)
+    │       ├── trajectories/run_00001.json
+    │       └── logs/diagnostics.log       ← this task's diagnostics (JSONL)
+    └── previous_01/                        ← immutable snapshot of a prior run
+        result.json  tasks/...
 ```
 
-Multiple controllers pointed at the same `results_dir` (the multi-threat-model sweep pattern) each write their own pair of files, named by their scope and model.
+- **Results root**: `results_dir` is the **root** (the parent of the experiment folders), not a single file's directory. When omitted it resolves to the `SUPERRED_RESULTS_DIR` environment variable, else `./superred-results/`. Many controllers in a sweep share **one** root, each landing in its own `{slug}-{hash8}` folder, and the shared `experiments.json` indexes them all.
+- **Experiment folder name**: `{slug}-{hash8}`. `{slug}` is a short human label `{attacker}__{target}__{claim}__{model}` (segments sanitized and truncated; it does **not** list scope tags). `{hash8}` is 8 hex of a sha256 over the **measurement identity** (attacker, target, claim, model, scope, read_only, budget, max_runs, feedback), so two distinct threat models never collide and a rerun of identical parameters resolves to the same folder (and resumes). The schema version is deliberately **excluded** from the identity, so a framework upgrade still resumes a prior run. The slug names come from `attacker_label` / `target_label` / `claim_label`, each falling back to a factory/class name, else a generic default. When `llm_config` is `None`, the model segment is `no-llm`.
+- **`result.json`** (claim-level, the completion marker, written last): `schema_version` (`4`), an `experiment` block (the identity + display parameters), `timing` (`started_at`, `completed_at`), and a `summary` block: `asr`, `n_tasks`, `n_success`, `n_completed`, `n_failed`, `n_error`, `n_budget_exhausted`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`. `asr = n_success / n_completed` where `n_completed = done + max_runs + budget_exhausted` (errored and skipped tasks are excluded from the denominator). No trajectories at this level.
+- **`manifest.json`**: the same `experiment` block and `summary`, a `status` (`in_progress` / `complete`), and a `tasks[]` array of scalar per-task entries (index, goal, `goal_hash`, `dir`, status, success, best score, stop reason, run count, cost, timing). It is rewritten as tasks land, so it is always a current index of what is on disk.
+- **`tasks/{NNNNN}__{goalslug}/task.json`**: the per-task result. Repeats `schema_version`, `index`, `goal`, `goal_hash`, that task's own resolved `scope`/`read_only`, `llm_config` (model only), `task_cost_cap_usd`, plus `status`, `success`, `stop_reason`, `best_score`, `best_evaluation`, `n_runs`, `llm_usage`, `timing`, and `error` (the formatted traceback, present when the task failed). Written incrementally: a task's directory is published the moment it finishes (success, failure, error, or budget-exhausted), so an interrupted run leaves every completed task on disk.
+- **`iterations.json`** (the accumulator): the per-run progression, one entry per run with `primary_score`, `success`, `evaluated`/`errored`/`done`, per-run `usage_delta` and `usage_cumulative`, `timing`, and a relative path to that run's trajectory file.
+- **`trajectories/run_NNNNN.json`**: one file per run, the full serialized trajectory (events and responses).
+- **Failed tasks are still persisted**: per-task error containment (see [Design decisions](#design-decisions)) means one task's crash does not abandon the threat model. The failing task lands on disk with `status="error"`, the partial trajectory accumulated before the crash, and the traceback under `error`.
+- **Atomicity and crash safety**: every file is written tmp + `os.replace`; every task directory is published tmp-dir + `rename`. `manifest.json` carries `status="in_progress"` while the run is live and flips to `status="complete"` only once `result.json` (the completion marker) is written last, so an interrupted run is recognizable by its still-`in_progress` manifest.
 
-- **Naming**: `{sorted_tag1.sorted_tag2...}__{sanitized_model}.json`. Tag and model strings are sanitized (any character outside `[A-Za-z0-9_-]` becomes `_`). When the threat model has read-only tags, their sorted names are appended as a `__ro_{read_only}` component (e.g. `prompt__ro_system__gpt-4o.json`) so threat models differing only in access mode don't collide; all-read & write runs keep the plain `{scope}__{model}.json` name. **In dynamic mode (a `ScopeResolver`) the stem is the sanitized `scope_label`** instead of the tag names (claim file `{label}__{model}.json` and subfolder `{label}__{model}/`), since there is no single run-level scope. When `llm_config` is `None`, the model segment is `no-llm`. Per-task files are named `{NNNNN}__{sanitized_truncated_goal}.json` where the index is 1-based and zero-padded to 5 digits.
-- **When**: per-task detail files are written **incrementally**, each one lands on disk as soon as its task finishes (success, error, or budget-exhausted). The claim-level summary file is written at the end of `run()` and acts as a completion marker; if a post-mortem sees the subfolder without the matching summary file, the run was interrupted and the detail files are the authoritative record of what completed.
-- **Failed tasks are still persisted**: per-task error containment (see Design decisions) means an unexpected exception inside one task does not skip the threat model. The failing task lands in the on-disk file with `stop_reason="error"`, the partial trajectory accumulated before the crash, and the formatted exception under the `error` field (which lives *outside* the trajectory). Sibling tasks still finish and are persisted.
-- **Atomicity**: each individual file is written via temp file + `rename`. A disk failure on one task's write is logged and contained, the controller continues running the remaining tasks. The summary file will still point at the would-be path (the missing file at that path is the signal).
-- **Claim-level file**: `version` (`SCHEMA_VERSION`, now `3`), `completed_at`, `scope` (read & write tag names) plus `read_only` (visible-but-not-injectable tags; empty for an all-read & write run), a `scope_label` field (`null` in static mode; the run label in dynamic mode, where `scope`/`read_only` arrays are empty), `llm_config` (model only), a top-level `task_cost_cap_usd` (the attacker's per-task cost cap, or `null`), a `summary` block (`n_tasks`, `n_success`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`), per-task summary entries each with a relative `file` path pointing at its detail file, and `skipped_tasks`. No trajectories at this level.
-- **Per-task detail file**: self-contained, and repeats `version`, `scope`, `read_only`, `llm_config`, `task_cost_cap_usd` plus the task's `goal`, `success`, `best_score`, `best_evaluation`, `llm_usage`, `stop_reason`, and the full `runs` list (each with its trajectory, evaluation, and cumulative `llm_usage`). In dynamic mode each detail file records **that task's own** resolved `scope`/`read_only`, so different files in the same run carry different scopes.
-- **Aggregates**: `mean_primary_score` excludes `NotApplicable` tasks (they are reported separately as `n_skipped`). When the claim has no evaluable tasks, `mean_primary_score` and `max_primary_score` are `null`.
-- **`stop_reason` per task**: one of `"done"` (optimizer signaled `RunEndResponse(done=True)`), `"max_runs"` (hit the safety cap), `"budget_exhausted"` (`BudgetExhaustedError` was raised), or `"error"` (unexpected exception in optimizer/target/evaluator; the task was abandoned).
-- **Secrets**: `LLMConfig.api_key` and `api_base` are explicitly excluded from both claim and detail files. Trajectory contents (e.g. `ObservableEvent.content`) are *not* scrubbed, keep credentials out of log/observable payloads.
-- **Collisions**: if either the claim-level file or the task subfolder already exists, the writer raises `FileExistsError` rather than overwriting. Pass a per-run subdirectory if you re-run into the same parent.
+### Resume: re-running the same experiment
 
-When `results_dir` is `None` (the default), nothing is written and behavior is unchanged.
+Because the folder name is the measurement identity, re-running the **same** controller resolves to the **same** `{slug}-{hash8}` folder and **resumes** rather than colliding:
+
+- Tasks whose prior result was a valid measurement (`success`, `failed`, or `budget_exhausted`) are **kept** and not re-run. Only `error`, interrupted, or missing tasks recompute.
+- A task is matched to its prior result by (same 1-based index + same goal content hash), so appending tasks to a claim resumes the existing ones and computes only the new ones.
+- **`overwrite=True`** forces a full recompute of every task.
+- Kept tasks are folded back into the returned `ThreatModelResult` from disk with faithful scalar metrics but an empty `runs` list (their trajectories stay on disk, unread).
+- **Crash-safe rerun**: before any current file changes, the prior complete state is snapshotted immutably into the next `previous_NN/`. Kept tasks are shared into the snapshot by hardlink (copy fallback), so they belong to both the snapshot and the current state at no extra disk cost, and prior snapshots stay immutable. An interrupted rerun can never destroy the only copy of a prior result.
+
+### Security: persisted content is sensitive
+
+**This is a red-teaming framework. Persisted trajectories contain jailbreaks, planted secrets, and exfiltrated content, and they are NOT scrubbed.** `LLMConfig` serializes `{model}` only (`api_key` and `api_base` are never written), but that is the only redaction. Treat the whole results root as **sensitive**: it holds working attacks and whatever the target leaked under them. Keep credentials out of prompts, observable payloads, and config values, since those flow verbatim into the trajectory files. The default root (`./superred-results/`) is gitignored.
+
+### Reading results back
+
+`superred.core.persistence` exposes a small public reader API (for analysis code and the results website), so you never hand-parse the tree:
+
+```python
+from superred.core.persistence import (
+    load_experiments_index,   # (results_root) -> the cross-experiment index
+    load_manifest,            # (experiment_dir) -> params + summary + tasks[]
+    load_result,              # (experiment_dir) -> claim-level final metrics
+    iter_tasks,               # (experiment_dir) -> list[TaskView], one scalar view per task
+    load_task,                # (task_dir) -> per-task result + metrics
+    load_iterations,          # (task_dir) -> per-run progression
+    load_trajectory,          # (task_dir, run_number) -> one run's full trajectory
+)
+```
+
+### Results website
+
+The framework ships a single self-contained static HTML dashboard (`dashboard.html`) for the results tree. Point it at (or serve) a results root and it reads the JSON files, shows the metrics, filters tasks by outcome (breached / held / errored), and drills into each task's runs and trajectories. It is generic and needs no build step; its internals are out of scope here.
 
 ## Middleware (how filtering is implemented)
 

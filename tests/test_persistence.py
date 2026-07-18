@@ -1,671 +1,614 @@
-"""Unit tests for ``superred.core.persistence``."""
+"""Unit tests for ``superred.core.persistence`` (schema v4).
+
+Covers the pure / unit layer: naming + identity, goal hashing, resume
+planning, snapshot immutability, the public reader API over a written tree,
+summary computation, atomic writes, and results-root resolution.  A tree is
+written by driving an :class:`ExperimentSession` directly (no LLM, no
+Controller) with hand-built :class:`TaskResult` objects.
+"""
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from superred.core.controller import RunResult, TaskResult, ThreatModelResult
+from superred.core.controller import RunResult, TaskResult
 from superred.core.persistence import (
+    DEFAULT_RESULTS_ROOT,
     SCHEMA_VERSION,
+    ExperimentMeta,
+    ExperimentSession,
+    TaskView,
+    _atomic_write_json,
     _compute_summary,
-    _filename_for,
-    _sanitize_segment,
-    _serialize_claim_level,
-    _serialize_evaluation,
-    _serialize_event,
-    _serialize_llm_config,
-    _serialize_response,
-    _serialize_score,
-    _serialize_trajectory,
-    _task_filename,
-    write_threat_model_result,
+    _goal_slug,
+    _slug_segment,
+    _task_dirname,
+    goal_hash,
+    iter_task_dirs,
+    iter_tasks,
+    load_iterations,
+    load_manifest,
+    load_result,
+    load_task,
+    load_trajectory,
+    plan_resume,
+    resolve_results_root,
+    snapshot_current,
 )
-from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
-from superred.core.types.events import (
-    ControllableInjection,
-    ControllableNoInjection,
-    ControllablePostCallEvent,
-    ControllablePreCallEvent,
-    ObservableEvent,
-    RunEndEvent,
-    RunEndResponse,
-)
-from superred.core.types.llm import LLMConfig, LLMUsage
-from superred.core.types.observable import Observable
-from superred.core.types.security_domain import Scope
+from superred.core.types.llm import LLMUsage
 from superred.core.types.trajectory import Trajectory
 
 from .conftest import EXTERNAL_TAG, INTERNAL_TAG, ROOT_TAG, StubTask
 
 # ---------------------------------------------------------------------------
-# Sanitization & filenames
+# Builders
 # ---------------------------------------------------------------------------
 
 
-def test_sanitize_segment_keeps_safe_chars() -> None:
-    assert _sanitize_segment("abcXYZ_-09") == "abcXYZ_-09"
-
-
-def test_sanitize_segment_replaces_unsafe() -> None:
-    assert _sanitize_segment("openai/gpt-4o-mini") == "openai_gpt-4o-mini"
-    assert _sanitize_segment("a b.c:d") == "a_b_c_d"
-
-
-def test_filename_for_sorts_scope() -> None:
-    scope = frozenset({EXTERNAL_TAG, ROOT_TAG})
-    name = _filename_for(scope, frozenset(), None)
-    # ROOT_TAG = "root", EXTERNAL_TAG = "external" — sorted: external, root
-    assert name == "external.root__no-llm.json"
-
-
-def test_filename_for_with_model() -> None:
-    cfg = LLMConfig(model="openai/gpt-4o-mini", api_base="x", api_key="x")
-    scope = frozenset({EXTERNAL_TAG})
-    name = _filename_for(scope, frozenset(), cfg)
-    assert name == "external__openai_gpt-4o-mini.json"
-
-
-def test_filename_for_no_llm() -> None:
-    scope = frozenset({EXTERNAL_TAG})
-    name = _filename_for(scope, frozenset(), None)
-    assert name == "external__no-llm.json"
-
-
-def test_filename_for_marks_read_only() -> None:
-    # read & write external, read-only root visible: read-only tags are
-    # appended as a __ro_ component.
-    name = _filename_for(frozenset({EXTERNAL_TAG}), frozenset({ROOT_TAG}), None)
-    assert name == "external__ro_root__no-llm.json"
-
-
-def test_filename_differs_between_access_modes() -> None:
-    """Two threat models differing only in access mode must not collide."""
-    scope = frozenset({EXTERNAL_TAG})
-    read_write = _filename_for(scope, frozenset(), None)  # all read & write
-    read_only = _filename_for(frozenset(), scope, None)  # nothing writable
-    assert read_write != read_only
-
-
-# ---------------------------------------------------------------------------
-# LLMConfig allowlist (secret-leak guard)
-# ---------------------------------------------------------------------------
-
-
-def test_llm_config_excludes_api_key_and_base() -> None:
-    cfg = LLMConfig(
-        model="gpt-4o-mini",
-        api_base="https://internal.example.com/secret-path",
-        api_key="sk-LIVE-DO-NOT-LEAK",
-    )
-    payload = _serialize_llm_config(cfg)
-    assert payload == {"model": "gpt-4o-mini"}
-    blob = json.dumps(payload)
-    assert "sk-LIVE-DO-NOT-LEAK" not in blob
-    assert "internal.example.com" not in blob
-    assert "api_key" not in blob
-    assert "api_base" not in blob
-
-
-def test_llm_config_none() -> None:
-    assert _serialize_llm_config(None) is None
-
-
-# ---------------------------------------------------------------------------
-# Score / EvaluationResult
-# ---------------------------------------------------------------------------
-
-
-def test_serialize_score_with_domain() -> None:
-    s = Score(value=0.5, security_domain=EXTERNAL_TAG, name="asr")
-    assert _serialize_score(s) == {
-        "name": "asr",
-        "value": 0.5,
-        "security_domain": "external",
-    }
-
-
-def test_serialize_score_no_domain_is_null() -> None:
-    s = Score(value=1.0)
-    assert _serialize_score(s)["security_domain"] is None
-
-
-def test_serialize_evaluation_round_trips_fields() -> None:
-    primary = Score(value=0.9)
-    sub = {"asr": Score(value=0.3, security_domain=EXTERNAL_TAG)}
-    ev = EvaluationResult(success=True, primary_score=primary, sub_scores=sub, rationale="because")
-    out = _serialize_evaluation(ev)
-    assert out["success"] is True
-    assert out["primary_score"]["value"] == 0.9
-    assert out["sub_scores"]["asr"]["value"] == 0.3
-    assert out["rationale"] == "because"
-
-
-# ---------------------------------------------------------------------------
-# Events & responses
-# ---------------------------------------------------------------------------
-
-
-def test_serialize_pre_call_event() -> None:
-    ctrl = Controllable(name="user_msg", security_domain=EXTERNAL_TAG, description="desc")
-    ev = ControllablePreCallEvent(controllable=ctrl, request="hello")
-    out = _serialize_event(ev)
-    assert out["kind"] == "event"
-    assert out["type"] == "ControllablePreCallEvent"
-    assert out["security_domain"] == "external"
-    assert out["controllable"]["name"] == "user_msg"
-    assert out["controllable"]["security_domain"] == "external"
-    assert out["request"] == "hello"
-    # base fields present
-    assert "event_id" in out
-    datetime.fromisoformat(out["timestamp"])
-
-
-def test_serialize_post_call_event() -> None:
-    ctrl = Controllable(name="resp", security_domain=EXTERNAL_TAG)
-    ev = ControllablePostCallEvent(controllable=ctrl, request="q", answer="a")
-    out = _serialize_event(ev)
-    assert out["request"] == "q"
-    assert out["answer"] == "a"
-
-
-def test_serialize_observable_event() -> None:
-    obs = Observable(name="log", security_domain=EXTERNAL_TAG, description="d")
-    ev = ObservableEvent(observable=obs, content={"k": "v"})
-    out = _serialize_event(ev)
-    assert out["type"] == "ObservableEvent"
-    assert out["observable"]["name"] == "log"
-    assert out["content"] == {"k": "v"}
-
-
-def test_serialize_run_end_event_with_eval() -> None:
-    ev = RunEndEvent(
-        evaluation=EvaluationResult(
-            success=False,
-            primary_score=Score(value=0.0),
-        ),
-        security_domain=EXTERNAL_TAG,
-    )
-    out = _serialize_event(ev)
-    assert out["type"] == "RunEndEvent"
-    assert out["evaluation"]["success"] is False
-
-
-def test_serialize_run_end_event_without_eval() -> None:
-    ev = RunEndEvent(security_domain=EXTERNAL_TAG)
-    out = _serialize_event(ev)
-    assert out["evaluation"] is None
-
-
-def test_serialize_response_injection() -> None:
-    ctrl = Controllable(name="c", security_domain=EXTERNAL_TAG)
-    base = ControllablePreCallEvent(controllable=ctrl, request="r")
-    inj = ControllableInjection(event=base, controllable=ctrl, value="payload")
-    out = _serialize_response(inj)
-    assert out == {
-        "kind": "response",
-        "type": "ControllableInjection",
-        "controllable": "c",
-        "value": "payload",
-    }
-
-
-def test_serialize_response_no_injection() -> None:
-    ctrl = Controllable(name="c", security_domain=EXTERNAL_TAG)
-    base = ControllablePreCallEvent(controllable=ctrl, request="r")
-    no_inj = ControllableNoInjection(event=base, controllable=ctrl)
-    out = _serialize_response(no_inj)
-    assert out["type"] == "ControllableNoInjection"
-    assert out["controllable"] == "c"
-
-
-def test_serialize_run_end_response() -> None:
-    ev = RunEndEvent(security_domain=EXTERNAL_TAG)
-    resp = RunEndResponse(event=ev, done=True)
-    out = _serialize_response(resp)
-    assert out == {"kind": "response", "type": "RunEndResponse", "done": True}
-
-
-def test_serialize_trajectory_preserves_order() -> None:
-    traj = Trajectory()
-    ctrl = Controllable(name="c", security_domain=EXTERNAL_TAG)
-    e1 = ControllablePreCallEvent(controllable=ctrl, request="q")
-    inj = ControllableInjection(event=e1, controllable=ctrl, value="v")
-    e2 = RunEndEvent(security_domain=EXTERNAL_TAG)
-    traj.emit(e1)
-    traj.emit(inj)
-    traj.emit(e2)
-    items = _serialize_trajectory(traj)
-    assert [i["type"] for i in items] == [
-        "ControllablePreCallEvent",
-        "ControllableInjection",
-        "RunEndEvent",
+def _make_task_result(
+    goal: str = "Test goal",
+    *,
+    score: float = 1.0,
+    success: bool = True,
+    stop_reason: str = "done",
+    calls: int = 2,
+    cost: float = 0.05,
+    error: str | None = None,
+    n_runs: int = 1,
+) -> TaskResult:
+    """Hand-build a ``TaskResult`` with ``n_runs`` runs and empty trajectories."""
+    evaluation = EvaluationResult(success=success, primary_score=Score(value=score))
+    started = datetime(2026, 1, 1, tzinfo=UTC)
+    ended = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+    runs = [
+        RunResult(
+            trajectory=Trajectory(),
+            evaluation=evaluation,
+            llm_usage=LLMUsage(calls=calls, cost=cost),
+            run_usage_delta=LLMUsage(calls=calls, cost=cost),
+            started_at=started,
+            ended_at=ended,
+            evaluated=error is None,
+            errored=error is not None,
+            done=stop_reason == "done",
+        )
+        for _ in range(n_runs)
     ]
-    assert items[0]["kind"] == "event"
-    assert items[1]["kind"] == "response"
-
-
-# ---------------------------------------------------------------------------
-# _task_filename helper
-# ---------------------------------------------------------------------------
-
-
-def test_task_filename_pads_to_five_digits() -> None:
-    assert _task_filename(1, "Goal").startswith("00001__")
-    assert _task_filename(42, "Goal").startswith("00042__")
-    assert _task_filename(99999, "Goal").startswith("99999__")
-
-
-def test_task_filename_sanitizes_and_truncates_goal() -> None:
-    long = "Inject the correct key into every controllable / regardless of trust"
-    name = _task_filename(7, long)
-    assert name.startswith("00007__")
-    # Truncated to <=50 chars in the goal portion.
-    goal_part = name.removeprefix("00007__").removesuffix(".json")
-    assert len(goal_part) <= 50
-    # Sanitized — no slashes or spaces.
-    assert "/" not in goal_part
-    assert " " not in goal_part
-
-
-def test_task_filename_falls_back_to_task_when_empty() -> None:
-    assert _task_filename(3, "").endswith("00003__task.json")
-
-
-def test_task_filename_only_strips_underscore_not_other_chars() -> None:
-    """Trailing letters must be preserved — only underscores are stripped.
-    Guards against widening the rstrip charset (e.g. ``rstrip('XX_XX')``)."""
-    # Goal sanitizes to "fooX_" (trailing _ from spaces); strip ONLY the _.
-    assert _task_filename(1, "fooX_").endswith("00001__fooX.json")
-    # And X-only trailing must be left alone.
-    assert _task_filename(2, "barX").endswith("00002__barX.json")
-
-
-# ---------------------------------------------------------------------------
-# Summary aggregation
-# ---------------------------------------------------------------------------
-
-
-def _make_task_result(score: float, success: bool, calls: int = 0, cost: float = 0.0) -> TaskResult:
-    """Helper: a minimal TaskResult with the given primary score."""
-    primary = Score(value=score)
-    ev = EvaluationResult(success=success, primary_score=primary)
     return TaskResult(
-        task=StubTask(),
-        runs=[],
-        best_score=primary,
-        best_evaluation=ev,
+        task=StubTask(score=score, success=success, goal_text=goal),
+        runs=runs,
+        best_score=Score(value=score),
+        best_evaluation=evaluation,
         success=success,
         llm_usage=LLMUsage(calls=calls, cost=cost),
-        stop_reason="done",
-    )
-
-
-def test_compute_summary_basic_aggregates() -> None:
-    tmr = ThreatModelResult(
+        stop_reason=stop_reason,  # type: ignore[arg-type]
         scope=frozenset({EXTERNAL_TAG}),
-        read_only=frozenset(),
-        llm_config=None,
-        task_results=[
-            _make_task_result(0.2, success=False, calls=1, cost=0.001),
-            _make_task_result(0.8, success=True, calls=4, cost=0.005),
-            _make_task_result(0.5, success=False, calls=2, cost=0.002),
-        ],
+        error=error,
+        started_at=started,
+        ended_at=ended,
     )
-    summary = _compute_summary(tmr)
-    assert summary["n_tasks"] == 3
-    assert summary["n_success"] == 1
-    assert summary["n_skipped"] == 0
-    assert summary["max_primary_score"] == 0.8
-    assert summary["mean_primary_score"] == pytest.approx(0.5)
-    assert summary["total_llm_usage"] == {"calls": 7, "cost": pytest.approx(0.008)}
 
 
-def test_compute_summary_excludes_skipped_from_mean() -> None:
-    """Skipped tasks aren't in task_results — they have no score and
-    must not affect the mean. Only n_skipped reflects them."""
-    tmr = ThreatModelResult(
-        scope=frozenset({EXTERNAL_TAG}),
-        read_only=frozenset(),
-        llm_config=None,
-        task_results=[_make_task_result(0.4, success=False)],
-        skipped_tasks=[StubTask(goal_text="not applicable")],
+def _write_tree(
+    root: Path,
+    meta: ExperimentMeta,
+    task_results: list[TaskResult],
+    *,
+    skipped: list[tuple[int, str]] | None = None,
+) -> Path:
+    """Drive an ``ExperimentSession`` to write a full experiment tree.
+
+    Returns the experiment directory.
+    """
+    goals = [tr.task.goal.description for tr in task_results]
+    session = ExperimentSession.open(root, meta, goals)
+    for i, tr in enumerate(task_results, start=1):
+        session.begin_task(i, tr.task.goal.description)
+        session.publish_task(i, tr)
+    for index, goal in skipped or []:
+        session.mark_skipped(index, goal)
+    session.finalize(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, 0, 5, tzinfo=UTC))
+    return root / meta.dirname()
+
+
+def _make_task_view(
+    index: int,
+    *,
+    success: bool,
+    stop_reason: str,
+    best_score: float,
+    calls: int = 1,
+    cost: float = 0.01,
+    error: str | None = None,
+    status: str = "success",
+) -> TaskView:
+    return TaskView(
+        index=index,
+        goal=f"goal {index}",
+        goal_hash=goal_hash(f"goal {index}"),
+        dir=f"tasks/{index:05d}__goal",
+        status=status,
+        success=success,
+        stop_reason=stop_reason,
+        best_score=best_score,
+        n_runs=1,
+        calls=calls,
+        cost=cost,
+        error=error,
+        started_at=None,
+        ended_at=None,
     )
-    summary = _compute_summary(tmr)
-    assert summary["n_tasks"] == 1
-    assert summary["n_skipped"] == 1
-    assert summary["mean_primary_score"] == 0.4
 
 
-def test_compute_summary_no_tasks_yields_null_score() -> None:
-    """When the claim has no tasks (or all skipped), score aggregates
-    are None rather than crashing on division by zero."""
-    tmr = ThreatModelResult(
-        scope=frozenset({EXTERNAL_TAG}),
-        read_only=frozenset(),
-        llm_config=None,
-        task_results=[],
-        skipped_tasks=[StubTask(goal_text="x"), StubTask(goal_text="y")],
-    )
-    summary = _compute_summary(tmr)
-    assert summary["n_tasks"] == 0
-    assert summary["n_skipped"] == 2
-    assert summary["max_primary_score"] is None
-    assert summary["mean_primary_score"] is None
-    assert summary["total_llm_usage"] == {"calls": 0, "cost": 0.0}
+BASE_META = ExperimentMeta(
+    attacker="atk",
+    target="tgt",
+    claim="clm",
+    model="test-model",
+    scope=("external",),
+)
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: write_threat_model_result + _serialize_claim_level
+# (1) ExperimentMeta: slug / identity_hash / dirname
 # ---------------------------------------------------------------------------
 
 
-def _build_minimal_tmr(scope: Scope, read_only: Scope = frozenset()) -> ThreatModelResult:
-    """Build a small ThreatModelResult for round-trip tests.
+def test_slug_shape_and_lowercasing() -> None:
+    meta = ExperimentMeta(attacker="MyAtk", target="Tgt", claim="Claim", model="GPT-4o")
+    assert meta.slug() == "myatk__tgt__claim__gpt-4o"
 
-    *read_only* defaults to empty (the whole scope is read & write)."""
-    traj = Trajectory()
-    end = RunEndEvent(security_domain=EXTERNAL_TAG)
-    traj.emit(end)
-    primary = Score(value=0.7)
-    eval_result = EvaluationResult(success=True, primary_score=primary)
-    run = RunResult(trajectory=traj, evaluation=eval_result, llm_usage=LLMUsage(calls=2, cost=0.01))
-    task = StubTask()
-    task_result = TaskResult(
-        task=task,
-        runs=[run],
-        best_score=primary,
-        best_evaluation=eval_result,
-        success=True,
-        llm_usage=LLMUsage(calls=2, cost=0.01),
-        stop_reason="done",
+
+def test_slug_model_none_becomes_no_llm() -> None:
+    meta = ExperimentMeta(attacker="a", target="t", claim="c", model=None)
+    assert meta.slug() == "a__t__c__no-llm"
+
+
+def test_slug_excludes_scope_tag_names() -> None:
+    meta = ExperimentMeta(
+        attacker="a", target="t", claim="c", model="m", scope=("external", "internal")
     )
-    return ThreatModelResult(
-        scope=scope,
-        read_only=read_only,
-        llm_config=LLMConfig(model="m", api_base="x", api_key="SECRET"),
-        task_cost_cap_usd=2.5,
-        task_results=[task_result],
-        skipped_tasks=[],
+    slug = meta.slug()
+    assert "external" not in slug
+    assert "internal" not in slug
+    assert slug == "a__t__c__m"
+
+
+def test_slug_sanitizes_unsafe_chars() -> None:
+    meta = ExperimentMeta(attacker="openai/gpt 4o", target="t", claim="c", model="m")
+    # spaces and slashes collapse to a single dash.
+    assert meta.slug().split("__")[0] == "openai-gpt-4o"
+
+
+def test_slug_segment_reserved_and_empty_become_x() -> None:
+    assert _slug_segment("con") == "x"
+    assert _slug_segment("COM1") == "x"
+    assert _slug_segment("") == "x"
+    assert _slug_segment("///") == "x"
+    assert _slug_segment("...") == "x"
+
+
+def test_slug_segment_truncates_to_24() -> None:
+    seg = _slug_segment("a" * 100)
+    assert seg == "a" * 24
+
+
+def test_identity_hash_is_8_lowercase_hex() -> None:
+    h = BASE_META.identity_hash()
+    assert len(h) == 8
+    assert h == h.lower()
+    assert all(c in "0123456789abcdef" for c in h)
+
+
+def test_identity_hash_deterministic() -> None:
+    assert BASE_META.identity_hash() == BASE_META.identity_hash()
+
+
+def test_dirname_is_slug_dash_hash() -> None:
+    assert BASE_META.dirname() == f"{BASE_META.slug()}-{BASE_META.identity_hash()}"
+
+
+def test_scope_changes_identity_hash() -> None:
+    a = ExperimentMeta(attacker="a", target="t", claim="c", model="m", scope=("external",))
+    b = ExperimentMeta(attacker="a", target="t", claim="c", model="m", scope=("internal",))
+    assert a.identity_hash() != b.identity_hash()
+
+
+def test_scope_order_does_not_change_identity_hash() -> None:
+    a = ExperimentMeta(
+        attacker="a", target="t", claim="c", model="m", scope=("external", "internal")
+    )
+    b = ExperimentMeta(
+        attacker="a", target="t", claim="c", model="m", scope=("internal", "external")
+    )
+    assert a.identity_hash() == b.identity_hash()
+
+
+def test_task_cost_cap_changes_identity_hash() -> None:
+    a = ExperimentMeta(attacker="a", target="t", claim="c", model="m", task_cost_cap_usd=1.0)
+    b = ExperimentMeta(attacker="a", target="t", claim="c", model="m", task_cost_cap_usd=2.0)
+    assert a.identity_hash() != b.identity_hash()
+
+
+def test_concurrency_does_not_change_identity_hash() -> None:
+    a = ExperimentMeta(attacker="a", target="t", claim="c", model="m", concurrency=1)
+    b = ExperimentMeta(attacker="a", target="t", claim="c", model="m", concurrency=8)
+    assert a.identity_hash() == b.identity_hash()
+    assert a.dirname() == b.dirname()
+
+
+def test_n_tasks_does_not_change_identity_hash() -> None:
+    a = ExperimentMeta(attacker="a", target="t", claim="c", model="m", n_tasks=None)
+    b = ExperimentMeta(attacker="a", target="t", claim="c", model="m", n_tasks=42)
+    assert a.identity_hash() == b.identity_hash()
+
+
+def test_read_only_and_labels_change_identity_hash() -> None:
+    base = ExperimentMeta(attacker="a", target="t", claim="c", model="m", scope=("external",))
+    ro = ExperimentMeta(
+        attacker="a",
+        target="t",
+        claim="c",
+        model="m",
+        scope=("external",),
+        read_only=("internal",),
+    )
+    labeled = ExperimentMeta(
+        attacker="a",
+        target="t",
+        claim="c",
+        model="m",
+        scope=("external",),
+        scope_label="lbl",
+    )
+    feedback = ExperimentMeta(
+        attacker="a",
+        target="t",
+        claim="c",
+        model="m",
+        scope=("external",),
+        include_feedback=False,
+    )
+    hashes = {
+        base.identity_hash(),
+        ro.identity_hash(),
+        labeled.identity_hash(),
+        feedback.identity_hash(),
+    }
+    assert len(hashes) == 4
+
+
+def test_experiment_block_sorts_scope() -> None:
+    meta = ExperimentMeta(
+        attacker="a", target="t", claim="c", model="m", scope=("internal", "external")
+    )
+    block = meta.experiment_block()
+    assert block["scope"] == ["external", "internal"]
+    assert block["slug"] == meta.slug()
+    assert block["hash"] == meta.identity_hash()
+
+
+# ---------------------------------------------------------------------------
+# (2) goal_hash
+# ---------------------------------------------------------------------------
+
+
+def test_goal_hash_is_16_lowercase_hex() -> None:
+    h = goal_hash("some goal")
+    assert len(h) == 16
+    assert all(c in "0123456789abcdef" for c in h)
+
+
+def test_goal_hash_stable() -> None:
+    assert goal_hash("same") == goal_hash("same")
+
+
+def test_goal_hash_distinct() -> None:
+    assert goal_hash("goal a") != goal_hash("goal b")
+
+
+# ---------------------------------------------------------------------------
+# (3) _goal_slug / _task_dirname
+# ---------------------------------------------------------------------------
+
+
+def test_goal_slug_sanitizes_and_lowercases() -> None:
+    assert _goal_slug("Steal the API key!") == "steal_the_api_key"
+
+
+def test_goal_slug_truncates_to_50() -> None:
+    assert _goal_slug("z" * 200) == "z" * 50
+
+
+def test_goal_slug_empty_becomes_task() -> None:
+    assert _goal_slug("") == "task"
+    assert _goal_slug("///") == "task"
+
+
+def test_task_dirname_zero_pads_index() -> None:
+    assert _task_dirname(1, "Do a thing") == "00001__do_a_thing"
+    assert _task_dirname(42, "x") == "00042__x"
+
+
+# ---------------------------------------------------------------------------
+# (4) plan_resume
+# ---------------------------------------------------------------------------
+
+
+def _write_prior_task(exp_dir: Path, index: int, goal: str, status: str) -> None:
+    """Hand-write a minimal prior current task dir with a task.json."""
+    task_dir = exp_dir / "tasks" / _task_dirname(index, goal)
+    task_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write_json(
+        task_dir / "task.json",
+        {
+            "schema_version": SCHEMA_VERSION,
+            "index": index,
+            "goal": goal,
+            "goal_hash": goal_hash(goal),
+            "status": status,
+        },
     )
 
 
-def test_serialize_claim_level_shape() -> None:
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    summaries = [{"task": {"goal": "Test goal"}, "file": "external__m/00001__Test_goal.json"}]
-    payload = _serialize_claim_level(tmr, summaries)
-    assert payload["version"] == SCHEMA_VERSION
-    datetime.fromisoformat(payload["completed_at"].replace("Z", "+00:00"))
-    assert payload["scope"] == ["external"]
-    assert payload["read_only"] == []
-    assert payload["llm_config"] == {"model": "m"}
-    assert payload["task_cost_cap_usd"] == 2.5
-    assert payload["summary"]["n_tasks"] == 1
-    assert payload["summary"]["n_success"] == 1
-    assert payload["summary"]["mean_primary_score"] == 0.7
-    assert payload["summary"]["max_primary_score"] == 0.7
-    assert payload["task_results"] == summaries
-    assert payload["skipped_tasks"] == []
+def test_plan_resume_fresh_when_no_dir(tmp_path: Path) -> None:
+    plan = plan_resume(tmp_path / "nope", ["g1", "g2"], overwrite=False)
+    assert plan.is_fresh is True
+    assert plan.keep == frozenset()
+    assert plan.rerun == frozenset({1, 2})
 
 
-def test_write_threat_model_result_creates_layout(tmp_path: Path) -> None:
-    """One claim file in main folder, one detail file per task in subfolder."""
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    written = write_threat_model_result(tmr, tmp_path)
-    assert written == tmp_path / "external__m.json"
-    subfolder = tmp_path / "external__m"
-    assert subfolder.is_dir()
-    detail_files = sorted(subfolder.glob("*.json"))
-    assert len(detail_files) == 1
-    assert detail_files[0].name.startswith("00001__")
-    # No leftover .tmp files anywhere.
-    assert not list(tmp_path.rglob("*.tmp"))
+def test_plan_resume_keeps_matching_kept_status(tmp_path: Path) -> None:
+    exp = tmp_path / "exp"
+    _write_prior_task(exp, 1, "g1", "success")
+    _write_prior_task(exp, 2, "g2", "failed")
+    _write_prior_task(exp, 3, "g3", "budget_exhausted")
+    plan = plan_resume(exp, ["g1", "g2", "g3"], overwrite=False)
+    assert plan.is_fresh is False
+    assert plan.keep == frozenset({1, 2, 3})
+    assert plan.rerun == frozenset()
 
 
-def test_claim_file_links_to_detail_with_relative_path(tmp_path: Path) -> None:
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    claim = write_threat_model_result(tmr, tmp_path)
-    parsed = json.loads(claim.read_text())
-    entry = parsed["task_results"][0]
-    rel = entry["file"]
-    # Path is relative to results_dir and points at an actual file.
-    assert (tmp_path / rel).exists()
-    assert rel.startswith("external__m/")
-    assert rel.endswith(".json")
-    # Claim entry has the summary fields, NOT the trajectory.
-    assert "trajectory" not in entry
-    assert entry["n_runs"] == 1
-    assert entry["stop_reason"] == "done"
-    assert entry["best_score"]["value"] == 0.7
+def test_plan_resume_reruns_error_status(tmp_path: Path) -> None:
+    exp = tmp_path / "exp"
+    _write_prior_task(exp, 1, "g1", "error")
+    plan = plan_resume(exp, ["g1"], overwrite=False)
+    assert plan.keep == frozenset()
+    assert plan.rerun == frozenset({1})
 
 
-def test_detail_file_is_self_contained(tmp_path: Path) -> None:
-    """A detail file carries its own scope/llm_config so it is meaningful
-    in isolation."""
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    write_threat_model_result(tmr, tmp_path)
-    detail_files = list((tmp_path / "external__m").glob("*.json"))
-    assert len(detail_files) == 1
-    detail = json.loads(detail_files[0].read_text())
-    assert detail["version"] == SCHEMA_VERSION
-    assert detail["scope"] == ["external"]
-    assert detail["read_only"] == []
-    assert detail["llm_config"] == {"model": "m"}
-    assert detail["task_cost_cap_usd"] == 2.5
-    assert detail["task"]["goal"] == "Test goal"
-    assert detail["stop_reason"] == "done"
-    assert len(detail["runs"]) == 1
-    assert detail["runs"][0]["run_number"] == 1
-    assert "trajectory" in detail["runs"][0]
+def test_plan_resume_reruns_on_goal_hash_mismatch(tmp_path: Path) -> None:
+    exp = tmp_path / "exp"
+    _write_prior_task(exp, 1, "old goal", "success")
+    plan = plan_resume(exp, ["new goal"], overwrite=False)
+    assert plan.keep == frozenset()
+    assert plan.rerun == frozenset({1})
 
 
-def test_no_secret_in_any_written_file(tmp_path: Path) -> None:
-    """``api_key`` and ``api_base`` are excluded from BOTH the claim
-    file and every detail file."""
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    write_threat_model_result(tmr, tmp_path)
-    for path in tmp_path.rglob("*.json"):
+def test_plan_resume_reruns_appended_task(tmp_path: Path) -> None:
+    exp = tmp_path / "exp"
+    _write_prior_task(exp, 1, "g1", "success")
+    # A second goal appended; no prior task at index 2 -> rerun only it.
+    plan = plan_resume(exp, ["g1", "g2"], overwrite=False)
+    assert plan.keep == frozenset({1})
+    assert plan.rerun == frozenset({2})
+
+
+def test_plan_resume_overwrite_reruns_all(tmp_path: Path) -> None:
+    exp = tmp_path / "exp"
+    _write_prior_task(exp, 1, "g1", "success")
+    _write_prior_task(exp, 2, "g2", "success")
+    plan = plan_resume(exp, ["g1", "g2"], overwrite=True)
+    assert plan.is_fresh is False
+    assert plan.keep == frozenset()
+    assert plan.rerun == frozenset({1, 2})
+
+
+# ---------------------------------------------------------------------------
+# (5) snapshot_current immutability
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_current_immutability(tmp_path: Path) -> None:
+    exp = tmp_path / "exp"
+    (exp / "tasks").mkdir(parents=True)
+    _atomic_write_json(exp / "result.json", {"marker": "v1"})
+    _atomic_write_json(exp / "manifest.json", {"status": "complete"})
+    _write_prior_task(exp, 1, "g1", "success")
+
+    first = snapshot_current(exp)
+    assert first is not None
+    assert first.name == "previous_01"
+    assert json.loads((first / "result.json").read_text())["marker"] == "v1"
+
+    # Overwrite a current file via the atomic writer; the hardlinked snapshot
+    # copy must be unaffected (os.replace swaps to a fresh inode).
+    _atomic_write_json(exp / "result.json", {"marker": "v2"})
+    assert json.loads((exp / "result.json").read_text())["marker"] == "v2"
+    assert json.loads((first / "result.json").read_text())["marker"] == "v1"
+
+    second = snapshot_current(exp)
+    assert second is not None
+    assert second.name == "previous_02"
+    assert json.loads((second / "result.json").read_text())["marker"] == "v2"
+
+
+def test_snapshot_current_returns_none_when_nothing(tmp_path: Path) -> None:
+    exp = tmp_path / "empty"
+    exp.mkdir()
+    assert snapshot_current(exp) is None
+
+
+# ---------------------------------------------------------------------------
+# (6) Reader API over a written tree
+# ---------------------------------------------------------------------------
+
+
+def test_reader_api_over_written_tree(tmp_path: Path) -> None:
+    root = tmp_path / "results"
+    task_results = [
+        _make_task_result("goal one", score=0.8, success=True, stop_reason="done"),
+        _make_task_result("goal two", score=0.0, success=False, stop_reason="max_runs"),
+    ]
+    exp_dir = _write_tree(root, BASE_META, task_results)
+
+    # iter_task_dirs / iter_tasks ordered by index.
+    dirs = iter_task_dirs(exp_dir)
+    assert len(dirs) == 2
+    assert [d.name for d in dirs] == sorted(d.name for d in dirs)
+
+    views = iter_tasks(exp_dir)
+    assert [v.index for v in views] == [1, 2]
+    assert views[0].goal == "goal one"
+    assert views[0].success is True
+    assert views[0].best_score == pytest.approx(0.8)
+    assert views[1].stop_reason == "max_runs"
+
+    # load_task / load_iterations / load_trajectory.
+    task = load_task(dirs[0])
+    assert task["schema_version"] == SCHEMA_VERSION
+    assert task["index"] == 1
+    assert task["scope"] == ["external"]
+    assert task["llm_config"] == {"model": "test-model"}
+
+    iters = load_iterations(dirs[0])
+    assert len(iters["runs"]) == 1
+    assert iters["runs"][0]["run_number"] == 1
+
+    traj = load_trajectory(dirs[0], 1)
+    assert traj["run_number"] == 1
+    assert traj["trajectory"] == []
+
+    # manifest + result.
+    manifest = load_manifest(exp_dir)
+    assert manifest["schema_version"] == SCHEMA_VERSION
+    assert manifest["status"] == "complete"
+    assert len(manifest["tasks"]) == 2
+
+    result = load_result(exp_dir)
+    assert result["schema_version"] == SCHEMA_VERSION
+    assert result["summary"]["n_tasks"] == 2
+    assert result["summary"]["n_success"] == 1
+
+
+def test_written_tree_never_leaks_secrets(tmp_path: Path) -> None:
+    root = tmp_path / "results"
+    exp_dir = _write_tree(root, BASE_META, [_make_task_result("g")])
+    for path in exp_dir.rglob("*.json"):
         text = path.read_text()
-        assert "SECRET" not in text
+        assert "sk-test" not in text
         assert "api_key" not in text
         assert "api_base" not in text
 
 
-def test_write_threat_model_result_creates_directory(tmp_path: Path) -> None:
-    target_dir = tmp_path / "nested" / "results"
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    write_threat_model_result(tmr, target_dir)
-    assert (target_dir / "external__m.json").exists()
-    assert (target_dir / "external__m" / "00001__Test_goal.json").exists()
-
-
-def test_write_threat_model_result_refuses_overwrite_claim(tmp_path: Path) -> None:
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    write_threat_model_result(tmr, tmp_path)
-    with pytest.raises(FileExistsError):
-        write_threat_model_result(tmr, tmp_path)
-
-
-def test_write_threat_model_result_refuses_existing_subfolder(tmp_path: Path) -> None:
-    """Pre-existing subfolder (without claim file) also blocks writes."""
-    (tmp_path / "external__m").mkdir()
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    with pytest.raises(FileExistsError):
-        write_threat_model_result(tmr, tmp_path)
-
-
-def test_json_fallback_repr_for_arbitrary_object(tmp_path: Path) -> None:
-    """Non-datetime, non-JSON-native objects in trajectory content fall
-    back to ``repr`` rather than crashing the write. Trajectory lives
-    in the per-task detail file under the new layout."""
-
-    class Opaque:
-        def __repr__(self) -> str:
-            return "<Opaque sentinel>"
-
-    traj = Trajectory()
-    obs = Observable(name="o", security_domain=EXTERNAL_TAG)
-    traj.emit(ObservableEvent(observable=obs, content=Opaque()))
-    traj.emit(RunEndEvent(security_domain=EXTERNAL_TAG))
-    primary = Score(value=0.0)
-    ev = EvaluationResult(success=False, primary_score=primary)
-    run = RunResult(trajectory=traj, evaluation=ev, llm_usage=LLMUsage())
-    task = StubTask()
-    tr = TaskResult(
-        task=task,
-        runs=[run],
-        best_score=primary,
-        best_evaluation=ev,
-        success=False,
-        llm_usage=LLMUsage(),
-        stop_reason="max_runs",
-    )
-    tmr = ThreatModelResult(
-        scope=frozenset({EXTERNAL_TAG}),
-        read_only=frozenset(),
-        llm_config=None,
-        task_results=[tr],
-    )
-    write_threat_model_result(tmr, tmp_path)
-    detail = json.loads(next((tmp_path / "external__no-llm").glob("*.json")).read_text())
-    content = detail["runs"][0]["trajectory"][0]["content"]
-    assert content == "<Opaque sentinel>"
-
-
-def test_write_handles_non_json_native_content(tmp_path: Path) -> None:
-    """Trajectory content typed as Any may include datetime/objects."""
-    traj = Trajectory()
-    obs = Observable(name="o", security_domain=EXTERNAL_TAG)
-    ts = datetime(2026, 1, 1, 12, 0, 0)
-    traj.emit(ObservableEvent(observable=obs, content=ts))
-    traj.emit(RunEndEvent(security_domain=EXTERNAL_TAG))
-    primary = Score(value=0.0)
-    ev = EvaluationResult(success=False, primary_score=primary)
-    run = RunResult(trajectory=traj, evaluation=ev, llm_usage=LLMUsage())
-    task = StubTask()
-    tr = TaskResult(
-        task=task,
-        runs=[run],
-        best_score=primary,
-        best_evaluation=ev,
-        success=False,
-        llm_usage=LLMUsage(),
-        stop_reason="max_runs",
-    )
-    tmr = ThreatModelResult(
-        scope=frozenset({EXTERNAL_TAG}),
-        read_only=frozenset(),
-        llm_config=None,
-        task_results=[tr],
-    )
-    write_threat_model_result(tmr, tmp_path)
-    detail = json.loads(next((tmp_path / "external__no-llm").glob("*.json")).read_text())
-    content = detail["runs"][0]["trajectory"][0]["content"]
-    assert "2026-01-01T12:00:00" in content
+def test_written_tree_skipped_task_in_manifest(tmp_path: Path) -> None:
+    root = tmp_path / "results"
+    exp_dir = _write_tree(root, BASE_META, [_make_task_result("g1")], skipped=[(2, "skipped goal")])
+    manifest = load_manifest(exp_dir)
+    skipped = [t for t in manifest["tasks"] if t["status"] == "skipped"]
+    assert len(skipped) == 1
+    assert skipped[0]["dir"] is None
+    assert manifest["summary"]["n_skipped"] == 1
 
 
 # ---------------------------------------------------------------------------
-# Read-only surfaces
+# (7) _compute_summary
 # ---------------------------------------------------------------------------
 
 
-def test_claim_and_detail_files_record_read_only(tmp_path: Path) -> None:
-    """When read_only is non-empty, both sets are recorded (claim + detail)
-    and the filename gets a ``__ro_`` component."""
-    # read & write external, read-only root visible.
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}), read_only=frozenset({ROOT_TAG}))
-    claim = write_threat_model_result(tmr, tmp_path)
-    assert claim == tmp_path / "external__ro_root__m.json"
-    parsed = json.loads(claim.read_text())
-    assert parsed["scope"] == ["external"]
-    assert parsed["read_only"] == ["root"]
-    detail = json.loads(next((tmp_path / "external__ro_root__m").glob("*.json")).read_text())
-    assert detail["scope"] == ["external"]
-    assert detail["read_only"] == ["root"]
+def test_compute_summary_counts_and_asr() -> None:
+    views = [
+        _make_task_view(1, success=True, stop_reason="done", best_score=1.0),
+        _make_task_view(2, success=False, stop_reason="max_runs", best_score=0.0),
+        _make_task_view(3, success=False, stop_reason="budget_exhausted", best_score=0.3),
+        _make_task_view(4, success=False, stop_reason="error", best_score=0.0, error="boom"),
+    ]
+    summary = _compute_summary(views, n_skipped=2)
+
+    assert summary["n_tasks"] == 4
+    assert summary["n_success"] == 1
+    # completed = done + max_runs + budget_exhausted (error excluded).
+    assert summary["n_completed"] == 3
+    assert summary["n_failed"] == 2
+    assert summary["n_error"] == 1
+    assert summary["n_budget_exhausted"] == 1
+    assert summary["n_skipped"] == 2
+    assert summary["asr"] == pytest.approx(1 / 3)
+    assert summary["max_primary_score"] == pytest.approx(1.0)
+    assert summary["mean_primary_score"] == pytest.approx((1.0 + 0.0 + 0.3 + 0.0) / 4)
 
 
-def test_no_read_only_component_for_all_read_write(tmp_path: Path) -> None:
-    """All read & write: read_only empty, filename carries no ``__ro_`` component."""
-    tmr = _build_minimal_tmr(frozenset({EXTERNAL_TAG}))
-    claim = write_threat_model_result(tmr, tmp_path)
-    assert claim == tmp_path / "external__m.json"
-    parsed = json.loads(claim.read_text())
-    assert parsed["scope"] == ["external"]
-    assert parsed["read_only"] == []
-    detail = json.loads(next((tmp_path / "external__m").glob("*.json")).read_text())
-    assert detail["read_only"] == []
+def test_compute_summary_asr_none_when_no_completed() -> None:
+    views = [_make_task_view(1, success=False, stop_reason="error", best_score=0.0)]
+    summary = _compute_summary(views, n_skipped=0)
+    assert summary["asr"] is None
+    assert summary["n_completed"] == 0
 
 
-def test_read_only_filename_differs_from_all_read_write(tmp_path: Path) -> None:
-    """read & write external vs read-only external: distinct filenames."""
-    tmr = _build_minimal_tmr(frozenset(), read_only=frozenset({EXTERNAL_TAG}))
-    claim = write_threat_model_result(tmr, tmp_path)
-    assert claim != tmp_path / "external__m.json"
-    parsed = json.loads(claim.read_text())
-    assert parsed["scope"] == []
-    assert parsed["read_only"] == ["external"]
+def test_compute_summary_empty() -> None:
+    summary = _compute_summary([], n_skipped=0)
+    assert summary["asr"] is None
+    assert summary["n_tasks"] == 0
+    assert summary["max_primary_score"] is None
+    assert summary["mean_primary_score"] is None
+    assert summary["total_llm_usage"] == {"calls": 0, "cost": 0}
+
+
+def test_compute_summary_totals_usage() -> None:
+    views = [
+        _make_task_view(1, success=True, stop_reason="done", best_score=1.0, calls=2, cost=0.1),
+        _make_task_view(2, success=True, stop_reason="done", best_score=1.0, calls=3, cost=0.2),
+    ]
+    summary = _compute_summary(views, n_skipped=0)
+    assert summary["total_llm_usage"]["calls"] == 5
+    assert summary["total_llm_usage"]["cost"] == pytest.approx(0.3)
 
 
 # ---------------------------------------------------------------------------
-# Dynamic per-task scope (offline one-shot writer)
+# (8) _atomic_write_json
 # ---------------------------------------------------------------------------
 
 
-def _dynamic_task_result(goal: str, scope: Scope) -> TaskResult:
-    """A TaskResult carrying its OWN per-task scope (the dynamic-mode shape:
-    the run-level ThreatModelResult.scope is empty, the truth is per task)."""
-    traj = Trajectory()
-    traj.emit(RunEndEvent(security_domain=next(iter(scope))))
-    primary = Score(value=0.5)
-    ev = EvaluationResult(success=False, primary_score=primary)
-    run = RunResult(trajectory=traj, evaluation=ev, llm_usage=LLMUsage())
-    return TaskResult(
-        task=StubTask(goal_text=goal),
-        runs=[run],
-        best_score=primary,
-        best_evaluation=ev,
-        success=False,
-        llm_usage=LLMUsage(),
-        stop_reason="done",
-        scope=scope,
-        read_only=frozenset(),
-    )
+def test_atomic_write_json_writes_valid_json_no_tmp(tmp_path: Path) -> None:
+    path = tmp_path / "out.json"
+    payload = {"a": 1, "b": ["x", "y"], "nested": {"k": True}}
+    _atomic_write_json(path, payload)
+    assert json.loads(path.read_text()) == payload
+    assert not (tmp_path / "out.json.tmp").exists()
+    assert list(tmp_path.glob("*.tmp")) == []
 
 
-def test_write_dynamic_threat_model_lays_out_by_label(tmp_path: Path) -> None:
-    """A hand-built dynamic ThreatModelResult (empty run-level scope, a
-    ``scope_label``, and TaskResults carrying differing per-task scopes) is
-    written offline: the layout is named by the label and each detail file
-    records its task's own resolved scope."""
-    tmr = ThreatModelResult(
-        scope=frozenset(),
-        read_only=frozenset(),
-        llm_config=LLMConfig(model="m", api_base="x", api_key="SECRET"),
-        task_results=[
-            _dynamic_task_result("ext", frozenset({EXTERNAL_TAG})),
-            _dynamic_task_result("int", frozenset({INTERNAL_TAG})),
-        ],
-        scope_label="mixed-bag",
-    )
-    claim = write_threat_model_result(tmr, tmp_path)
+def test_atomic_write_json_serializes_datetime(tmp_path: Path) -> None:
+    path = tmp_path / "dt.json"
+    dt = datetime(2026, 1, 1, tzinfo=UTC)
+    _atomic_write_json(path, {"when": dt})  # type: ignore[dict-item]
+    assert json.loads(path.read_text())["when"] == dt.isoformat()
 
-    # Layout named by the label, not by any concrete scope.
-    assert claim == tmp_path / "mixed-bag__m.json"
-    subfolder = tmp_path / "mixed-bag__m"
-    assert subfolder.is_dir()
 
-    parsed = json.loads(claim.read_text())
-    assert parsed["scope_label"] == "mixed-bag"
-    assert parsed["scope"] == []
-    assert parsed["read_only"] == []
+# ---------------------------------------------------------------------------
+# (9) resolve_results_root
+# ---------------------------------------------------------------------------
 
-    # Detail files (00001=ext, 00002=int) carry differing per-task scopes.
-    details = [json.loads(p.read_text()) for p in sorted(subfolder.glob("*.json"))]
-    assert {d["task"]["goal"]: d["scope"] for d in details} == {
-        "ext": ["external"],
-        "int": ["internal"],
-    }
+
+def test_resolve_results_root_explicit_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPERRED_RESULTS_DIR", "/env/dir")
+    assert resolve_results_root("/explicit") == Path("/explicit")
+
+
+def test_resolve_results_root_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPERRED_RESULTS_DIR", "/env/dir")
+    assert resolve_results_root(None) == Path("/env/dir")
+
+
+def test_resolve_results_root_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SUPERRED_RESULTS_DIR", raising=False)
+    assert resolve_results_root(None) == Path(DEFAULT_RESULTS_ROOT)
+
+
+# Reference imports so unused-tag lint stays quiet and tags are exercised.
+_TAGS = (EXTERNAL_TAG, INTERNAL_TAG, ROOT_TAG)
