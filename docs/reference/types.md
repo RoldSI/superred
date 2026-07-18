@@ -242,9 +242,9 @@ The `__repr__` masks the API key (shows first 4 chars + `...`, or `***` for shor
 
 ### LLMUsage (frozen)
 
-Cumulative LLM usage counters. Fields: `calls: int` (default 0), `cost: float` (default 0.0, USD computed via `litellm.completion_cost()`).
+LLM usage counters. Fields: `calls: int` (default 0), `cost: float` (default 0.0, USD computed via `litellm.completion_cost()`).
 
-Used in `RunResult.llm_usage` (cumulative snapshot after each run) and `TaskResult.llm_usage` (total for the task).
+Used in `RunResult.llm_usage` (cumulative snapshot after each run), `RunResult.run_usage_delta` (that run's own usage, so per-run cost is available without differencing cumulative snapshots), and `TaskResult.llm_usage` (total for the task). Summing `run_usage_delta` across a task equals the task total; summing the cumulative `llm_usage` over-counts.
 
 ### Scope-carrying result fields
 
@@ -254,6 +254,8 @@ The result types (defined in `core/controller.py`, fully documented in [the Cont
 - `TaskResult.read_only: Scope` (default `frozenset()`): the read-only scope enforced for **this** task. In static mode it equals the controller `read_only` for every task; with a `ScopeResolver` it is the per-task resolved read-only scope.
 - `ThreatModelResult.scope: Scope` / `read_only: Scope`: the run-level scopes in static mode. **In dynamic mode (a `ScopeResolver`) both are empty frozensets** and the run identity lives on `scope_label` and each `TaskResult.scope`.
 - `ThreatModelResult.scope_label: str | None` (default `None`): `None` in static mode; in dynamic mode it is the label passed to the controller.
+
+The same result types also carry timing and per-run bookkeeping (all defaulted, so reading existing fields is unaffected): `started_at` / `ended_at` (`datetime | None`) on `RunResult`, `TaskResult`, and `ThreatModelResult`; `RunResult.run_usage_delta` (this run's own `LLMUsage`); and the `RunResult` flags `evaluated` (the score came from the evaluator, not a synthetic error/budget zero), `errored`, and `done`. `ThreatModelResult.task_cost_cap_usd` records the attacker's per-task cap. See [the Controller docs](/reference/controller#result-types) for the full field list.
 
 ### BudgetExhaustedError (Exception)
 

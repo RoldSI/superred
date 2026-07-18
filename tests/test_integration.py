@@ -935,11 +935,13 @@ class TestPerTaskScopeEndToEnd:
         assert by_goal["flip-task-INTERNAL"].scope == frozenset({INTERNAL})
 
     async def test_persisted_detail_files_record_per_task_scope(self, tmp_path) -> None:
-        """With ``results_dir`` set, dynamic mode names the claim file/subfolder
-        by the (sanitized) ``scope_label``, and each per-task detail JSON records
-        THAT task's own resolved scope -- so the two detail files differ.
+        """With ``results_dir`` set (schema v4), dynamic mode writes a single
+        experiment directory named by the (sanitized) slug + identity hash; the
+        claim-level ``result.json`` carries the ``scope_label`` with empty
+        run-level scope/read_only, and each per-task ``task.json`` records THAT
+        task's own resolved scope -- so the two task files differ.
         """
-        import json
+        from superred.core.persistence import iter_task_dirs, load_result, load_task
 
         task_user = SecretExtractionTask(secret="PERSIST_USER")
         task_internal = SecretExtractionTask(secret="PERSIST_INTERNAL")
@@ -957,40 +959,39 @@ class TestPerTaskScopeEndToEnd:
             security_claim=SecurityClaim.from_tasks([task_user, task_internal]),
             llm_config=_LLM_CONFIG,
             max_runs_per_task=1,
+            persist=True,
+            report=False,
             results_dir=tmp_path,
         )
         await controller.run()
 
-        # The claim file/subfolder stem is the sanitized label + model, not a
-        # concrete scope (no run-level scope exists in dynamic mode).
-        claim_files = sorted(p.name for p in tmp_path.glob("*.json"))
-        assert len(claim_files) == 1
-        claim_name = claim_files[0]
-        assert claim_name.endswith("__test-model.json")
-        # The label is sanitized into the stem (no raw '/' or space).
-        assert "/" not in claim_name
-        assert " " not in claim_name
+        # Exactly one experiment directory under the results root; it is named
+        # by the slug (attacker/target/claim/model) + identity hash -- NOT by a
+        # concrete scope, and with no raw '/' or space carried in from the label.
+        exp_dirs = [d for d in tmp_path.iterdir() if d.is_dir()]
+        assert len(exp_dirs) == 1
+        exp_dir = exp_dirs[0]
+        assert "/" not in exp_dir.name
+        assert " " not in exp_dir.name
+        assert "__test-model-" in exp_dir.name
 
-        claim_payload = json.loads((tmp_path / claim_name).read_text())
-        # Claim-level: label carries identity; scope/read_only are empty arrays.
-        assert claim_payload["scope_label"] == "persist label/v1"
-        assert claim_payload["scope"] == []
-        assert claim_payload["read_only"] == []
-        assert claim_payload["version"] == 3
+        # Claim-level result.json: label carries identity; run-level
+        # scope/read_only are empty arrays (dynamic mode has no single scope).
+        result = load_result(exp_dir)
+        assert result["schema_version"] == 4
+        exp_block = result["experiment"]
+        assert exp_block["scope_label"] == "persist label/v1"
+        assert exp_block["scope"] == []
+        assert exp_block["read_only"] == []
 
-        subfolder = tmp_path / claim_name.removesuffix(".json")
-        assert subfolder.is_dir()
-        detail_files = sorted(subfolder.glob("*.json"))
-        assert len(detail_files) == 2
-
-        details_by_goal = {
-            json.loads(f.read_text())["task"]["goal"]: json.loads(f.read_text())
-            for f in detail_files
-        }
+        # One per-task detail directory per task, each with its own task.json.
+        task_dirs = iter_task_dirs(exp_dir)
+        assert len(task_dirs) == 2
+        details_by_goal = {load_task(td)["goal"]: load_task(td) for td in task_dirs}
         user_detail = details_by_goal[task_user.goal.description]
         internal_detail = details_by_goal[task_internal.goal.description]
 
-        # The two detail files record DIFFERENT scopes (per-task truth).
+        # The two task files record DIFFERENT scopes (per-task truth).
         assert user_detail["scope"] == ["user"]
         assert internal_detail["scope"] == ["internal"]
         assert user_detail["scope"] != internal_detail["scope"]

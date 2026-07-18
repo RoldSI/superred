@@ -279,8 +279,9 @@ Two things to get right:
 
 - **`scope_label` is required** whenever `scope` or `read_only` is a resolver (a
   non-empty string) and forbidden when both are fixed scopes. There is no single
-  scope to name the run by, so the label names it instead: it becomes the
-  persisted filename stem and `ThreatModelResult.scope_label`. Each
+  scope to name the run by, so the label names it instead: it feeds the
+  persisted experiment's measurement identity (its `{hash8}` folder suffix and
+  recorded parameters) and `ThreatModelResult.scope_label`. Each
   `TaskResult.scope` then records the scope that task actually ran under.
 - **Return the target's exported tag singletons**, not freshly built tags.
   Scope matching is by object identity, so import the tags from the target

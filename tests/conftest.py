@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
+from superred.core.controller import Controller
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
@@ -26,6 +28,29 @@ from superred.core.types.observable import ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
 from superred.core.types.trajectory import Trajectory
+
+# ---------------------------------------------------------------------------
+# Persistence / reporting test safety rail
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _persistence_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Force every Controller built under pytest to ``persist=False`` and
+    ``report=False`` unless the test opts in, and route any writes to
+    ``tmp_path``.  Central so a single missed call site can neither leak
+    sensitive trajectory content to ``./superred-results/`` nor race under
+    ``pytest -n auto`` (each worker gets its own ``tmp_path``)."""
+    original_init = Controller.__init__
+
+    def patched_init(self: Controller, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("persist", False)
+        kwargs.setdefault("report", False)
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(Controller, "__init__", patched_init)
+    monkeypatch.setenv("SUPERRED_RESULTS_DIR", str(tmp_path / "superred-results"))
+
 
 # ---------------------------------------------------------------------------
 # Security domain fixtures

@@ -7,8 +7,9 @@ permalink: /guide/running-evaluations
 # Running Evaluations
 
 The `Controller` wires a target, an attacker, and a claim together and runs one
-**threat model**. This page covers constructing it, what it returns, persistence,
-error handling, and how to sweep several threat models.
+**threat model**. This page covers constructing it, what it returns, the live
+progress output, the resumable results tree it writes, error handling, and how to
+sweep several threat models.
 
 ## One Controller is one threat model
 
@@ -41,7 +42,10 @@ controller = Controller(
     task_cost_cap_usd=5.00,                     # per-task attacker budget (USD); None = unlimited
     max_runs_per_task=100,                      # safety cap; None (the default) means 100
     include_feedback=True,                      # attach evaluation to RunEndEvent; default True
-    results_dir="results/run-1",                # optional: persist JSON
+    # --- output (new in 0.3.0) ---
+    persist=True,                               # write a results tree (default True; False = nothing)
+    results_dir=None,                           # results ROOT; None = SUPERRED_RESULTS_DIR or ./superred-results/
+    report="auto",                              # live dashboard on a TTY, plain lines otherwise; False = silent
 )
 
 result = await controller.run()                 # -> ThreatModelResult
@@ -57,7 +61,12 @@ result = await controller.run()                 # -> ThreatModelResult
 | `llm_config` | the attacker's model + budget, or omit for non-LLM attackers |
 | `max_runs_per_task` | per-task run cap (>= 1); `None` (default) means 100 |
 | `include_feedback` | whether the optimizer sees evaluation results; default `True` |
-| `results_dir` | where to write result JSON, or omit to write nothing |
+| `persist` | write a results tree; default `True`, pass `False` to write nothing |
+| `results_dir` | the results **root** (parent of the experiment folders); omit for `SUPERRED_RESULTS_DIR` or `./superred-results/` |
+| `overwrite` | force a full recompute of an existing (resumable) experiment; default `False` |
+| `report` | `"auto"`/`True` show live progress (dashboard on a TTY, plain lines otherwise), `False` is silent |
+| `reporter` | inject a custom `ProgressReporter` observer (wins over `report`) |
+| `attacker_label` / `target_label` / `claim_label` | short names for the experiment folder + dashboard |
 
 Two things people get wrong coming from older versions:
 
@@ -91,8 +100,30 @@ asyncio.run(main())
 For each task the Controller builds a fresh target and optimizer, configures the
 target, runs the optimizer loop until it signals `done` or hits `max_runs_per_task`,
 evaluates each run, then tears everything down. Tasks run concurrently up to
-`target_factory.concurrency`, but results come back in claim order. It prints a
-summary to stdout and returns a `ThreatModelResult`.
+`target_factory.concurrency`, but results come back in claim order. It returns a
+`ThreatModelResult`.
+
+### What you see when you run
+
+The Controller streams live progress the whole way through (it no longer prints a
+single block at the end):
+
+- On a real interactive terminal you get a **live dashboard**: a top bar with
+  overall progress (tasks done, attack-success rate, running count, cost,
+  elapsed), then one block per threat model showing its own identity
+  (attacker/target/claim/model/scope/budget) and metrics, with the tasks currently
+  running listed indented beneath it (each with its live run/score/cost). The
+  claim shows on that identity line too. A
+  final results view renders when the run ends.
+- On a non-TTY, in CI, under `NO_COLOR`, or when output is piped, it degrades
+  automatically to **plain lines**: a start banner, one line per task, and an
+  end summary (which mirrors the old end-of-run summary block).
+- Several Controllers run through `run_all` on a TTY share **one** dashboard,
+  one block each (so a sweep of differing threat models stays accurate: each
+  block carries its own identity). See "Sweeping multiple threat models" below.
+
+**Turning it off.** Pass `report=False` for silence, or inject your own observer
+with `reporter=` (a `ProgressReporter` from `superred.core.reporting`).
 
 ## Reading the result
 
@@ -130,17 +161,25 @@ normal finish).
 
 ```python
 for run in tr.runs:
-    run.trajectory     # the full Trajectory for this run
-    run.evaluation     # the EvaluationResult for this run
-    run.llm_usage      # cumulative attacker usage AFTER this run
+    run.trajectory       # the full Trajectory for this run
+    run.evaluation       # the EvaluationResult for this run
+    run.llm_usage        # cumulative attacker usage AFTER this run
+    run.run_usage_delta  # THIS run's own usage (calls, cost)
+    run.started_at       # wall-clock UTC bounds, or None
+    run.ended_at
+    run.evaluated        # True if the score came from the evaluator
+    run.errored          # True if the run raised mid-execution
+    run.done             # True if the optimizer signalled stop after this run
 
     for item in run.trajectory.snapshot():
-        ...            # inspect events/responses by isinstance
+        ...              # inspect events/responses by isinstance
     print(run.evaluation.primary_score.value, run.evaluation.success)
 ```
 
-`run.llm_usage` is **cumulative**: each run includes all prior usage, which is
-exactly what you want for budget-versus-performance curves.
+`run.llm_usage` is **cumulative** (each run includes all prior usage), which is
+exactly what you want for budget-versus-performance curves. For **per-run** cost,
+use `run.run_usage_delta`: summing deltas across a task equals the task total,
+whereas summing the cumulative snapshots over-counts.
 
 ### Inspecting a trajectory
 
@@ -181,31 +220,86 @@ separately: the task is skipped into `skipped_tasks`.
 This means `await controller.run()` rarely raises; instead you inspect
 `stop_reason`/`error` per task. Teardown always runs.
 
-## Persistence (`results_dir`)
+## What gets written (persistence is on by default)
 
-Pass `results_dir` and the Controller writes structured JSON:
+Persistence is **on by default**. Every run writes a self-describing directory
+tree under the results root:
 
 ```
-results/run-1/
-├── {scope}__{model}.json          # claim-level summary (the completion marker)
-└── {scope}__{model}/
-    ├── 00001__{goal}.json          # one self-contained file per task
-    └── ...
+{results_root}/
+├── experiments.json                    # cross-experiment index
+└── {slug}-{hash8}/                      # one experiment (one threat model)
+    ├── manifest.json                    # params + summary + tasks[]
+    ├── result.json                      # claim-level final metrics (completion marker)
+    ├── logs/diagnostics.log
+    └── tasks/
+        └── 00001__{goalslug}/           # latest result for this task
+            ├── task.json                # per-task result + metrics
+            ├── iterations.json          # per-run score/metric progression
+            └── trajectories/run_00001.json
 ```
 
-- Per-task detail files are written **incrementally**, as each task finishes, so
-  an interrupted run still leaves every completed task on disk.
-- The summary file is written last and acts as a completion marker: if you see
-  the subfolder but not the summary, the run was interrupted.
-- The summary holds aggregates (`n_tasks`, `n_success`, `n_skipped`,
-  `max/mean_primary_score`, `total_llm_usage`); each detail file holds the full
-  runs and trajectories plus `stop_reason` and the `error` traceback.
-- **Secrets**: `LLMConfig.api_key` and `api_base` are excluded. Trajectory
-  contents are **not** scrubbed, so keep credentials out of prompts, observables,
-  and config values.
-- **Collisions raise** `FileExistsError` rather than overwriting; use a fresh
-  subdirectory per run. Several Controllers pointed at the same `results_dir`
-  (the sweep pattern) each write their own scope/model-named pair safely.
+- **Where results go.** `results_dir` is the **root** (the parent of the
+  experiment folders), not a single file's directory. Omit it and results land
+  in `SUPERRED_RESULTS_DIR` if set, else `./superred-results/`. The folder name
+  `{slug}-{hash8}` is `attacker__target__claim__model` plus a hash of the full
+  measurement identity, so distinct threat models never collide and a sweep can
+  share one root (the `experiments.json` index ties them together).
+- **Incremental + interruptible.** Each task's directory is published the moment
+  it finishes, so an interrupted run leaves every completed task on disk.
+  `result.json` is written last as the completion marker; a `manifest.json`
+  without a `result.json` marks an interrupted run.
+- **Resume.** Re-running the same Controller resolves to the same folder and
+  **resumes**: tasks that already produced a valid measurement (`success`,
+  `failed`, `budget_exhausted`) are kept; only `error`/interrupted/missing tasks
+  recompute. Pass `overwrite=True` to force a full recompute. Reruns are
+  crash-safe: the prior state is snapshotted into `previous_NN/` before any
+  change.
+- **Metrics.** `result.json`'s `summary` carries the attack-success rate and a
+  stop-reason histogram: `asr`, `n_tasks`, `n_success`, `n_completed`,
+  `n_failed`, `n_error`, `n_budget_exhausted`, `n_skipped`,
+  `max/mean_primary_score`, `total_llm_usage`. Each `task.json` holds that task's
+  metrics and `error` traceback; `iterations.json` and the `trajectories/` files
+  hold the per-run detail.
+
+**Turning it off.** Pass `persist=False` to write nothing (the pre-0.3.0
+default). Combine with `report=False` for a completely quiet, non-writing run.
+
+**Reading results back.** Do not hand-parse the tree. `superred.core.persistence`
+exposes public readers:
+
+```python
+from superred.core.persistence import (
+    load_experiments_index, load_manifest, load_result,
+    iter_tasks, load_task, load_iterations, load_trajectory,
+)
+
+for row in load_experiments_index("superred-results")["experiments"]:
+    exp_dir = f"superred-results/{row['dir']}"
+    summary = load_result(exp_dir)["summary"]
+    print(row["slug"], summary["asr"], summary["n_success"])
+    for view in iter_tasks(exp_dir):        # scalar view per task
+        print(" ", view.status, view.best_score, view.goal)
+```
+
+> **Security caveat.** This is a red-teaming framework: persisted trajectories
+> contain jailbreaks, planted secrets, and exfiltrated content, and are **not**
+> scrubbed. `LLMConfig` writes `{model}` only (`api_key`/`api_base` are never
+> written), but treat the **whole results root as sensitive**, and keep
+> credentials out of prompts, observables, and config values (they flow verbatim
+> into the trajectory files). The default `./superred-results/` is gitignored.
+
+The framework also ships a generic static HTML dashboard (dropped into the tree
+on write) to browse the metrics, filter tasks by outcome, and drill into runs
+and trajectories. Open it with the bundled CLI, which serves the directory and
+opens your browser:
+
+```bash
+superred serve ./superred-results
+```
+
+(The page fetches the JSON in its directory, so a browser cannot read it from a
+`file://` URL; `superred serve` runs the tiny local server for you.)
 
 ## include_feedback: modelling a blind attacker
 
@@ -237,16 +331,36 @@ async def main():
             security_claim=claim,
             scope=scope,
             llm_config=attacker_cfg,
-            results_dir=f"results/{name}",
+            results_dir="results",     # ONE shared root; each scope lands in its own folder
         )
         result = await controller.run()
         succ = sum(1 for tr in result.task_results if tr.success)
         print(f"{name}: {succ}/{len(result.task_results)} succeeded")
 ```
 
-You can run the Controllers concurrently instead with
-`await asyncio.gather(*(c.run() for c in controllers))`, as long as each has its
-own `results_dir` (or none) and the target factory is safe to call many times.
+The two scopes have different measurement identities, so they land in **separate
+`{slug}-{hash8}` folders under the one root** (no collision), and the shared
+`experiments.json` indexes both.
+
+### In-script parallel sweep
+
+To run the threat models concurrently on **one** shared live dashboard, use
+`run_all`, the unified sweep entry point:
+
+```python
+from superred.core.controller import run_all
+
+controllers = [Controller(..., scope=scope) for scope in scopes.values()]
+results = await run_all(controllers, concurrency=2)  # <=2 at once; results in input order
+```
+
+`run_all` owns a single canvas for the whole sweep, so the threat models render
+as one clean view, one block each. A bare
+`await asyncio.gather(*(c.run() for c in controllers))` still runs and persists
+correctly, but each `run()` grabs the live dashboard independently, so under a
+concurrency cap the canvas can stop, re-arm, and mix with plain lines; prefer
+`run_all` for a shared live display. The target factory must be safe to call
+many times.
 
 ### One process per cell
 
@@ -306,7 +420,10 @@ async def main() -> None:
         llm_config=LLMConfig(model="gpt-4o", api_base=api_base, api_key=api_key),
         task_cost_cap_usd=5.0,
         include_feedback=True,
-        results_dir="results/crescendo-user_response",
+        results_dir="results",            # root; this run lands in its own folder inside it
+        attacker_label="crescendo",       # short names used in the folder + dashboard
+        target_label="chatbot",
+        claim_label="sorry-bench",
     )
 
     result = await controller.run()
