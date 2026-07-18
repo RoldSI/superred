@@ -34,7 +34,7 @@ import asyncio
 import json
 import logging
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,8 +54,11 @@ from superred.core.persistence import (
     resolve_results_root,
 )
 from superred.core.reporting import (
+    Dashboard,
     DiagnosticEvent,
     LoggingBridge,
+    NullReporter,
+    PlainReporter,
     ProgressReporter,
     RunCompleteEvent,
     TaskCompleteEvent,
@@ -65,6 +68,7 @@ from superred.core.reporting import (
     ThreatModelEndEvent,
     current_task,
     resolve_reporter,
+    should_use_plain,
 )
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
@@ -659,7 +663,14 @@ class Controller:
     # Main entry point
     # ------------------------------------------------------------------
 
-    async def run(self) -> ThreatModelResult:
+    @property
+    def label(self) -> str:
+        """This threat model's stable key: its results directory name
+        ``{attacker}__{target}__{claim}__{model}-{hash8}``.  Used as the lane
+        key in a shared dashboard and as the persistence directory stem."""
+        return self._build_meta(n_tasks=0).dirname()
+
+    async def run(self, *, reporter: ProgressReporter | None = None) -> ThreatModelResult:
         """Evaluate the security claim under this controller's threat model.
 
         Streams live progress to a reporter (a shared rich dashboard on a TTY,
@@ -675,7 +686,8 @@ class Controller:
         meta = self._build_meta(n_tasks=len(tasks))
         label = meta.dirname()
         ctx = self._build_context(meta)
-        reporter = resolve_reporter(label, report=self._report, reporter=self._reporter_arg)
+        if reporter is None:
+            reporter = resolve_reporter(label, report=self._report, reporter=self._reporter_arg)
         started_at = datetime.now(UTC)
         reporter.on_threat_model_start(ctx)
 
@@ -1329,3 +1341,63 @@ class Controller:
         )
 
         return evaluation, done
+
+
+async def run_all(
+    controllers: Sequence[Controller],
+    *,
+    concurrency: int | None = None,
+    report: bool | Literal["auto"] = "auto",
+) -> list[ThreatModelResult]:
+    """Run several threat models (Controllers) as one coordinated sweep.
+
+    One ``Controller`` is one threat model; this is the unified entry point for
+    running several of them together.  It owns a SINGLE live dashboard for the
+    whole sweep, so the threat models share one terminal canvas (one block
+    each) instead of each ``Controller.run()`` independently grabbing the
+    process-wide dashboard.  Under a concurrency cap the latter stops and
+    re-arms the canvas between waves, leaving a garbled mix of stacked canvases
+    and plain-reporter fallbacks; running through ``run_all`` keeps one clean
+    canvas from start to finish.
+
+    Args:
+        controllers: The threat models to run, one ``Controller`` each.  They
+            should have distinct identities (attacker/target/claim/model/scope),
+            which they already need for distinct result directories.
+        concurrency: Max threat models running at once (default: all of them).
+            Lower it to bound resource use; each admitted controller still runs
+            its own tasks up to its ``TargetFactory.concurrency``.
+        report: ``"auto"``/``True`` render a shared live dashboard on a TTY
+            (plain lines off a TTY); ``False`` is silent.  This one decision
+            applies to the whole sweep, overriding each controller's ``report``.
+
+    Returns:
+        Each controller's :class:`ThreatModelResult`, in input order.
+    """
+    controllers = list(controllers)
+    if not controllers:
+        return []
+    limit = len(controllers) if concurrency is None else max(1, concurrency)
+    semaphore = asyncio.Semaphore(limit)
+
+    dashboard: Dashboard | None = None
+    if report is not False and not should_use_plain():
+        dashboard = Dashboard()
+        dashboard.expect(len(controllers))
+
+    def reporter_for(controller: Controller) -> ProgressReporter:
+        if dashboard is not None:
+            return dashboard.reporter_for(controller.label)
+        if report is False:
+            return NullReporter()
+        return PlainReporter()
+
+    async def run_one(controller: Controller) -> ThreatModelResult:
+        async with semaphore:
+            return await controller.run(reporter=reporter_for(controller))
+
+    try:
+        return list(await asyncio.gather(*(run_one(c) for c in controllers)))
+    finally:
+        if dashboard is not None:
+            dashboard.close()

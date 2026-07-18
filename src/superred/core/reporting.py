@@ -527,6 +527,8 @@ class Dashboard:
         self._lanes: dict[str, _LaneState] = {}
         self._start_monotonic: float | None = None  # overall run start (first lane)
         self._active_lanes = 0
+        self._completed_lanes = 0
+        self._expected: int | None = None
         self._flush_scheduled = False
         self._canvas_ok = False
         self._started = False
@@ -539,6 +541,19 @@ class Dashboard:
     def reporter_for(self, label: str) -> ProgressReporter:
         """Mint a reporter bound to one lane (row) of this dashboard."""
         return _RichLane(self, label)
+
+    def expect(self, n: int) -> None:
+        """Coordinate a sweep of *n* lanes: keep the canvas alive until all *n*
+        have ended, rather than stopping the instant no lane is momentarily
+        active (which a capped sweep hits between waves).  Set by :func:`run_all`.
+        """
+        self._expected = n
+
+    def close(self) -> None:
+        """Paint the final frame and stop the canvas (idempotent).  A sweep
+        coordinator calls this to end the run even if an expected lane never
+        started."""
+        self._shutdown()
 
     def __enter__(self) -> Dashboard:
         return self
@@ -590,7 +605,12 @@ class Dashboard:
         if lane is not None:
             lane.end_ev = ev
         self._active_lanes -= 1
-        if self._active_lanes <= 0:
+        self._completed_lanes += 1
+        if self._expected is not None:
+            finished = self._completed_lanes >= self._expected
+        else:
+            finished = self._active_lanes <= 0
+        if finished:
             self._shutdown()
         else:
             self._request_refresh()

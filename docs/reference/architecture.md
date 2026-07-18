@@ -114,7 +114,8 @@ Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
    5. Return ThreatModelResult
 
 Sweeping multiple (scope, llm_config) combinations is the caller's job:
-construct one Controller per combination and await asyncio.gather() them.
+construct one Controller per combination and run them via run_all() (one shared
+live dashboard) or a bare asyncio.gather() (persists correctly; no shared canvas).
 ```
 
 ## asyncio Runtime

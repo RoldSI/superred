@@ -118,9 +118,9 @@ single block at the end):
 - On a non-TTY, in CI, under `NO_COLOR`, or when output is piped, it degrades
   automatically to **plain lines**: a start banner, one line per task, and an
   end summary (which mirrors the old end-of-run summary block).
-- Several Controllers run together with `asyncio.gather` on a TTY share **one**
-  dashboard, one block each (so a sweep of differing threat models stays
-  accurate: each block carries its own identity).
+- Several Controllers run through `run_all` on a TTY share **one** dashboard,
+  one block each (so a sweep of differing threat models stays accurate: each
+  block carries its own identity). See "Sweeping multiple threat models" below.
 
 **Turning it off.** Pass `report=False` for silence, or inject your own observer
 with `reporter=` (a `ProgressReporter` from `superred.core.reporting`).
@@ -340,10 +340,27 @@ async def main():
 
 The two scopes have different measurement identities, so they land in **separate
 `{slug}-{hash8}` folders under the one root** (no collision), and the shared
-`experiments.json` indexes both. You can run the Controllers concurrently instead
-with `await asyncio.gather(*(c.run() for c in controllers))`; on a TTY they share
-one live dashboard, one row each. The target factory must be safe to call many
-times.
+`experiments.json` indexes both.
+
+### In-script parallel sweep
+
+To run the threat models concurrently on **one** shared live dashboard, use
+`run_all`, the unified sweep entry point:
+
+```python
+from superred.core.controller import run_all
+
+controllers = [Controller(..., scope=scope) for scope in scopes.values()]
+results = await run_all(controllers, concurrency=2)  # <=2 at once; results in input order
+```
+
+`run_all` owns a single canvas for the whole sweep, so the threat models render
+as one clean view, one block each. A bare
+`await asyncio.gather(*(c.run() for c in controllers))` still runs and persists
+correctly, but each `run()` grabs the live dashboard independently, so under a
+concurrency cap the canvas can stop, re-arm, and mix with plain lines; prefer
+`run_all` for a shared live display. The target factory must be safe to call
+many times.
 
 ### One process per cell
 

@@ -6,7 +6,7 @@ permalink: /reference/controller
 
 # Controller
 
-The controller is the main orchestrator for red-teaming evaluations. One `Controller` instance evaluates one security claim against one threat model, a single `(scope, llm_config)` combination. Sweeping multiple threat models is the caller's job: instantiate one `Controller` per combination and run them sequentially or via `asyncio.gather`.
+The controller is the main orchestrator for red-teaming evaluations. One `Controller` instance evaluates one security claim against one threat model, a single `(scope, llm_config)` combination. Sweeping multiple threat models is the caller's job: instantiate one `Controller` per combination and run them sequentially, via `asyncio.gather`, or (to share one live dashboard) via `run_all`.
 
 ## Construction
 
@@ -97,19 +97,21 @@ singleton needs an idempotent teardown.
 
 The controller does not create an asyncio event loop, the caller provides it via `asyncio.run()` or an existing loop.
 
-Sweeping multiple threat models:
+Sweeping multiple threat models (one shared live dashboard via `run_all`):
 
 ```python
-import asyncio, itertools
+import itertools
+from superred.core.controller import run_all
 
-results = await asyncio.gather(*(
+controllers = [
     Controller(
         scope=s, llm_config=c,
         optimizer_factory=..., target_factory=target_factory,
         security_claim=claim,
-    ).run()
+    )
     for s, c in itertools.product(scopes, configs)
-))
+]
+results = await run_all(controllers, concurrency=4)  # <=4 threat models at once
 ```
 
 ## Run lifecycle
@@ -264,7 +266,7 @@ The controller does not print anything itself. It narrates the run through a **r
   - `SUPERRED_NO_DASHBOARD` forces plain output even on a TTY.
 - **`reporter: ProgressReporter | None = None`**. Inject your own observer (a custom sink, a metrics pipe, a test double). It wins over `report`. `ProgressReporter` is a `Protocol` in `superred.core.reporting`; every method is called on the asyncio loop thread and must not block or await.
 
-**Concurrent controllers share one dashboard.** When several controllers run together under `asyncio.gather` on a TTY, they render into a single shared live canvas, one row (lane) each, rather than fighting over the terminal. `rich` (`>=14,<15`) is a core dependency.
+**Concurrent controllers share one dashboard.** Run a sweep through `run_all` and the threat models render into a single shared live canvas, one row (lane) each, rather than fighting over the terminal. (A bare `asyncio.gather(*(c.run() ...))` runs and persists correctly but does not coordinate the live display: each `run()` grabs the process-global dashboard independently, so a capped sweep can stop, re-arm, and mix with plain output.) `run_all` owns one canvas for the whole sweep via `Dashboard.expect(n)`. `rich` (`>=14,<15`) is a core dependency.
 
 ## Persistence (schema v4)
 

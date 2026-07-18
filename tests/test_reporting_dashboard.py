@@ -252,6 +252,31 @@ def test_dashboard_identity_shows_budget_and_target_model_dot() -> None:
     assert "$0.66/task" in frame  # the per-task budget shows on the identity line
 
 
+def test_dashboard_expect_keeps_canvas_alive_across_zero_active() -> None:
+    # expect(n) makes a sweep of n lanes share ONE canvas: it stays alive across
+    # the moments no lane is active (which a capped sweep hits between waves),
+    # instead of stopping and forcing later lanes to a degraded plain reporter.
+    reporting._reset_for_tests()
+    console = Console(file=StringIO(), force_terminal=True, width=140, color_system=None)
+    dashboard = Dashboard(console=console, redirect=False)
+    dashboard.expect(2)
+
+    async def drive() -> None:
+        first = dashboard.reporter_for("a")
+        first.on_threat_model_start(_ctx("a"))
+        first.on_threat_model_end(_end(_ctx("a")))
+        # 1 of 2 expected done: active is 0 but the canvas must NOT tear down.
+        assert dashboard._stopped is False
+        assert dashboard._canvas_ok is True
+        second = dashboard.reporter_for("b")
+        second.on_threat_model_start(_ctx("b"))
+        assert dashboard._canvas_ok is True  # still the live canvas, not degraded
+        second.on_threat_model_end(_end(_ctx("b")))
+        assert dashboard._stopped is True  # both expected done -> final frame + stop
+
+    asyncio.run(drive())
+
+
 def test_dashboard_shows_active_tasks_under_each_lane() -> None:
     reporting._reset_for_tests()
     console = Console(file=StringIO(), force_terminal=True, width=140, color_system=None)
