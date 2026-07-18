@@ -772,10 +772,13 @@ class Dashboard:
         asr = f"{(lane.n_success / lane.n_completed):.0%}" if lane.n_completed else "–"
         fail = lane.n_completed - lane.n_success
         mark = "[green]✓[/]" if lane.end_ev is not None else "[cyan]▸[/]"
+        budget = (
+            "unlimited" if ctx.task_cost_cap_usd is None else f"${ctx.task_cost_cap_usd:g}/task"
+        )
         name = (
             f"{mark} [bold cyan]{escape(ctx.attacker)}[/] → [bold]{escape(ctx.target)}[/] "
-            f"[dim]{escape(ctx.model or 'no-LLM')} · {escape(ctx.scope_desc)} · "
-            f"{escape(ctx.claim)}[/]"
+            f"[dim]· {escape(ctx.claim)} · {escape(ctx.model or 'no-LLM')} · "
+            f"{escape(ctx.scope_desc)} · {budget}[/]"
         )
         return (
             name,

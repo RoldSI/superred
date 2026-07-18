@@ -111,7 +111,7 @@ single block at the end):
 - On a real interactive terminal you get a **live dashboard**: a top bar with
   overall progress (tasks done, attack-success rate, running count, cost,
   elapsed), then one block per threat model showing its own identity
-  (attacker/target/model/scope/claim/budget) and metrics, with the tasks currently
+  (attacker/target/claim/model/scope/budget) and metrics, with the tasks currently
   running listed indented beneath it (each with its live run/score/cost). The
   claim shows on that identity line too. A
   final results view renders when the run ends.

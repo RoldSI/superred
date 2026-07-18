@@ -235,6 +235,23 @@ def _render_to_str(dashboard: Dashboard) -> str:
     return cap.file.getvalue()
 
 
+def test_dashboard_identity_shows_budget_and_target_model_dot() -> None:
+    reporting._reset_for_tests()
+    console = Console(file=StringIO(), force_terminal=True, width=170, color_system=None)
+    dashboard = Dashboard(console=console, redirect=False)
+    captured: dict[str, str] = {}
+
+    async def drive() -> None:
+        lane = dashboard.reporter_for("tm")
+        lane.on_threat_model_start(_ctx(model="mdl", task_cost_cap_usd=0.66))
+        captured["frame"] = _render_to_str(dashboard)
+
+    asyncio.run(drive())
+    frame = captured["frame"]
+    assert "tgt · clm · mdl" in frame  # claim comes before model, dot-separated
+    assert "$0.66/task" in frame  # the per-task budget shows on the identity line
+
+
 def test_dashboard_shows_active_tasks_under_each_lane() -> None:
     reporting._reset_for_tests()
     console = Console(file=StringIO(), force_terminal=True, width=140, color_system=None)

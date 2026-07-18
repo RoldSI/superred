@@ -27,10 +27,9 @@ img{max-width:100%;}
 .site-header{position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:1px solid var(--line);}
 .header-inner{max-width:1220px;margin:0 auto;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
 .wm{display:flex;align-items:baseline;gap:12px;line-height:1;}
-.wordmark{position:relative;display:inline-block;white-space:nowrap;padding-right:1.9em;line-height:1;}
+.wordmark{position:relative;display:inline-block;white-space:nowrap;padding-right:2.375rem;line-height:1;}
 .wm-super{font-family:var(--font-logo-super);font-style:italic;font-weight:400;font-size:1.5rem;letter-spacing:-0.01em;color:var(--ink);text-shadow:-2px 2px 0 var(--brand-red);}
 .wm-red{position:absolute;right:0;bottom:-0.14em;font-family:var(--font-logo-red);font-weight:400;font-size:1.55rem;color:var(--brand-red-script);transform:rotate(-12deg);}
-.wm-sub{font-family:var(--font-serif);font-style:italic;color:var(--gray);font-size:16px;}
 .header-pill{font-family:var(--font-mono);font-size:12px;color:var(--gray-33);background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:6px 13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60vw;}
 
 #app{max-width:1220px;margin:0 auto;padding:8px 24px 90px;}
@@ -39,17 +38,13 @@ img{max-width:100%;}
 /* typography */
 .eyebrow{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gray);}
 h1.claim{font-size:34px;font-weight:500;margin:10px 0 0;line-height:1.12;}
-.subtitle{color:var(--gray-33);font-size:16px;margin-top:6px;font-style:italic;}
-.identity-row{display:flex;flex-wrap:wrap;gap:26px 30px;margin-top:22px;}
-.id-item{display:flex;flex-direction:column;gap:7px;}
-.id-item .val{font-family:var(--font-mono);font-size:13px;color:var(--ink);}
 .config-line{font-family:var(--font-mono);font-size:11px;color:var(--gray);margin-top:18px;}
 .chips{display:flex;gap:6px;flex-wrap:wrap;}
 .chip{font-family:var(--font-mono);font-size:11px;padding:2px 9px;border:1px solid var(--line);border-radius:999px;background:var(--paper-2);color:var(--gray-33);}
 
 /* metrics */
 .metrics{border:1px solid var(--line);border-radius:12px;padding:24px;}
-.metric-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:26px;}
+.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;}
 .metric{min-width:0;}
 .metric .eyebrow{margin-bottom:12px;}
 .metric-num{font-size:34px;font-weight:500;line-height:1;letter-spacing:-.01em;}
@@ -90,8 +85,10 @@ input.search:focus,select.sort:focus{outline:none;border-color:var(--gray);}
 .tblock:last-child{border-bottom:none;}
 .trow{display:grid;grid-template-columns:30px 40px 1fr 150px 176px 66px 150px;align-items:center;gap:0 8px;padding:14px 16px;cursor:pointer;}
 .trow:hover{background:var(--paper-2);}
-.caret{color:var(--gray);font-size:11px;transition:transform .15s ease;display:inline-block;}
+.caret{justify-self:center;width:0;height:0;border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:6px solid var(--gray);transition:transform .15s ease;}
 .tblock.open .caret{transform:rotate(90deg);}
+.tm-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 20px;font-size:18px;color:var(--ink);line-height:1.4;}
+.tm-line .tm-sep{color:var(--gray);}
 .c-idx{font-family:var(--font-mono);font-size:12px;color:var(--gray);}
 .c-goal{font-size:15px;padding-right:12px;overflow-wrap:anywhere;}
 .c-score{display:flex;align-items:center;gap:10px;}
@@ -100,8 +97,7 @@ input.search:focus,select.sort:focus{outline:none;border-color:var(--gray);}
 .c-runs{font-family:var(--font-mono);font-size:13px;text-align:right;justify-self:end;}
 .c-cost{text-align:right;justify-self:end;}
 .cost-amt{font-family:var(--font-mono);font-size:13px;}
-.cost-stop{font-family:var(--font-mono);font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;}
-.cost-stop.err{color:var(--ink);}
+.outcome-why{font-family:var(--font-mono);font-size:10px;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;margin-top:3px;}
 .badge{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:3px 10px;border-radius:999px;display:inline-block;white-space:nowrap;}
 .badge.breach{background:var(--ink);color:var(--paper);}
 .badge.held{border:1px solid var(--gray);color:var(--gray-33);}
@@ -154,16 +150,15 @@ input.search:focus,select.sort:focus{outline:none;border-color:var(--gray);}
 .skip-reason{color:var(--gray);font-size:13px;font-style:italic;}
 
 /* sweep */
-.ehead{display:grid;grid-template-columns:minmax(200px,1.7fr) 1fr 130px 90px 100px 110px;align-items:center;gap:0 12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--paper-2);font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--gray);}
+.ehead{display:grid;grid-template-columns:minmax(220px,1.7fr) 1fr 190px 120px;align-items:center;gap:0 12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--paper-2);font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--gray);}
 .ehead .e-cost{text-align:right;justify-self:end;font-size:10px;}
-.erow{display:grid;grid-template-columns:minmax(200px,1.7fr) 1fr 130px 90px 100px 110px;align-items:center;gap:0 12px;padding:15px 16px;border-bottom:1px solid var(--line);text-decoration:none;color:inherit;}
+.erow{display:grid;grid-template-columns:minmax(220px,1.7fr) 1fr 190px 120px;align-items:center;gap:0 12px;padding:15px 16px;border-bottom:1px solid var(--line);text-decoration:none;color:inherit;}
 .erow:last-of-type{border-bottom:none;}
 .erow:hover{background:var(--paper-2);}
 .e-title{font-size:15px;}
 .e-meta{font-family:var(--font-mono);font-size:11px;color:var(--gray);margin-top:3px;}
 .e-asr{display:flex;align-items:center;gap:10px;}
 .e-asr .bar{width:70px;flex:0 0 70px;margin:0;}
-.e-success{font-family:var(--font-mono);font-size:13px;}
 .e-cost{font-family:var(--font-mono);font-size:13px;text-align:right;justify-self:end;}
 
 /* notice */
@@ -300,7 +295,7 @@ function ctrlText(c){
   return String(c);
 }
 function stopLabel(sr){
-  var m = {done:"done", max_runs:"max runs", budget_exhausted:"budget", error:"error", skipped:"skipped"};
+  var m = {done:"completed", max_runs:"run cap reached", budget_exhausted:"budget cap reached", error:"error", skipped:"skipped"};
   return m[sr] || sr || "";
 }
 function outcomeKind(t){
@@ -322,45 +317,49 @@ function buildHeader(pillText){
   hd.textContent = "";
   var inner = h("div", {class:"header-inner"});
   var wm = h("div", {class:"wm"});
-  wm.innerHTML = '<span class="wordmark"><span class="wm-super">Super</span><span class="wm-red">Red</span></span><span class="wm-sub">results</span>';
+  wm.innerHTML = '<span class="wordmark"><span class="wm-super">Super</span><span class="wm-red">Red</span></span>';
   inner.appendChild(wm);
   inner.appendChild(h("div", {class:"header-pill", text: pillText}));
   hd.appendChild(inner);
 }
 
 /* ---------------------------------------------------------- experiment */
-function idItem(label, valNode){
-  return h("div", {class:"id-item"},
-    h("div", {class:"eyebrow", text: label}),
-    typeof valNode === "string" ? h("div", {class:"val", text: valNode}) : valNode);
-}
 function chipsEl(arr){
   var c = h("div", {class:"chips"});
   if (arr && arr.length){ arr.forEach(function(s){ c.appendChild(h("span", {class:"chip", text: String(s)})); }); }
   else c.appendChild(h("span", {class:"chip", text: "—"}));
   return c;
 }
+function tmLine(parts){
+  // One line, all threat-model components at equal weight, dot-separated with
+  // generous spacing (no single component is elevated to a title).
+  var el = h("div", {class:"tm-line"});
+  parts.forEach(function(p, i){
+    if (i) el.appendChild(h("span", {class:"tm-sep", text:"·"}));
+    el.appendChild(h("span", {class:"tm-part", text: p}));
+  });
+  return el;
+}
 function buildIdentity(exp, manifest, result){
   var sec = h("div", {class:"section identity"});
-  sec.appendChild(h("h1", {class:"claim", text: exp.claim || "Untitled claim"}));
-  sec.appendChild(h("div", {class:"subtitle", text: (exp.attacker || "attacker") + " → " + (exp.target || "target")}));
-  var row = h("div", {class:"identity-row"});
-  row.appendChild(idItem("attacker", exp.attacker || "—"));
-  row.appendChild(idItem("target", exp.target || "—"));
-  row.appendChild(idItem("scope", chipsEl(exp.scope)));
-  if (exp.read_only && exp.read_only.length) row.appendChild(idItem("read-only", chipsEl(exp.read_only)));
-  row.appendChild(idItem("attacker LLM", exp.model || "no LLM"));
-  row.appendChild(idItem("budget", exp.task_cost_cap_usd == null ? "unlimited" : ("$" + exp.task_cost_cap_usd + " / task")));
+  var scopeText = (exp.scope && exp.scope.length) ? exp.scope.join(" + ") : "(none)";
+  var budgetText = exp.task_cost_cap_usd == null ? "unlimited budget" : ("$" + exp.task_cost_cap_usd + " / task");
+  var parts = [
+    (exp.attacker || "attacker") + " → " + (exp.target || "target"),
+    exp.claim || "untitled claim",
+    exp.model || "no LLM",
+    scopeText,
+    budgetText,
+  ];
+  if (exp.read_only && exp.read_only.length) parts.push("read-only " + exp.read_only.join(" + "));
+  if (exp.include_feedback != null) parts.push("feedback " + (exp.include_feedback ? "on" : "off"));
+  sec.appendChild(tmLine(parts));
   var completedAt = (result && result.timing && result.timing.completed_at) || (manifest.timing && manifest.timing.completed_at);
-  var finished = manifest.status === "complete" ? (fmtTime(completedAt) || "complete") : "in progress";
-  row.appendChild(idItem("finished", finished));
-  sec.appendChild(row);
-  var cfg = [];
+  var cfg = [manifest.status === "complete" ? ("finished " + (fmtTime(completedAt) || "")) : "in progress"];
   if (exp.max_runs_per_task != null) cfg.push("max_runs=" + exp.max_runs_per_task);
   if (exp.concurrency != null) cfg.push("concurrency=" + exp.concurrency);
-  if (exp.include_feedback != null) cfg.push("feedback=" + (exp.include_feedback ? "on" : "off"));
   if (exp.scope_label) cfg.push("scope_label=" + exp.scope_label);
-  if (cfg.length) sec.appendChild(h("div", {class:"config-line", text: cfg.join("   ·   ")}));
+  sec.appendChild(h("div", {class:"config-line", text: cfg.join("   ·   ")}));
   return sec;
 }
 function metricCard(label, num, sub, barPct){
@@ -409,8 +408,6 @@ function buildMetrics(sm, tasks){
   var nc = sm.n_completed != null ? sm.n_completed : 0;
   var ns = sm.n_success != null ? sm.n_success : 0;
   grid.appendChild(metricCard("Attack success rate", fmtPct(asr), ns + " / " + nc + " tasks", asr == null ? 0 : asr * 100));
-  grid.appendChild(metricCard("Mean score", fmtScore(sm.mean_primary_score), "across tasks", sm.mean_primary_score == null ? 0 : sm.mean_primary_score * 100));
-  grid.appendChild(metricCard("Max score", fmtScore(sm.max_primary_score), "best task", sm.max_primary_score == null ? 0 : sm.max_primary_score * 100));
   var usage = sm.total_llm_usage || {};
   grid.appendChild(metricCard("Attacker cost", fmtUSD(usage.cost), (usage.calls != null ? usage.calls : 0) + " calls", null));
   grid.appendChild(metricCard("Skipped", String(sm.n_skipped != null ? sm.n_skipped : 0), "not applicable", null));
@@ -470,7 +467,7 @@ function setFilterCounts(){
 /* -------------------------------------------------------------- table */
 function buildTableHead(){
   var head = h("div", {class:"thead"});
-  var cols = [["", ""], ["#", "c-idx"], ["Task", "c-goal"], ["Outcome", "c-outcome"], ["Best score", "c-score"], ["Runs", "c-runs"], ["Attacker $", "c-cost"]];
+  var cols = [["", ""], ["#", "c-idx"], ["Task", "c-goal"], ["Outcome", "c-outcome"], ["Best score", "c-score"], ["Runs", "c-runs"], ["Attacker cost", "c-cost"]];
   cols.forEach(function(c){ head.appendChild(h("div", {class:"th " + c[1], text: c[0]})); });
   return head;
 }
@@ -485,17 +482,24 @@ function scoreCell(v){
 function costCell(task){
   var c = h("div", {class:"c-cost"});
   c.appendChild(h("div", {class:"cost-amt", text: fmtUSD(task.cost_usd)}));
-  var isErr = task.stop_reason === "error";
-  c.appendChild(h("div", {class:"cost-stop" + (isErr ? " err" : ""), text: stopLabel(task.stop_reason) + (isErr ? " ⚠" : "")}));
+  return c;
+}
+function outcomeCell(task){
+  // outcome badge + the termination reason (why the run loop ended) beneath it.
+  var c = h("div", {class:"c-outcome"});
+  c.appendChild(badge(task));
+  if (task.stop_reason && task.stop_reason !== "error"){
+    c.appendChild(h("div", {class:"outcome-why", text: stopLabel(task.stop_reason)}));
+  }
   return c;
 }
 function buildTaskRow(task){
   var block = h("div", {class:"tblock"});
   var row = h("div", {class:"trow"});
-  row.appendChild(h("div", {class:"caret", html:"&#9656;"}));
+  row.appendChild(h("div", {class:"caret"}));
   row.appendChild(h("div", {class:"c-idx", text: String(task.index).padStart(2, "0")}));
   row.appendChild(h("div", {class:"c-goal", text: task.goal || ""}));
-  row.appendChild(h("div", {class:"c-outcome"}, badge(task)));
+  row.appendChild(outcomeCell(task));
   row.appendChild(scoreCell(task.best_score));
   row.appendChild(h("div", {class:"c-runs", text: String(task.n_runs != null ? task.n_runs : 0)}));
   row.appendChild(costCell(task));
@@ -796,17 +800,16 @@ function buildExpRow(e){
   var row = h("a", {class:"erow", href: (e.dir || ".") + "/dashboard.html"});
   var main = h("div", {class:"e-main"});
   main.appendChild(h("div", {class:"e-title", text: (ex.attacker || "?") + " → " + (ex.target || "?")}));
-  main.appendChild(h("div", {class:"e-meta", text: (ex.claim || "?") + " · " + (ex.model || "no-llm")}));
+  var budgetText = ex.task_cost_cap_usd == null ? "unlimited budget" : ("$" + ex.task_cost_cap_usd + " / task");
+  main.appendChild(h("div", {class:"e-meta", text: (ex.claim || "?") + " · " + (ex.model || "no-llm") + " · " + budgetText}));
   row.appendChild(main);
   row.appendChild(h("div", {class:"e-scope"}, chipsEl(ex.scope)));
   var asr = sm.asr;
-  row.appendChild(h("div", {class:"e-asr"}, barEl(asr == null ? 0 : asr * 100), h("span", {class:"score-val", text: fmtPct(asr)})));
-  row.appendChild(h("div", {class:"e-success", text: (sm.n_success != null ? sm.n_success : 0) + " / " + (sm.n_completed != null ? sm.n_completed : 0)}));
+  var ns = sm.n_success != null ? sm.n_success : 0;
+  var nc = sm.n_completed != null ? sm.n_completed : 0;
+  row.appendChild(h("div", {class:"e-asr"}, barEl(asr == null ? 0 : asr * 100), h("span", {class:"score-val", text: fmtPct(asr) + " (" + ns + "/" + nc + ")"})));
   var usage = sm.total_llm_usage || {};
   row.appendChild(h("div", {class:"e-cost", text: fmtUSD(usage.cost)}));
-  var st = e.status || "?";
-  var stCls = st === "complete" ? "breach" : "held";
-  row.appendChild(h("div", {class:"e-status"}, h("span", {class:"badge " + stCls, text: String(st).replace(/_/g, " ")})));
   return row;
 }
 function renderSweep(idx){
@@ -826,7 +829,7 @@ function renderSweep(idx){
   }
   var table = h("div", {class:"table"});
   var head = h("div", {class:"ehead"});
-  [["Threat model",""], ["Scope",""], ["ASR",""], ["Success",""], ["Attacker $","e-cost"], ["Status",""]].forEach(function(c){
+  [["Threat model",""], ["Scope",""], ["ASR",""], ["Attacker cost","e-cost"]].forEach(function(c){
     head.appendChild(h("div", {class: c[1], text: c[0]}));
   });
   table.appendChild(head);
