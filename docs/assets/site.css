@@ -215,3 +215,27 @@ html { scroll-padding-top: calc(var(--header-h) + 1.5rem); }
   white-space: nowrap;
   border: 0;
 }
+
+/* ---- lightbox: click a figure to zoom it full-screen (docs + landing) ---- */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(1rem, 4vw, 3rem);
+  background: rgba(17, 17, 17, 0.82);
+  opacity: 0;
+  transition: opacity 160ms ease;
+  cursor: zoom-out;
+}
+.lightbox.open { opacity: 1; }
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) { .lightbox { transition: none; } }
