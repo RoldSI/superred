@@ -36,5 +36,5 @@
       url: /reference/security-claim
     - title: Core Types
       url: /reference/types
-    - title: Breaking Changes
-      url: /reference/breaking-changes
+    - title: Migration
+      url: /reference/migration
