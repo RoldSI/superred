@@ -43,7 +43,7 @@ Config and query are **intentionally distinct**:
 
 ## Execution
 
-- `run(emit, send_event)`, execute one run. Emit events via `emit(event)` (an `EventHandler = Callable[[Event], None]`, typically `emit(ObservableEvent(observable=..., content=...))`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object, only the emit function.
+- `run(emit, send_event)`, execute one run. Emit events via `emit(event)` (an `EventHandler = Callable[[Event], None]`, typically `emit(ObservableEvent(observable=..., content=...))`). Call `await send_event(event)` at controllable points and use the response. The target receives the emit function, not the full Trajectory object.
 - `reset_ephemeral_state()`, reset ephemeral (per-run) state after each evaluation, before the next run (clear the active conversation or last response, reset containers, etc.). Durable state (e.g. an accumulated memory bank) must survive this call; it is discarded only when a fresh `TargetFactory` instance is obtained between tasks. Must be implemented even if a no-op.
 - `teardown()`, release resources when all evaluation is done.
 
@@ -84,6 +84,15 @@ async def run(self, emit, send_event):
 - **Manual values at construction**: Keeps the Target ABC clean. No `manual_specs`/`set_manual` in the interface. The target validates its own constructor arguments.
 - **Config/query separation**: Different actors (task vs evaluator), different lifecycles (pre-run vs post-run), different security concerns.
 - **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format. The target interprets the text.
-- **Parameterized queries**: `QuerySpec` has `params: list[QueryParam]`. Simple getters have no params. Actions (e.g. "search the DB for X") declare params with names and descriptions.
+- **Parameterized queries**: `QuerySpec` has `params: list[QueryParam]`. Simple getters have no params. Actions (e.g. "search the DB for X") declare params with names and descriptions. For example:
+
+  ```python
+  QuerySpec(
+      name="search_db",
+      description="Search the database and return matching rows as text.",
+      params=[QueryParam(name="query", description="The search string.")],
+  )
+  # the evaluator calls it: target.query("search_db", query="secret")
+  ```
 - **`send_event` as callback**: Decouples the target from the optimizer. The same target works with different controller implementations.
 - **`reset_ephemeral_state` is required**: Even if a no-op, forces the implementor to think about inter-run state.
