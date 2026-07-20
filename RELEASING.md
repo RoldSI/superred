@@ -92,7 +92,8 @@ On GitHub: **Releases -> Draft a new release**.
 - **Choose a tag**: type `v<version>` (for example `v0.1.1`) and pick "Create new
   tag on publish". The leading `v` is expected; the workflow strips it.
 - **Target**: `main` (the commit that carries the matching `__version__`).
-- Write release notes, then click **Publish release**.
+- Write the release notes following [**Release notes format**](#release-notes-format)
+  below, then click **Publish release**.
 
 Publishing the release triggers `.github/workflows/release.yml`, which:
 
@@ -107,6 +108,76 @@ live at <https://pypi.org/project/superred/> and installable with:
 ```bash
 pip install superred
 ```
+
+---
+
+## Release notes format
+
+The text you write in the GitHub Release (its description, the "release notes")
+follows one shape for every release, so any release reads the same way. The order
+is deliberate: top-down, each section standing on its own before the next adds
+detail. Sections marked *(if any)* / *(as warranted)* are dropped when they would
+be empty, so a small patch release is just the summary, `Changes`, and `Install`.
+
+1. **One-sentence summary.** The opening line, no heading: what this release is,
+   so a reader who reads nothing else knows whether it matters to them.
+2. **Highlights.** 3 to 6 benefit-led bullets, the changes most users care about.
+   Curated, not exhaustive (the full list is the `Changes` section).
+3. **Breaking changes** *(if any)*. One entry per break: what changed and, on the
+   same entry, its one-line migration (or a link to that entry in
+   `docs/reference/breaking-changes.md`, never a re-paste of the guide). Omit the
+   whole section for a non-breaking release.
+4. **Changes.** The complete list, grouped under `Features`, `Fixes`, `Docs`,
+   `Internal`, and `Dependencies` (drop any group with no entries), each line
+   linking its PR. This is the exhaustive record; `Highlights` is its curated
+   subset.
+5. **Optional sections** *(as warranted)*. Add only those that apply, e.g.
+   `Deprecations`, `Security / sensitive output`, `Known issues`, `Upgrade notes`,
+   `Contributors`. Reach for one only when the release genuinely demands it.
+6. **Install.** Close with the pinned install line.
+
+Keep entries tight: highlight and breaking-change lines are one to three
+sentences each; the depth lives in the migration guide and the linked PRs.
+
+### Skeleton
+
+Copy this into the Release description and fill it in, deleting the sections that
+do not apply:
+
+````markdown
+<one sentence: what this release is>
+
+## Highlights
+- <headline change, benefit-led>
+- ...
+
+## Breaking changes        <!-- omit this section if there are none -->
+- **<what broke>.** <one-line migration, or link to its migration-guide entry>
+
+## Changes
+### Features
+- <change> (#123)
+### Fixes
+- <change> (#124)
+### Docs
+- <change> (#125)
+### Internal
+- <change> (#126)
+### Dependencies
+- <change> (#127)
+
+<!-- optional, only when the release warrants it:
+## Deprecations
+## Security / sensitive output
+## Known issues
+## Contributors
+-->
+
+---
+```bash
+pip install superred==<version>
+```
+````
 
 ---
 
