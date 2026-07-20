@@ -146,7 +146,7 @@ into per-task metrics, errors, and full run trajectories.
 
 Pass `report=False` to silence progress, and `persist=False` to skip writing the
 results tree. The persisted trajectories are unscrubbed attack content, so treat
-the results root as sensitive (it is gitignored by default).
+the results folder as sensitive.
 
 ## What happens when you run it
 

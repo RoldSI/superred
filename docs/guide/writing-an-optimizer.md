@@ -16,12 +16,12 @@ that one attack strategy can be measured across many systems.
 You subclass `superred.core.interfaces.optimizer.Optimizer` and implement two
 methods:
 
-- **`initialize(goal, controllables, observables, llm_client)`** - called once
+- **`initialize(goal, controllables, observables, llm_client)`**: called once
   before the first run. You are told the goal, the injection points and
   observables you are allowed to use (already scope-filtered), and an LLM
   client. **Call `await super().initialize(...)`** so the base class stores the
   client and `self.llm` works.
-- **`on_event(event) -> EventResponse`** - called for each event. This is a
+- **`on_event(event) -> EventResponse`**: called for each event. This is a
   small state machine: branch on the event type and return the matching
   response.
 

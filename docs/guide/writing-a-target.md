@@ -200,8 +200,20 @@ A `QuerySpec` carries a `name` and a `description`; a `ConfigSpec` additionally
 carries a `security_domain` (config slots are tagged just like controllables).
 **The description is the contract**: values are always plain text, and the
 description tells the task author what format to send and what they will get
-back. A `QuerySpec` may also declare `params` for queries that take arguments
-(e.g. `read_file(path=...)`).
+back. A `QuerySpec` may also declare `params` for queries that take arguments.
+The template's `last_response` query is a plain getter; a parameterized query
+looks like this:
+
+```python
+from superred.core.types.state import QueryParam, QuerySpec
+
+QuerySpec(
+    name="read_file",
+    description="Return the contents of a file the agent wrote during the run.",
+    params=[QueryParam(name="path", description="Absolute path of the file to read.")],
+)
+# The evaluator then calls: target.query("read_file", path="/tmp/output.txt")
+```
 
 ### Controllables: the attack surface
 
@@ -365,12 +377,12 @@ subject of [Security Domains](/guide/security-domains).
 
 ## Worked examples in the repository
 
-- `superred-modules/targets/minimal_llm_chat` - the template above.
-- `superred-modules/targets/chatbot` - a production chatbot target: single- or
+- `superred-modules/targets/minimal_llm_chat`: the template above.
+- `superred-modules/targets/chatbot`: a production chatbot target: single- or
   multi-turn, with a two-tree domain forest that separates "knows the model
   name" from "can override the system prompt" from "can rewrite the response".
   Its module docstring is a good model for documenting your own boundaries.
-- `superred-modules/targets/agentdojo` - a tool-calling agent target with a
+- `superred-modules/targets/agentdojo`: a tool-calling agent target with a
   three-tree forest, including a 2x2 grid that classifies every tool's data by
   who authored it and who stores it. A good study in modelling a complex
   system's real trust structure.

@@ -8,7 +8,7 @@ permalink: /guide/using-modules
 
 Provided modules are ordinary Python packages. To use one: `pip install` it,
 import its class or factory, and pass it to the [Controller](/reference/controller).
-Every module in the [catalogue](/modules) links here. The pattern is the same
+The pattern is the same
 for all three kinds, shown below.
 
 ## Using an optimizer
@@ -30,8 +30,17 @@ controller = Controller(
 ```
 
 Any options an attack accepts (number of streams, iterations, and so on) are
-passed at construction, inside the lambda. The controller never shares an
-optimizer between tasks.
+passed at construction, inside the lambda. For example, PAIR takes its stream
+and iteration counts as constructor arguments:
+
+```python
+controller = Controller(
+    optimizer_factory=lambda: PAIROptimizer(n_streams=3, n_iterations=5),
+    ...
+)
+```
+
+The controller never shares an optimizer between tasks.
 
 ## Using a target
 

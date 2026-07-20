@@ -46,11 +46,11 @@ user     = SecurityDomainTag("user", parent=external)
 api      = SecurityDomainTag("api", parent=external)
 domain   = SecurityDomain([system, external, user, api])   # validates the forest
 
-system.includes(user)     # True  - ancestor includes descendant
+system.includes(user)     # True: ancestor includes descendant
 external.includes(api)    # True
-external.includes(system) # False - descendant does not include ancestor
+external.includes(system) # False: descendant does not include ancestor
 external.includes(user)   # True
-user.includes(user)       # True  - a tag includes itself
+user.includes(user)       # True: a tag includes itself
 ```
 
 `scope_includes(scope, tag)` is `True` when **any** tag in the scope includes
@@ -179,12 +179,12 @@ USER_TAG                 = SecurityDomainTag("user")   # independent root
 
 The scopes this enables read like a catalogue of attackers:
 
-- `{user}` - a blind user: can send messages and see responses, nothing else.
-- `{user, response_readable}` - a user who can also read responses out of band.
-- `{user, model_identity}` - a user who knows which model they are attacking.
-- `{system_prompt_readable, user}` - can see the system prompt but not change it.
-- `{system_prompt, user}` - can override the prompt and send messages.
-- `{model, user}` - can rewrite the model's responses (a compromised-output
+- `{user}`: a blind user who can send messages and see responses, nothing else.
+- `{user, response_readable}`: a user who can also read responses out of band.
+- `{user, model_identity}`: a user who knows which model they are attacking.
+- `{system_prompt_readable, user}`: can see the system prompt but not change it.
+- `{system_prompt, user}`: can override the prompt and send messages.
+- `{model, user}`: can rewrite the model's responses (a compromised-output
   threat) and send messages.
 
 Each is a precise, separately-runnable threat model, and they exist *because* the
