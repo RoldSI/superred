@@ -116,8 +116,15 @@ import asyncio
 result = asyncio.run(controller.run())
 ```
 
-On an interactive terminal you get a live dashboard; when the output is piped or
-captured (as here) it degrades to plain lines:
+On an interactive terminal you get a live dashboard that updates as the run
+proceeds:
+
+<figure class="doc-figure">
+  <img src="/assets/img/run-live-terminal.png" alt="superred's live terminal dashboard during a run: a header line with task count, attack success rate, running count and attacker spend, above a table of threat models and tasks with progress, ASR, score, outcome counts and cost.">
+  <figcaption>The live terminal dashboard, updating as the run proceeds: each threat model and its tasks, with progress, attack success rate, score, and attacker spend.</figcaption>
+</figure>
+
+When the output is piped or captured (as here) it degrades to plain lines:
 
 ```text
 ================================================================
@@ -132,6 +139,18 @@ Threat model: scope=[user_input] model=(no LLM)
   Attacker LLM: 0 calls, $0.000000  (0.0s)
 ================================================================
 ```
+
+Once a run has finished, point `superred serve` at its results directory to
+browse the same summary as an interactive web report:
+
+```bash
+superred serve ./superred-results
+```
+
+<figure class="doc-figure">
+  <img src="/assets/img/results-web-report.png" alt="superred web report: attack success rate 100 percent over one task, attacker cost $0.00, a run-outcomes bar, and a per-task table showing one succeeded task.">
+  <figcaption>The web report served from a results directory: attack success rate, attacker cost, run outcomes, and a per-task table you can expand to open each run's trajectory.</figcaption>
+</figure>
 
 Pass `report=False` to silence progress, and `persist=False` to skip writing the
 results tree. The persisted trajectories are unscrubbed attack content, so treat
