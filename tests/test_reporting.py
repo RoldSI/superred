@@ -121,9 +121,8 @@ async def test_lifecycle_sequence_success_and_skip() -> None:
         target_factory=TargetFactory(create=StubTarget),
         security_claim=SecurityClaim.from_tasks([StubTask(goal_text="alpha"), NotApplicableTask()]),
         scope=EXTERNAL_SCOPE,
-        reporter=reporter,
     )
-    await controller.run()
+    await controller.run(reporter=reporter)
 
     names = reporter.names()
     # Exactly one start (first) and one end (last).
@@ -174,9 +173,8 @@ async def test_lifecycle_ordering_within_task() -> None:
         target_factory=TargetFactory.singleton(StubTarget()),
         security_claim=SecurityClaim.from_tasks([StubTask(goal_text="solo")]),
         scope=EXTERNAL_SCOPE,
-        reporter=reporter,
     )
-    await controller.run()
+    await controller.run(reporter=reporter)
 
     names = reporter.names()
     assert names == [
@@ -197,9 +195,8 @@ async def test_lifecycle_error_stop_reason() -> None:
         security_claim=SecurityClaim.from_tasks([StubTask(goal_text="boom")]),
         scope=EXTERNAL_SCOPE,
         max_runs_per_task=1,
-        reporter=reporter,
     )
-    await controller.run()
+    await controller.run(reporter=reporter)
 
     run = reporter.events("run_complete")[0]
     assert run.errored is True

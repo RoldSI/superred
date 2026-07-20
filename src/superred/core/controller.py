@@ -559,7 +559,6 @@ class Controller:
         scope_label: str | None = None,
         persist: bool = True,
         overwrite: bool = False,
-        reporter: ProgressReporter | None = None,
         report: bool | Literal["auto"] = "auto",
         attacker_label: str | None = None,
         target_label: str | None = None,
@@ -624,7 +623,6 @@ class Controller:
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
         self._persist = persist
         self._overwrite = overwrite
-        self._reporter_arg = reporter
         self._report: bool | Literal["auto"] = report
         self._attacker_label = attacker_label
         self._target_label = target_label
@@ -696,7 +694,7 @@ class Controller:
         label = meta.dirname()
         ctx = self._build_context(meta)
         if reporter is None:
-            reporter = resolve_reporter(label, report=self._report, reporter=self._reporter_arg)
+            reporter = resolve_reporter(label, report=self._report)
         started_at = datetime.now(UTC)
         reporter.on_threat_model_start(ctx)
 

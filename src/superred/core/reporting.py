@@ -935,19 +935,15 @@ def resolve_reporter(
     label: str,
     *,
     report: bool | Literal["auto"] = "auto",
-    reporter: ProgressReporter | None = None,
     stream: TextIO | None = None,
 ) -> ProgressReporter:
     """Resolve the reporter for a Controller.
 
-    * an explicit *reporter* wins;
     * ``report=False`` disables reporting (:class:`NullReporter`);
     * otherwise reporting is on: a live :class:`Dashboard` lane on a real
       terminal, or a :class:`PlainReporter` when the stream is not a TTY / the
       environment forces plain output.
     """
-    if reporter is not None:
-        return reporter
     if report is False:
         return NullReporter()
     if should_use_plain(stream):

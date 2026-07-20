@@ -22,7 +22,7 @@ calls at each lifecycle point (threat-model start, task start, each run, task
 complete/skipped, diagnostics, threat-model end). The Controller renders nothing
 itself.
 
-Two new constructor arguments drive it:
+A new constructor argument drives it:
 
 - **`report: bool | Literal["auto"] = "auto"`**. `True`/`"auto"` show progress;
   `False` is silent. On a real interactive terminal, progress is a colored live
@@ -30,8 +30,6 @@ Two new constructor arguments drive it:
   output it degrades automatically to plain lines. The plain start banner and
   end summary reproduce the content of the old `_print_summary`, so nothing is
   lost when the canvas is unavailable.
-- **`reporter: ProgressReporter | None = None`**. Inject your own observer (for
-  a custom sink, a test double, or a metrics pipe); it wins over `report`.
 
 Multiple Controllers run concurrently through `asyncio.gather` share **one**
 dashboard, one row each. `rich` (`>=14,<15`) is now a core dependency, pulled in
