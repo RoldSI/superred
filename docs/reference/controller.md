@@ -41,12 +41,11 @@ controller = Controller(
     task_cost_cap_usd=5.00,                   # per-task attacker budget (USD); None = unlimited
     max_runs_per_task=100,                    # safety limit, default 100
     include_feedback=True,                    # populate RunEndEvent.evaluation (default True)
-    # --- output (new in 0.3.0) ---
+    # --- output ---
     persist=True,                             # write a results tree (default True)
-    results_dir=None,                         # results ROOT; None = SUPERRED_RESULTS_DIR or ./superred-results/
+    results_dir=None,                         # results folder; None = SUPERRED_RESULTS_DIR or ./superred-results/
     overwrite=False,                          # True re-runs a resumable experiment from scratch
     report="auto",                            # live dashboard on a TTY, plain lines otherwise; False = silent
-    reporter=None,                            # inject a custom ProgressReporter (wins over report)
     attacker_label="my-optimizer",            # short names for the experiment folder + dashboard
     target_label="my-target",
     claim_label="my-claim",
@@ -137,7 +136,7 @@ For each task:
    - On exception inside the run: the partial trajectory is preserved as a final `RunResult` with a zero-score evaluation; the formatted exception lands on `TaskResult.error`; `stop_reason = "error"`; loop ends.
 8. Close channel, await optimizer task, `optimizer.teardown()`. Final `target.reset_ephemeral_state()` (in `finally`) followed by `target.teardown()`; the per-task target instance is then discarded.
 
-Throughout the run the controller streams live progress to a **reporter** (a shared live dashboard on an interactive terminal, plain lines otherwise; see [Live progress reporting](#live-progress-reporting)). Unless `persist=False`, each task's directory is published to disk the moment it finishes, so an interrupted run leaves every completed task on disk. Re-running the same experiment resumes: tasks that already produced a valid measurement are kept, only errored or missing tasks recompute (see [Resume](#resume-re-running-the-same-experiment)). After all tasks finish, `result.json` is written as a completion marker, a final results view is rendered, and the controller returns the `ThreatModelResult`.
+Throughout the run the controller streams live progress (a shared live dashboard on an interactive terminal, plain lines otherwise; see [Live progress reporting](#live-progress-reporting)). Unless `persist=False`, each task's directory is published to disk the moment it finishes, so an interrupted run leaves every completed task on disk. Re-running the same experiment resumes: tasks that already produced a valid measurement are kept, only errored or missing tasks recompute (see [Resume](#resume-re-running-the-same-experiment)). After all tasks finish, `result.json` is written as a completion marker, a final results view is rendered, and the controller returns the `ThreatModelResult`.
 
 ### Internal structure
 
@@ -235,7 +234,7 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 - **Constrained client**: The `LLMClient` locks the model, API base, and API key. The optimizer cannot override them.
 - **Cost-based budget enforcement**: Pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches the client's cost cap (`task_cost_cap_usd` for the attacker). Cost is computed per call via `litellm.completion_cost()`, which uses the model's pricing to convert token usage to USD.
 - **Usage tracking**: Each `RunResult` includes a cumulative `llm_usage` snapshot (calls, cost) plus a `run_usage_delta` (that run's own spend). Each `TaskResult` includes the total `llm_usage`. This enables both per-run cost and budget-vs-performance analysis across runs.
-- **Summary output**: The live progress reporter and the persisted `summary` include the attack-success rate, a stop-reason histogram, and total call counts and cost (see [Live progress reporting](#live-progress-reporting)).
+- **Summary output**: The live progress display and the persisted `summary` include the attack-success rate, a stop-reason histogram, and total call counts and cost (see [Live progress reporting](#live-progress-reporting)).
 
 ## Design decisions
 
@@ -258,13 +257,12 @@ The controller mediates LLM access for the optimizer. This is part of the threat
 
 ## Live progress reporting
 
-The controller does not print anything itself. It narrates the run through a **reporter**, an observer object it calls at each lifecycle point (threat-model start, task start, each run, task complete, task skipped, diagnostics, threat-model end). Two constructor arguments choose the reporter:
+The controller streams live progress at each lifecycle point (threat-model start, task start, each run, task complete, task skipped, diagnostics, threat-model end). One constructor argument (`report`) controls it:
 
 - **`report: bool | Literal["auto"] = "auto"`**. `True`/`"auto"` show progress; `False` is silent. What "show" means degrades automatically to the terminal:
   - On a real interactive terminal you get a **live dashboard** (a `rich` canvas): a top bar with overall progress (tasks done, attack-success rate, running count, cost, elapsed), then one block per threat model carrying its own identity (attacker/target/claim/model/scope/budget) and metrics, with the currently-running tasks listed indented beneath it (each with a live run/score/cost). A final results view renders when the run ends.
-  - On a non-TTY, in CI (`CI` set), under `NO_COLOR`, on a dumb terminal, or when output is piped, it falls back to **plain line output**: a start banner, one line per task completion, and an end summary. The plain banner and summary reproduce the content of the old `_print_summary`, so nothing is lost.
+  - On a non-TTY, in CI (`CI` set), under `NO_COLOR`, on a dumb terminal, or when output is piped, it falls back to **plain line output**: a start banner, one line per task completion, and an end summary.
   - `SUPERRED_NO_DASHBOARD` forces plain output even on a TTY.
-- **`reporter: ProgressReporter | None = None`**. Inject your own observer (a custom sink, a metrics pipe, a test double). It wins over `report`. `ProgressReporter` is a `Protocol` in `superred.core.reporting`; every method is called on the asyncio loop thread and must not block or await.
 
 **Concurrent controllers share one dashboard.** Run a sweep through `run_all` and the threat models render into a single shared live canvas, one row (lane) each, rather than fighting over the terminal. (A bare `asyncio.gather(*(c.run() ...))` runs and persists correctly but does not coordinate the live display: each `run()` grabs the process-global dashboard independently, so a capped sweep can stop, re-arm, and mix with plain output.) `run_all` owns one canvas for the whole sweep via `Dashboard.expect(n)`. `rich` (`>=14,<15`) is a core dependency.
 
@@ -273,7 +271,7 @@ The controller does not print anything itself. It narrates the run through a **r
 Persistence is **on by default** (`persist=True`). Set `persist=False` to write nothing. Each run lands in one self-describing directory tree that the [reader API](#reading-results-back), the [resume engine](#resume-re-running-the-same-experiment), and a static results website can consume without globbing.
 
 ```
-{results_root}/
+{results_folder}/
 ├── experiments.json                      ← cross-experiment index (sweep landing)
 └── {slug}-{hash8}/                        ← one experiment (one threat model)
     ├── manifest.json                      ← index: params + summary + tasks[]
@@ -289,7 +287,7 @@ Persistence is **on by default** (`persist=True`). Set `persist=False` to write 
         result.json  tasks/...
 ```
 
-- **Results root**: `results_dir` is the **root** (the parent of the experiment folders), not a single file's directory. When omitted it resolves to the `SUPERRED_RESULTS_DIR` environment variable, else `./superred-results/`. Many controllers in a sweep share **one** root, each landing in its own `{slug}-{hash8}` folder, and the shared `experiments.json` indexes them all.
+- **Results folder**: `results_dir` is the folder results are written to. When omitted it resolves to the `SUPERRED_RESULTS_DIR` environment variable, else `./superred-results/`. Many controllers in a sweep share **one** folder, each landing in its own `{slug}-{hash8}` subfolder, and the shared `experiments.json` indexes them all.
 - **Experiment folder name**: `{slug}-{hash8}`. `{slug}` is a short human label `{attacker}__{target}__{claim}__{model}` (segments sanitized and truncated; it does **not** list scope tags). `{hash8}` is 8 hex of a sha256 over the **measurement identity** (attacker, target, claim, model, scope, read_only, budget, max_runs, feedback), so two distinct threat models never collide and a rerun of identical parameters resolves to the same folder (and resumes). The schema version is deliberately **excluded** from the identity, so a framework upgrade still resumes a prior run. The slug names come from `attacker_label` / `target_label` / `claim_label`, each falling back to a factory/class name, else a generic default. When `llm_config` is `None`, the model segment is `no-llm`.
 - **`result.json`** (claim-level, the completion marker, written last): `schema_version` (`4`), an `experiment` block (the identity + display parameters), `timing` (`started_at`, `completed_at`), and a `summary` block: `asr`, `n_tasks`, `n_success`, `n_completed`, `n_failed`, `n_error`, `n_budget_exhausted`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`. `asr = n_success / n_completed` where `n_completed = done + max_runs + budget_exhausted` (errored and skipped tasks are excluded from the denominator). No trajectories at this level.
 - **`manifest.json`**: the same `experiment` block and `summary`, a `status` (`in_progress` / `complete`), and a `tasks[]` array of scalar per-task entries (index, goal, `goal_hash`, `dir`, status, success, best score, stop reason, run count, cost, timing). It is rewritten as tasks land, so it is always a current index of what is on disk.
@@ -311,7 +309,7 @@ Because the folder name is the measurement identity, re-running the **same** con
 
 ### Security: persisted content is sensitive
 
-**This is a red-teaming framework. Persisted trajectories contain jailbreaks, planted secrets, and exfiltrated content, and they are NOT scrubbed.** `LLMConfig` serializes `{model}` only (`api_key` and `api_base` are never written), but that is the only redaction. Treat the whole results root as **sensitive**: it holds working attacks and whatever the target leaked under them. Keep credentials out of prompts, observable payloads, and config values, since those flow verbatim into the trajectory files. The default root (`./superred-results/`) is gitignored.
+**This is a red-teaming framework. Persisted trajectories contain jailbreaks, planted secrets, and exfiltrated content, and they are NOT scrubbed.** `LLMConfig` serializes `{model}` only (`api_key` and `api_base` are never written), but that is the only redaction. Treat the whole results folder as **sensitive**: it holds working attacks and whatever the target leaked under them. Keep credentials out of prompts, observable payloads, and config values, since those flow verbatim into the trajectory files.
 
 ### Reading results back
 
@@ -331,7 +329,7 @@ from superred.core.persistence import (
 
 ### Results website
 
-The framework ships a single self-contained static HTML dashboard (`dashboard.html`) for the results tree. Point it at (or serve) a results root and it reads the JSON files, shows the metrics, filters tasks by outcome (success / failure / error), and drills into each task's runs and trajectories. It is generic and needs no build step; its internals are out of scope here.
+The framework ships a single self-contained static HTML dashboard (`dashboard.html`) for the results tree. Point it at (or serve) a results folder and it reads the JSON files, shows the metrics, filters tasks by outcome (success / failure / error), and drills into each task's runs and trajectories. It is generic and needs no build step; its internals are out of scope here.
 
 ## Middleware (how filtering is implemented)
 

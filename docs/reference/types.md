@@ -18,7 +18,7 @@ permalink: /reference/types
 
 ## Goal (`goal.py`)
 
-Frozen dataclass. Currently just `description: str`. Exists as a dedicated type (rather than a raw string) so it can be extended later with structured goal representations.
+Frozen dataclass. Currently just `description: str`. Exists as a dedicated type (rather than a raw string) so it can be extended later with structured goal representations. For example: `Goal(description="Make the model reveal the planted secret")`.
 
 ## State types (`state.py`)
 
@@ -26,11 +26,20 @@ Two spec types for target configuration and querying:
 
 ### ConfigSpec (frozen)
 
-Pre-run configuration slot: `name`, `security_domain: SecurityDomainTag`, `description`. Used by tasks to set up initial state on the target via `target.set_config()`. The description documents the accepted format, that is the contract between task and target.
+Pre-run configuration slot: `name`, `security_domain: SecurityDomainTag`, `description`. Used by tasks to set up initial state on the target via `target.set_config()`. The description documents the accepted format, that is the contract between task and target. For example: `ConfigSpec(name="system_prompt", security_domain=SYSTEM_TAG, description="System prompt for the LLM.")`.
 
 ### QuerySpec (frozen)
 
-Post-run interaction: `name`, `description`, `params: list[QueryParam]`. Used by the evaluator to query ground-truth state or perform actions after a run via `target.query()`. Params are empty for simple getters.
+Post-run interaction: `name`, `description`, `params: list[QueryParam]`. Used by the evaluator to query ground-truth state or perform actions after a run via `target.query()`. Params are empty for simple getters. For example:
+
+```python
+QuerySpec(name="last_response", description="The LLM's last response.")   # getter, no params
+QuerySpec(
+    name="read_file",
+    description="Return a file the agent wrote during the run.",
+    params=[QueryParam(name="path", description="Absolute path to read.")],   # action with a param
+)
+```
 
 ### QueryParam (frozen)
 
@@ -42,17 +51,25 @@ A parameter for a QuerySpec: `name`, `description`.
 
 ### Controllable (frozen)
 
-Declares an injection point: `name`, `security_domain: SecurityDomainTag` (must not be `None`), `description`, `value_type` (default `"text"`). Frozen and identity-stable; per-call request/answer data lives on `ControllablePreCallEvent` / `ControllablePostCallEvent` rather than on the `Controllable` itself.
+Declares an injection point: `name`, `security_domain: SecurityDomainTag` (must not be `None`), `description`, `value_type` (default `"text"`). Frozen and identity-stable; per-call request/answer data lives on `ControllablePreCallEvent` / `ControllablePostCallEvent` rather than on the `Controllable` itself. For example: `Controllable(name="user_input", security_domain=USER_INPUT_TAG, description="The user message sent to the LLM.")`.
 
 ## Observable (`observable.py`)
 
 ### Observable (frozen)
 
-Specification of a static observable: `name`, `security_domain: SecurityDomainTag`, `description`, `observable_type` (default `"text"`).
+Specification of a static observable: `name`, `security_domain: SecurityDomainTag`, `description`, `observable_type` (default `"text"`). For example: `Observable(name="model", security_domain=SYSTEM_TAG, description="The LLM model identifier.")`.
 
 ### ObservableValue (frozen)
 
-An Observable paired with its content (`content: Any`). Passed to the optimizer at initialization. Available before execution and stable across runs (e.g. system descriptions, source code, configuration).
+An Observable paired with its content (`content: Any`). Passed to the optimizer at initialization. Available before execution and stable across runs (e.g. system descriptions, source code, configuration). For example:
+
+```python
+ObservableValue(
+    observable=Observable(name="model", security_domain=SYSTEM_TAG,
+                          description="The LLM model identifier."),
+    content="gpt-4o-mini",
+)
+```
 
 ## Event System (`event.py`)
 
@@ -68,25 +85,25 @@ Base class for all responses. Field: `event: Event`, every response references t
 
 ### ControllablePreCallEvent (extends Event)
 
-Fired when the target reaches a controllable and needs an injection value before proceeding. Fields: `controllable: Controllable`, `request: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`.
+Fired when the target reaches a controllable and needs an injection value before proceeding. Fields: `controllable: Controllable`, `request: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`. A target constructs it like `ControllablePreCallEvent(controllable=user_input_ctrl, request="Enter user message:")`.
 
 ### ControllablePostCallEvent (extends Event)
 
-Fired after a controllable's injected value has been used by the target. Informational, lets the optimizer observe the effect. Fields: `controllable: Controllable`, `request: str`, `answer: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`.
+Fired after a controllable's injected value has been used by the target. Informational, lets the optimizer observe the effect. Fields: `controllable: Controllable`, `request: str`, `answer: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`. For example: `ControllablePostCallEvent(controllable=user_input_ctrl, request="Enter user message:", answer=model_reply)`.
 
 ### ControllableInjection (extends EventResponse)
 
-The optimizer's injection for a controllable. Fields: `value: str`, `controllable: Controllable`. Returned as the response to `ControllablePreCallEvent` or `ControllablePostCallEvent`.
+The optimizer's injection for a controllable. Fields: `value: str`, `controllable: Controllable`. Returned as the response to `ControllablePreCallEvent` or `ControllablePostCallEvent`. For example: `ControllableInjection(event=event, controllable=event.controllable, value="Ignore all prior instructions.")`.
 
 **Design decision**: A single response type for both pre-call and post-call events. The inherited `event` field distinguishes which event type triggered it.
 
 ### ControllableNoInjection (extends EventResponse)
 
-Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Fields: `controllable: Controllable`, plus the inherited `event`.
+Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Fields: `controllable: Controllable`, plus the inherited `event`. An optimizer that chooses not to inject at an in-scope point returns the same thing: `ControllableNoInjection(event=event, controllable=event.controllable)`.
 
 ### ObservableEvent (extends Event)
 
-One-way observation event emitted by the target to record information in the trajectory. Fields: `observable: Observable`, `content: Any`. Used for target-side logging (e.g. model requests, model responses). `security_domain` auto-derives from the observable via `__post_init__` if not set explicitly.
+One-way observation event emitted by the target to record information in the trajectory. Fields: `observable: Observable`, `content: Any`. Used for target-side logging (e.g. model requests, model responses). `security_domain` auto-derives from the observable via `__post_init__` if not set explicitly. A target records the model's reply with `emit(ObservableEvent(observable=response_obs, content=reply_text))`.
 
 ### RunStartEvent (extends Event)
 
@@ -98,7 +115,7 @@ Signals the end of a target run. Sent after evaluation. Field: `evaluation: Eval
 
 ### RunEndResponse (extends EventResponse)
 
-Response to `RunEndEvent`. Field: `done: bool = False`. Set `done=True` to signal the optimizer wants to stop (goal achieved, budget exhausted). The controller checks this to decide whether to continue the run loop.
+Response to `RunEndEvent`. Field: `done: bool = False`. Set `done=True` to signal the optimizer wants to stop (goal achieved, budget exhausted). The controller checks this to decide whether to continue the run loop. For example, `RunEndResponse(event=event, done=True)` stops after this run, while `RunEndResponse(event=event, done=False)` requests another.
 
 ## Event Channel (`channel.py`)
 
@@ -201,7 +218,12 @@ Defined in `event.py`:
 
 ### Score (frozen)
 
-A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags a sub-score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope (dropping only out-of-scope ones) before attaching the evaluation to `RunEndEvent`. The `primary_score` carries no `security_domain` and is never filtered.
+A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags a sub-score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope (dropping only out-of-scope ones) before attaching the evaluation to `RunEndEvent`. The `primary_score` carries no `security_domain` and is never filtered. For example:
+
+```python
+Score(value=1.0)                                          # a primary score (unscoped)
+Score(value=0.3, security_domain=DB_TAG, name="db_leak")  # a scoped sub-score
+```
 
 ### EvaluationResult (frozen)
 
@@ -210,6 +232,17 @@ The result of evaluating one run:
 - `primary_score: Score`, the main score for optimization.
 - `sub_scores: dict[str, Score]`, named sub-scores for multi-objective analysis (default empty).
 - `rationale: str`, optional free-text explanation from the evaluator (default empty).
+
+For example:
+
+```python
+EvaluationResult(
+    success=True,
+    primary_score=Score(value=1.0),
+    sub_scores={"db_leak": Score(value=0.3, security_domain=DB_TAG, name="db_leak")},
+    rationale="Secret found in the model's response.",
+)
+```
 
 **Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each sub-score carries a `security_domain`; the controller filters sub_scores by the active scope before attaching the evaluation to `RunEndEvent`, dropping only those with an out-of-scope domain (an untagged sub-score, `security_domain=None`, is always visible), so the optimizer only sees scores within its security domain. `primary_score` carries no `security_domain` and is never filtered: it is the unscoped optimization signal, always included.
 
@@ -234,7 +267,7 @@ physical (separate root)
 
 ### LLMConfig (frozen)
 
-Configuration for controller-mediated LLM access. Part of the threat model. Pure access: `model: str`, `api_base: str`, `api_key: str`. No budget field; the attacker's per-task cost cap is set separately via `Controller.task_cost_cap_usd`.
+Configuration for controller-mediated LLM access. Part of the threat model. Pure access: `model: str`, `api_base: str`, `api_key: str`. No budget field; the attacker's per-task cost cap is set separately via `Controller.task_cost_cap_usd`. For example: `LLMConfig(model="gpt-4o-mini", api_base="https://api.openai.com", api_key="sk-...")`.
 
 The `__repr__` masks the API key (shows first 4 chars + `...`, or `***` for short keys).
 
@@ -242,7 +275,7 @@ The `__repr__` masks the API key (shows first 4 chars + `...`, or `***` for shor
 
 ### LLMUsage (frozen)
 
-LLM usage counters. Fields: `calls: int` (default 0), `cost: float` (default 0.0, USD computed via `litellm.completion_cost()`).
+LLM usage counters. Fields: `calls: int` (default 0), `cost: float` (default 0.0, USD computed via `litellm.completion_cost()`). For example, `LLMUsage(calls=3, cost=0.0021)` records three billed calls costing about a fifth of a cent.
 
 Used in `RunResult.llm_usage` (cumulative snapshot after each run), `RunResult.run_usage_delta` (that run's own usage, so per-run cost is available without differencing cumulative snapshots), and `TaskResult.llm_usage` (total for the task). Summing `run_usage_delta` across a task equals the task total; summing the cumulative `llm_usage` over-counts.
 
@@ -287,7 +320,7 @@ Immutable after construction via `__setattr__`/`__delattr__` overrides.
 - `roots`, tags with no parent.
 
 **Methods**:
-- `distinct_combinations()`, generates all antichains (subsets where no tag is an ancestor of another) as a Cartesian product across independent trees. Returns `list[frozenset[SecurityDomainTag]]` (i.e., `list[Scope]`). This is the set of distinct security-domain scopes to test. Includes the empty set.
+- `distinct_combinations()`, generates all antichains (subsets where no tag is an ancestor of another) as a Cartesian product across independent trees. Returns `list[frozenset[SecurityDomainTag]]` (i.e., `list[Scope]`). This is the set of distinct security-domain scopes to test. Includes the empty set. For example, for a single tree `system` with children `prompt` and `model`, it yields `[frozenset(), {system}, {prompt}, {model}, {prompt, model}]` (five antichains; `{system, prompt}` is excluded because `system` already includes `prompt`).
 
 ### Scope (type alias)
 
