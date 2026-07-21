@@ -82,7 +82,7 @@ See [Writing an Optimizer](/guide/writing-an-optimizer).
 
 A task captures one adversarial objective. It:
 
-- **configures** the target before each run (e.g. plants a secret, sets a
+- **configures** the target once, before the run loop (e.g. plants a secret, sets a
   benign user goal);
 - **evaluates** the trajectory afterwards and returns an `EvaluationResult` with
   a `success` flag and a numeric `primary_score`.

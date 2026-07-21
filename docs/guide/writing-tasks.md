@@ -18,7 +18,7 @@ You subclass `superred.core.interfaces.task.Task` and implement:
 | Member | Kind | Purpose |
 |--------|------|---------|
 | `goal` | property | the adversarial objective this task defines |
-| `configure_target(target)` | async method | set up the scenario before each run |
+| `configure_target(target)` | async method | set up the scenario before the run loop |
 | `evaluate(trajectory, target)` | async method | judge whether the attack worked, returning an `EvaluationResult` |
 
 In short, a task does two things: it configures the target, then evaluates the
@@ -69,7 +69,7 @@ runtime (next section).
 
 Use `target.set_config(name, value)` to fill config slots. Discover what slots
 exist via `target.config_specs`; the spec's `description` documents the format.
-This runs once per run, before `target.run()`.
+This runs once per task, before the run loop (before the first `target.run()`).
 
 ### `evaluate`: judge the result
 
