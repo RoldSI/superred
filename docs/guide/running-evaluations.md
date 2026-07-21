@@ -268,6 +268,8 @@ tree under the results folder:
   metrics and `error` traceback; `iterations.json` and the `trajectories/` files
   hold the per-run detail.
 
+{% include diagrams/u7.html %}
+
 **Turning it off.** Pass `persist=False` to write nothing. Combine with
 `report=False` for a completely quiet, non-writing run.
 

@@ -110,6 +110,8 @@ Think of `on_event` as a state machine driven by this sequence. Most optimizers
 keep counters and buffers as instance attributes and advance them as events
 arrive.
 
+{% include diagrams/u4.html %}
+
 ## Using what `initialize` gives you
 
 ```python

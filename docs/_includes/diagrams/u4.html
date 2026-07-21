@@ -1,0 +1,69 @@
+<div class="dc-figure">
+<figure data-screen-label="U4 event state machine" style="margin:0;box-sizing:border-box;max-width:960px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:22px 24px 18px;font-family:var(--font-serif);color:var(--ink);">
+
+  <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);margin-bottom:6px;">on_event, one run &middot; each event&rsquo;s required response is on its outgoing arrow</div>
+
+  <div style="position:relative;width:100%;aspect-ratio:1160 / 470;">
+
+    <svg viewBox="0 0 1160 470" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+      <defs>
+        <marker id="u4a" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+        <marker id="u4g" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#808080"></path></marker>
+      </defs>
+      <g fill="none" vector-effect="non-scaling-stroke">
+        <!-- chain -->
+        <line x1="176" y1="155" x2="242" y2="155" stroke="#111111" stroke-width="1.5" marker-end="url(#u4a)"></line>
+        <line x1="466" y1="155" x2="532" y2="155" stroke="#111111" stroke-width="1.5" marker-end="url(#u4a)"></line>
+        <line x1="756" y1="155" x2="822" y2="155" stroke="#111111" stroke-width="1.5" marker-end="url(#u4a)"></line>
+        <!-- self-loops -->
+        <path d="M354,122 C 348,86 392,86 386,122" stroke="#808080" stroke-width="1.3" marker-end="url(#u4g)"></path>
+        <path d="M644,122 C 638,86 682,86 676,122" stroke="#808080" stroke-width="1.3" marker-end="url(#u4g)"></path>
+        <!-- done=True to terminal -->
+        <line x1="905" y1="188" x2="905" y2="300" stroke="#111111" stroke-width="1.5" marker-end="url(#u4a)"></line>
+        <!-- done=False return arc (exits RunEndEvent's lower-left, clears the terminal) -->
+        <path d="M826,192 C 690,215 650,432 450,432 L 320,432 C 160,432 95,372 95,190" stroke="#111111" stroke-width="1.5" marker-end="url(#u4a)"></path>
+      </g>
+    </svg>
+
+    <!-- states -->
+    <div style="position:absolute;left:1%;top:26%;width:14%;height:14%;box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--paper);display:flex;align-items:center;justify-content:center;text-align:center;padding:0 8px;font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">RunStartEvent</div>
+    <div style="position:absolute;left:21%;top:26%;width:19%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;justify-content:center;text-align:center;padding:0 12px;font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">ControllablePreCallEvent</div>
+    <div style="position:absolute;left:46%;top:26%;width:19%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;justify-content:center;text-align:center;padding:0 12px;font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">ControllablePostCallEvent</div>
+    <div style="position:absolute;left:71%;top:26%;width:14%;height:14%;box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--paper);display:flex;align-items:center;justify-content:center;text-align:center;padding:0 8px;font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">RunEndEvent</div>
+
+    <!-- terminal -->
+    <div style="position:absolute;left:70%;top:64%;width:16%;height:13%;box-sizing:border-box;border:1px solid var(--ink);border-radius:999px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:500;">task ends</div>
+
+    <!-- transition labels -->
+    <div style="position:absolute;left:18%;top:19%;transform:translate(-50%,-50%);text-align:center;white-space:nowrap;">
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--ink);">EventResponse</div>
+      <div style="font-size:9.5px;font-style:italic;color:var(--gray);">sets current_trajectory</div>
+    </div>
+    <div style="position:absolute;left:43%;top:18.5%;transform:translate(-50%,-50%);text-align:center;white-space:nowrap;">
+      <div style="font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">ControllableInjection(value=&hellip;)</div>
+      <div style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);">/ ControllableNoInjection</div>
+    </div>
+    <div style="position:absolute;left:68%;top:18.5%;transform:translate(-50%,-50%);text-align:center;white-space:nowrap;">
+      <div style="font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">ControllableInjection</div>
+      <div style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);">/ ControllableNoInjection</div>
+    </div>
+
+    <!-- RunEnd response labels -->
+    <div style="position:absolute;left:90%;top:52%;transform:translate(-50%,-50%);text-align:left;white-space:nowrap;">
+      <div style="font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">RunEndResponse(done=True)</div>
+      <div style="font-size:9px;font-style:italic;color:var(--gray);">or budget / max_runs_per_task</div>
+    </div>
+    <div style="position:absolute;left:31%;top:86%;transform:translate(-50%,-50%);text-align:center;white-space:nowrap;background:var(--paper);padding:0 5px;">
+      <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--ink);">RunEndResponse(done=False)</span> <span style="font-size:9.5px;font-style:italic;color:var(--gray);">&middot; next run</span>
+    </div>
+
+  </div>
+
+  <!-- margin notes -->
+  <div style="margin-top:12px;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px;">
+    <div style="display:flex;gap:9px;font-size:11.5px;line-height:1.5;color:var(--gray);"><span style="color:var(--gray-33);flex:none;">&#9888;</span><span>The channel validates each response against the event&rsquo;s allowed types; a wrong type raises <span style="font-family:var(--font-mono);font-size:10.5px;">TypeError</span> and ends the task with <span style="font-family:var(--font-mono);font-size:10.5px;">stop_reason=&lsquo;error&rsquo;</span>.</span></div>
+    <div style="display:flex;gap:9px;font-size:11.5px;line-height:1.5;color:var(--gray);"><span style="color:var(--gray-33);flex:none;">&middot;</span><span>Out-of-scope controllables are auto-declined by the Controller; the optimizer never sees them.</span></div>
+  </div>
+
+</figure>
+</div>

@@ -1,0 +1,72 @@
+<div class="dc-figure">
+<figure data-screen-label="U7 resume" style="margin:0;box-sizing:border-box;max-width:940px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:22px 24px 18px;font-family:var(--font-serif);color:var(--ink);">
+
+  <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);margin-bottom:6px;">resume &middot; which tasks are kept vs recomputed</div>
+
+  <div style="position:relative;width:100%;aspect-ratio:1120 / 430;">
+
+    <svg viewBox="0 0 1120 430" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+      <defs>
+        <marker id="u7a" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+        <marker id="u7g" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#808080"></path></marker>
+      </defs>
+      <g fill="none" vector-effect="non-scaling-stroke">
+        <line x1="248" y1="200" x2="318" y2="200" stroke="#111111" stroke-width="1.5" marker-end="url(#u7a)"></line>
+        <line x1="326" y1="42" x2="326" y2="356" stroke="#9a9a9a" stroke-width="1.2"></line>
+        <line x1="326" y1="49" x2="336" y2="49" stroke="#c4c4c4" stroke-width="1"></line>
+        <line x1="326" y1="123" x2="336" y2="123" stroke="#c4c4c4" stroke-width="1"></line>
+        <line x1="326" y1="198" x2="336" y2="198" stroke="#c4c4c4" stroke-width="1"></line>
+        <line x1="326" y1="272" x2="336" y2="272" stroke="#c4c4c4" stroke-width="1"></line>
+        <line x1="326" y1="346" x2="336" y2="346" stroke="#c4c4c4" stroke-width="1"></line>
+        <!-- to KEEP -->
+        <path d="M582,52 C 660,52 680,120 736,120" stroke="#111111" stroke-width="1.4" marker-end="url(#u7a)"></path>
+        <path d="M582,126 C 660,126 680,132 736,132" stroke="#111111" stroke-width="1.4" marker-end="url(#u7a)"></path>
+        <path d="M582,200 C 660,200 680,146 736,146" stroke="#111111" stroke-width="1.4" marker-end="url(#u7a)"></path>
+        <!-- to RECOMPUTE -->
+        <path d="M582,274 C 660,274 680,300 736,300" stroke="#111111" stroke-width="1.4" marker-end="url(#u7a)"></path>
+        <path d="M582,348 C 660,348 680,320 736,320" stroke="#111111" stroke-width="1.4" marker-end="url(#u7a)"></path>
+      </g>
+    </svg>
+
+    <!-- entry -->
+    <div style="position:absolute;left:0.9%;top:34%;width:20.5%;height:32%;box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--paper);padding:11px 13px;display:flex;flex-direction:column;justify-content:center;gap:5px;">
+      <span style="font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gray);">on re-run</span>
+      <span style="font-size:12.5px;line-height:1.35;color:var(--ink);text-wrap:pretty;">Same experiment folder. For each task, its prior status:</span>
+    </div>
+
+    <!-- status pills -->
+    <div style="position:absolute;left:30%;top:6%;width:22%;height:11%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;padding:0 13px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink);">success</div>
+    <div style="position:absolute;left:30%;top:23.2%;width:22%;height:11%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;padding:0 13px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink);">failed</div>
+    <div style="position:absolute;left:30%;top:40.4%;width:22%;height:11%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;padding:0 13px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink);">budget_exhausted</div>
+    <div style="position:absolute;left:30%;top:57.6%;width:22%;height:11%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;gap:7px;padding:0 13px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink);"><span style="color:var(--gray-33);">&#9888;</span>error</div>
+    <div style="position:absolute;left:30%;top:74.8%;width:22%;height:11%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;padding:0 13px;font-family:var(--font-mono);font-size:11px;color:var(--ink);">interrupted / missing</div>
+
+    <!-- KEEP bucket -->
+    <div style="position:absolute;left:65.7%;top:19.5%;width:33%;height:23%;box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--paper);padding:11px 14px;display:flex;flex-direction:column;justify-content:center;gap:4px;">
+      <span style="font-size:15px;font-weight:500;letter-spacing:0.02em;">KEEP</span>
+      <span style="font-size:11px;line-height:1.35;color:var(--gray-33);">hardlinked into <span style="font-family:var(--font-mono);font-size:10px;">previous_NN/</span>, not recomputed</span>
+    </div>
+
+    <!-- RECOMPUTE bucket -->
+    <div style="position:absolute;left:65.7%;top:62%;width:33%;height:23%;box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--ink);color:var(--paper);padding:11px 14px;display:flex;flex-direction:column;justify-content:center;gap:4px;">
+      <span style="font-size:15px;font-weight:500;letter-spacing:0.02em;">RECOMPUTE</span>
+      <span style="font-size:11px;line-height:1.35;color:rgba(255,255,255,0.75);">re-run this task</span>
+    </div>
+
+  </div>
+
+  <!-- override -->
+  <div style="margin-top:6px;display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px dashed var(--gray);border-radius:6px;background:var(--code-bg);">
+    <span style="font-family:var(--font-mono);font-size:11px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:3px 9px;white-space:nowrap;">overwrite=True</span>
+    <span style="font-size:11px;color:var(--gray);">&rarr;</span>
+    <span style="font-size:12px;color:var(--gray-33);">overrides every branch and forces <span style="font-weight:500;color:var(--ink);">RECOMPUTE</span> for all tasks.</span>
+  </div>
+
+  <!-- margin notes -->
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px;">
+    <div style="display:flex;gap:9px;font-size:11.5px;line-height:1.5;color:var(--gray);"><span style="color:var(--gray-33);flex:none;">&middot;</span><span>Prior state is snapshotted into <span style="font-family:var(--font-mono);font-size:10.5px;">previous_NN/</span> before any change (crash-safe).</span></div>
+    <div style="display:flex;gap:9px;font-size:11.5px;line-height:1.5;color:var(--gray);"><span style="color:var(--gray-33);flex:none;">&middot;</span><span><span style="font-family:var(--font-mono);font-size:10.5px;">result.json</span> is written last as the completion marker; a <span style="font-family:var(--font-mono);font-size:10.5px;">manifest.json</span> without it marks an interrupted run.</span></div>
+  </div>
+
+</figure>
+</div>

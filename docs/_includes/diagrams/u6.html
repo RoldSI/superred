@@ -1,0 +1,152 @@
+<div class="dc-figure">
+<style>
+.dc-figure .u6-pill{display:inline-flex;align-items:center;justify-content:center;padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:8.5px;line-height:1;white-space:nowrap;background:var(--paper);color:var(--gray);border:1px solid var(--line);}
+.dc-figure .u6-w{background:var(--ink);color:var(--paper);border-color:var(--ink);opacity:1;}
+.dc-figure .u6-r{background:var(--paper);color:var(--ink);border-color:var(--ink);opacity:1;}
+.dc-figure .u6-f{background:var(--paper);color:var(--gray);border-color:var(--line);opacity:0.55;}
+.dc-figure .u6-card{box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:9px 12px;display:grid;grid-template-columns:150px 1fr;gap:14px;align-items:center;}
+.dc-figure .u6-mini{display:flex;flex-direction:column;gap:3px;}
+.dc-figure .u6-kids{display:flex;gap:3px;padding-left:8px;}
+.dc-figure .u6-persona{font-size:13.5px;font-weight:500;line-height:1.2;}
+.dc-figure .u6-notation{font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);line-height:1.3;}
+</style>
+<figure data-screen-label="U6 forest many threat models" style="margin:0;box-sizing:border-box;max-width:940px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:22px 24px 18px;font-family:var(--font-serif);color:var(--ink);">
+
+  <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);margin-bottom:16px;">one forest, many threat models &middot; a chatbot</div>
+
+  <div style="display:grid;grid-template-columns:0.82fr 1.18fr;gap:26px;align-items:start;">
+
+    <!-- LEFT: fixed forest -->
+    <div>
+      <div style="font-size:13px;font-weight:500;margin-bottom:3px;">The fixed forest</div>
+      <div style="font-size:11px;color:var(--gray);margin-bottom:14px;">two independent trees</div>
+
+      <!-- tree 1: system -->
+      <div style="display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:12px;background:var(--paper);color:var(--ink);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;">system</div>
+      <div style="border-left:1px solid #bcbcbc;margin-left:10px;padding-left:16px;margin-top:8px;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;gap:9px;"><span style="width:11px;height:1px;background:#bcbcbc;"></span><span style="display:inline-flex;font-family:var(--font-mono);font-size:12px;color:var(--ink);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;">system_prompt</span></div>
+        <div style="display:flex;align-items:center;gap:9px;"><span style="width:11px;height:1px;background:#bcbcbc;"></span><span style="display:inline-flex;font-family:var(--font-mono);font-size:12px;color:var(--ink);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;">model</span></div>
+        <div style="display:flex;align-items:center;gap:9px;"><span style="width:11px;height:1px;background:#bcbcbc;"></span><span style="display:inline-flex;font-family:var(--font-mono);font-size:12px;color:var(--ink);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;">model_identity</span></div>
+      </div>
+
+      <!-- tree 2: user -->
+      <div style="display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:12px;background:var(--paper);color:var(--ink);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;margin-top:16px;">user</div>
+
+      <!-- legend -->
+      <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:9px;font-size:11px;color:var(--gray-33);"><span style="width:15px;height:15px;flex:none;border-radius:3px;background:var(--ink);border:1px solid var(--ink);"></span>read &amp; write &middot; in <span style="font-family:var(--font-mono);font-size:10px;">scope</span></div>
+        <div style="display:flex;align-items:center;gap:9px;font-size:11px;color:var(--gray-33);"><span style="width:15px;height:15px;flex:none;border-radius:3px;background:var(--paper);border:1px solid var(--ink);"></span>read-only &middot; in <span style="font-family:var(--font-mono);font-size:10px;">read_only</span></div>
+        <div style="display:flex;align-items:center;gap:9px;font-size:11px;color:var(--gray);"><span style="width:15px;height:15px;flex:none;border-radius:3px;background:var(--paper);border:1px solid var(--line);opacity:0.6;"></span>out of scope</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: contact sheet -->
+    <div style="display:flex;flex-direction:column;gap:8px;">
+
+      <!-- Blind user -->
+      <div class="u6-card">
+        <div class="u6-mini">
+          <span class="u6-pill u6-f">system</span>
+          <span class="u6-kids">
+            <span class="u6-pill u6-f">prompt</span>
+            <span class="u6-pill u6-f">model</span>
+            <span class="u6-pill u6-f">identity</span>
+          </span>
+          <span class="u6-pill u6-w">user</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span class="u6-persona">Blind user</span>
+          <span class="u6-notation">scope={user}</span>
+        </div>
+      </div>
+
+      <!-- + knows which model -->
+      <div class="u6-card">
+        <div class="u6-mini">
+          <span class="u6-pill u6-f">system</span>
+          <span class="u6-kids">
+            <span class="u6-pill u6-f">prompt</span>
+            <span class="u6-pill u6-f">model</span>
+            <span class="u6-pill u6-w">identity</span>
+          </span>
+          <span class="u6-pill u6-w">user</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span class="u6-persona">+ knows which model</span>
+          <span class="u6-notation">scope={user, model_identity}</span>
+        </div>
+      </div>
+
+      <!-- Reads the system prompt, cannot change it -->
+      <div class="u6-card">
+        <div class="u6-mini">
+          <span class="u6-pill u6-f">system</span>
+          <span class="u6-kids">
+            <span class="u6-pill u6-r">prompt</span>
+            <span class="u6-pill u6-f">model</span>
+            <span class="u6-pill u6-f">identity</span>
+          </span>
+          <span class="u6-pill u6-w">user</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span class="u6-persona">Reads the system prompt, cannot change it</span>
+          <span class="u6-notation">scope={user}, read_only={system_prompt}</span>
+        </div>
+      </div>
+
+      <!-- Can override the system prompt -->
+      <div class="u6-card">
+        <div class="u6-mini">
+          <span class="u6-pill u6-f">system</span>
+          <span class="u6-kids">
+            <span class="u6-pill u6-w">prompt</span>
+            <span class="u6-pill u6-f">model</span>
+            <span class="u6-pill u6-f">identity</span>
+          </span>
+          <span class="u6-pill u6-w">user</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span class="u6-persona">Can override the system prompt</span>
+          <span class="u6-notation">scope={user, system_prompt}</span>
+        </div>
+      </div>
+
+      <!-- Reads responses out of band -->
+      <div class="u6-card">
+        <div class="u6-mini">
+          <span class="u6-pill u6-f">system</span>
+          <span class="u6-kids">
+            <span class="u6-pill u6-f">prompt</span>
+            <span class="u6-pill u6-r">model</span>
+            <span class="u6-pill u6-f">identity</span>
+          </span>
+          <span class="u6-pill u6-w">user</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span class="u6-persona">Reads responses out of band</span>
+          <span class="u6-notation">scope={user}, read_only={model}</span>
+        </div>
+      </div>
+
+      <!-- Can rewrite the model's responses -->
+      <div class="u6-card">
+        <div class="u6-mini">
+          <span class="u6-pill u6-f">system</span>
+          <span class="u6-kids">
+            <span class="u6-pill u6-f">prompt</span>
+            <span class="u6-pill u6-w">model</span>
+            <span class="u6-pill u6-f">identity</span>
+          </span>
+          <span class="u6-pill u6-w">user</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <span class="u6-persona">Can rewrite the model&rsquo;s responses</span>
+          <span class="u6-notation">scope={user, model}</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</figure>
+</div>

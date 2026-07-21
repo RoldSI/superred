@@ -176,6 +176,8 @@ Everything you build later is a variation on the same five parts:
   touch,
 - optionally an `llm_config` giving the attacker a model and a spending budget.
 
+{% include diagrams/u1.html %}
+
 ## What to read next
 
 We recommend you read [Core Concepts](/guide/core-concepts) next: it explains

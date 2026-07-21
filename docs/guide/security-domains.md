@@ -191,6 +191,8 @@ separate readable tags. The scopes read like a catalogue of attackers:
 - `scope={user, model}`: can rewrite the model's responses (a compromised-output
   threat) and send messages.
 
+{% include diagrams/u6.html %}
+
 Each is a precise, separately-runnable threat model, and they exist because the
 forest separates the surfaces (knowledge from control, user from system) while
 `read_only` separates seeing a surface from changing it. The shipped `chatbot`

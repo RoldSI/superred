@@ -1,0 +1,64 @@
+<div class="dc-figure">
+<figure data-screen-label="U3 two callbacks" style="margin:0;box-sizing:border-box;max-width:900px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:22px 24px 18px;font-family:var(--font-serif);color:var(--ink);">
+
+  <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);margin-bottom:14px;">the two callbacks a target is handed</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+    <!-- LEFT: emit -->
+    <div style="box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:15px 16px;display:flex;flex-direction:column;">
+      <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink);line-height:1.35;">emit(ObservableEvent(&hellip;))</div>
+      <div style="font-size:11px;color:var(--gray);margin-top:3px;">fire-and-forget &middot; one-way</div>
+
+      <div style="position:relative;width:100%;aspect-ratio:380 / 290;margin-top:10px;">
+        <svg viewBox="0 0 380 290" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+          <defs>
+            <marker id="u3la" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+          </defs>
+          <line x1="66" y1="16" x2="66" y2="270" stroke="#111111" stroke-width="1.6" vector-effect="non-scaling-stroke" marker-end="url(#u3la)"></line>
+          <circle cx="66" cy="122" r="4" fill="#111111"></circle>
+          <line x1="72" y1="122" x2="236" y2="122" stroke="#111111" stroke-width="1.5" vector-effect="non-scaling-stroke" marker-end="url(#u3la)"></line>
+        </svg>
+        <div style="position:absolute;left:21%;top:2.5%;font-family:var(--font-mono);font-size:9.5px;color:var(--gray);white-space:nowrap;">run()</div>
+        <div style="position:absolute;left:36%;top:37%;transform:translateY(-50%);font-size:10px;font-style:italic;color:var(--gray);white-space:nowrap;background:var(--paper);padding:0 4px;">records a fact</div>
+        <div style="position:absolute;left:22%;top:64%;font-size:10px;color:var(--gray-33);white-space:nowrap;text-align:left;line-height:1.3;">no gap:<br>never suspends</div>
+        <div style="position:absolute;left:63%;top:33.5%;width:36%;height:17%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--code-bg);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">Trajectory</div>
+      </div>
+
+      <div style="margin-top:auto;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.5;color:var(--gray);text-wrap:pretty;">Fire-and-forget; one-way; records a fact; returns nothing; does not suspend.</div>
+    </div>
+
+    <!-- RIGHT: send_event -->
+    <div style="box-sizing:border-box;border:1px solid var(--line);border-radius:6px;padding:15px 16px;display:flex;flex-direction:column;">
+      <div style="font-family:var(--font-mono);font-size:12px;color:var(--ink);line-height:1.35;">await send_event(ControllablePreCallEvent(&hellip;))</div>
+      <div style="font-size:11px;color:var(--gray);margin-top:3px;">request / response &middot; two-way</div>
+
+      <div style="position:relative;width:100%;aspect-ratio:380 / 290;margin-top:10px;">
+        <!-- suspended band -->
+        <div style="position:absolute;left:4%;top:37%;width:26%;height:34%;box-sizing:border-box;border:1px dashed var(--gray);border-radius:6px;background:var(--code-bg);"></div>
+        <div style="position:absolute;left:17.4%;top:54%;transform:translate(-50%,-50%) rotate(-90deg);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--gray);white-space:nowrap;">suspended</div>
+        <svg viewBox="0 0 380 290" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+          <defs>
+            <marker id="u3ra" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+            <marker id="u3rg" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#808080"></path></marker>
+          </defs>
+          <line x1="66" y1="16" x2="66" y2="107" stroke="#111111" stroke-width="1.6" vector-effect="non-scaling-stroke"></line>
+          <line x1="66" y1="205" x2="66" y2="272" stroke="#111111" stroke-width="1.6" vector-effect="non-scaling-stroke" marker-end="url(#u3ra)"></line>
+          <circle cx="66" cy="122" r="4" fill="#111111"></circle>
+          <line x1="72" y1="122" x2="236" y2="122" stroke="#111111" stroke-width="1.5" vector-effect="non-scaling-stroke" marker-end="url(#u3ra)"></line>
+          <line x1="236" y1="188" x2="72" y2="188" stroke="#808080" stroke-width="1.4" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" marker-end="url(#u3rg)"></line>
+        </svg>
+        <div style="position:absolute;left:21%;top:2.5%;font-family:var(--font-mono);font-size:9.5px;color:var(--gray);white-space:nowrap;">run()</div>
+        <div style="position:absolute;left:63%;top:37%;width:36%;height:32%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">Optimizer</div>
+        <div style="position:absolute;left:50%;top:36%;transform:translate(-50%,-50%);font-size:10px;font-style:italic;color:var(--gray);white-space:nowrap;background:var(--paper);padding:0 4px;">request</div>
+        <div style="position:absolute;left:50%;top:75%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:8.5px;color:var(--gray-33);white-space:nowrap;background:var(--paper);padding:0 4px;text-align:center;line-height:1.3;">ControllableInjection(value=&hellip;)<br>/ ControllableNoInjection</div>
+        <div style="position:absolute;left:22%;top:83%;font-size:10px;color:var(--gray-33);white-space:nowrap;text-align:left;line-height:1.3;">resumes with<br>the value</div>
+      </div>
+
+      <div style="margin-top:auto;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.5;color:var(--gray);text-wrap:pretty;">Request/response; two-way; suspends this coroutine until the attacker answers.</div>
+    </div>
+
+  </div>
+
+</figure>
+</div>
