@@ -99,24 +99,7 @@ nothing. When on, each run lands in one self-describing directory tree that the
 The current on-disk schema is **version 4** (`SCHEMA_VERSION = 4`). Note this is
 the persistence schema version, distinct from the framework version.
 
-```
-{results_root}/
-├── experiments.json                     ← cross-experiment index (sweep landing)
-├── dashboard.html                       ← the bundled web report (rewritten on finalize)
-└── {slug}-{hash8}/                       ← one experiment (one threat model)
-    ├── manifest.json                     ← index: params + summary + tasks[]
-    ├── result.json                       ← claim-level final metrics (completion marker)
-    ├── dashboard.html                    ← the web report, also dropped here
-    ├── logs/diagnostics.log              ← experiment-level diagnostics
-    ├── tasks/
-    │   └── 00001__{goalslug}/            ← the current (latest) result for this task
-    │       ├── task.json                 ← per-task result + metrics
-    │       ├── iterations.json           ← per-run score/metric progression
-    │       ├── trajectories/run_00001.json
-    │       └── logs/diagnostics.log
-    └── previous_01/                       ← immutable snapshot of a prior run
-        result.json  tasks/...
-```
+{% include diagrams/d5.html %}
 
 (Lock files, `.experiments.lock` at the root and a `.lock` per experiment
 directory, coordinate concurrent writers; they are advisory and not part of the

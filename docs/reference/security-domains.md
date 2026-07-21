@@ -144,7 +144,7 @@ which of the Controller's two scope sets a tag lands in:
 the classic behavior. To make part of the surface read-only, list it under
 `read_only` instead of `scope`.
 
-<!-- DIAGRAM: D3 scope-filtering (see docs/reference/DIAGRAMS.md) -->
+{% include diagrams/d3.html %}
 
 ```python
 # See the whole system subtree, but inject only into the prompt:

@@ -107,8 +107,6 @@ always returns its **full** set and lets the threat model decide what is visible
 A target has **three state lifetimes**, and getting them right is what makes
 multi-run and cross-run attacks work:
 
-<!-- DIAGRAM: D7 target-lifecycle (see docs/reference/DIAGRAMS.md) -->
-
 - **Ephemeral** per-run state (the active conversation, the last response). Reset
   by `reset_ephemeral_state()` after **every** run.
 - **Durable** state that must persist across runs within a task (a memory bank an
@@ -119,11 +117,7 @@ multi-run and cross-run attacks work:
 
 The instance lifecycle the Controller drives:
 
-```
-construct → configure_target()  →  ┌ run() → evaluate() → reset_ephemeral_state() ┐ ×N
-                                    └───────────────────────────────────────────── ┘
-                                 →  reset_ephemeral_state() → teardown()  → discarded
-```
+{% include diagrams/d7.html %}
 
 `reset_ephemeral_state()` must be implemented even if it is a no-op: making it
 explicit forces the author to decide, per field, what is ephemeral and what

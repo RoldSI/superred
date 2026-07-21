@@ -60,24 +60,7 @@ concurrent tasks and communicate only through typed **events** that pass through
 the Controller. The Controller sits in the middle: it filters events to the
 scope, records everything onto a **trajectory**, and bridges the two sides.
 
-<!-- DIAGRAM: D1 architecture-overview (see docs/reference/DIAGRAMS.md) -->
-
-```
-   SecurityClaim ── iterates ──▶ Task
-                                  │  configure_target()   (before each run)
-                                  │  evaluate()           (after each run)
-                                  ▼
-   ┌──────────────────────────────────────────────┐
-   │                 Controller                     │
-   │   scope filter  +  trajectory recorder         │
-   └──────────────────────────────────────────────┘
-        ▲  Event  │                    │  Event  ▲
-        │  Response▼   EventChannel     ▼ Response│
-   ┌───────────┐                         ┌────────────────┐
-   │  Target   │                         │   Optimizer     │
-   │ (run loop)│                         │ (actor task)    │──▶ LLMClient
-   └───────────┘                         └────────────────┘
-```
+{% include diagrams/d1.html %}
 
 One **run** is one full pass of the target plus its evaluation, and it unfolds
 like this:

@@ -242,6 +242,8 @@ model (it defines the attacker's compute).
 One Controller is one threat model. A sweep is several Controllers, built by the
 caller. To share **one** live dashboard across them, use `run_all`:
 
+{% include diagrams/d6.html %}
+
 ```python
 import itertools
 from superred.core import Controller

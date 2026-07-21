@@ -108,27 +108,7 @@ inherited `event` field tells them apart.
 Here is a single run as it crosses the channel. `Controller` steps are the
 middleware layer described below.
 
-<!-- DIAGRAM: D2 event-sequence-one-run (see docs/reference/DIAGRAMS.md) -->
-
-```
-Controller                    Target                     Optimizer
-    │  RunStartEvent ─────────────────────────────────────▶  (sets current_trajectory)
-    │  ◀───────────────────────────────────────────────────  EventResponse
-    │                            │
-    │                    emit(ObservableEvent) ──▶ recorded on trajectory
-    │                            │
-    │       ◀── send_event(ControllablePreCallEvent) ──┐
-    │  filter + record                                 │
-    │  ControllablePreCallEvent ──────────────────────────▶  on_event(...)
-    │  ◀──────────────────────────────────────────────────  ControllableInjection
-    │  record ──▶ resume target with the value ────────┘
-    │                            │
-    │                     (target finishes run)
-    │  task.evaluate(trajectory, target)  ──▶ EvaluationResult
-    │  RunEndEvent(evaluation) ───────────────────────────▶  on_event(...)
-    │  ◀──────────────────────────────────────────────────  RunEndResponse(done)
-    │  close trajectory; reset target; loop or stop
-```
+{% include diagrams/d2.html %}
 
 `RunStartEvent` is **not** recorded (it always sits at a fixed position and
 carries the trajectory itself). Every other item, observable events, controllable
@@ -222,7 +202,7 @@ optimizer's scope. It exposes the same non-blocking readers, `snapshot()` and
 You create one by passing `filtered_scope` to the `Trajectory` constructor and
 reaching it via `trajectory.filtered`.
 
-<!-- DIAGRAM: D4 filtered-trajectory-push (see docs/reference/DIAGRAMS.md) -->
+{% include diagrams/d4.html %}
 
 **Push-based, one-way isolation.** Filtering happens once, at `emit` time: when
 an in-scope item is emitted, the parent trajectory pushes it into the filtered
@@ -308,8 +288,6 @@ caller](/reference/#the-asyncio-runtime)). On it, the target's `run()` and the
 optimizer's `run()` are two separate `asyncio.Task`s. Cooperative scheduling
 interleaves them: each yields at its `await` points and the loop advances the
 other.
-
-<!-- DIAGRAM: D1 may double as the concurrency picture; no separate diagram required -->
 
 **Target internal parallelism.** A target may itself fan out into concurrent
 branches (via `asyncio.gather` or `asyncio.create_task`), each calling
