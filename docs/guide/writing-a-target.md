@@ -28,21 +28,21 @@ You subclass `superred.core.interfaces.target.Target` and implement:
 
 | Member | Kind | Purpose |
 |--------|------|---------|
-| `config_specs` | property | the named slots a task may set before a run |
-| `set_config(name, value)` | method | accept one config value |
+| `config_specs` | property | the configuration parameters a task may set before a run |
+| `set_config(name, value)` | method | set one of the target's configuration parameters |
 | `query_specs` | property | the named questions an evaluator may ask after a run |
 | `query(name, **params)` | method | answer one query |
-| `security_domain` | property | the trust-boundary forest (see [doc 7](/guide/security-domains)) |
+| `security_domain` | property | the trust-boundary forest (see [Security Domains](/guide/security-domains)) |
 | `get_controllables()` | method | the injection points, each tagged with a domain |
 | `get_observables()` | method | static facts the attacker may read, each tagged |
-| `run(emit, send_event)` | async method | execute one interaction |
+| `run(emit, send_event)` | async method | run one attempt of the attacker against the target |
 | `reset_ephemeral_state()` | async method | reset ephemeral (per-run) state (called after each evaluation) |
 | `teardown()` | async method | release resources (called once at the end) |
 
 ## Minimal template
 
-This is the complete `MinimalLLMChatTarget` that ships in
-`superred-modules/targets/minimal_llm_chat`, lightly annotated. It is a
+This is the complete `MinimalLLMChatTarget` that ships as the
+`superred-target-minimal-llm-chat` package, lightly annotated. It is a
 single-turn chatbot: one config slot (system prompt), one controllable (the user
 message), one query (the last response).
 
@@ -129,7 +129,7 @@ class MinimalLLMChatTarget(Target):
         )
         return [ObservableValue(observable=obs, content=self._model)]
 
-    # --- One interaction ---
+    # --- One attempt against the target ---
     async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         # 1. Ask the attacker what to put in the user_input controllable.
         resp = await send_event(
@@ -377,12 +377,12 @@ subject of [Security Domains](/guide/security-domains).
 
 ## Worked examples in the repository
 
-- `superred-modules/targets/minimal_llm_chat`: the template above.
-- `superred-modules/targets/chatbot`: a production chatbot target: single- or
+- [`superred-modules/targets/minimal_llm_chat`](https://github.com/RoldSI/superred-modules/tree/main/targets/minimal_llm_chat): the template above.
+- [`superred-modules/targets/chatbot`](https://github.com/RoldSI/superred-modules/tree/main/targets/chatbot): a production chatbot target: single- or
   multi-turn, with a two-tree domain forest that separates "knows the model
   name" from "can override the system prompt" from "can rewrite the response".
   Its module docstring is a good model for documenting your own boundaries.
-- `superred-modules/targets/agentdojo`: a tool-calling agent target with a
+- [`superred-modules/targets/agentdojo`](https://github.com/RoldSI/superred-modules/tree/main/targets/agentdojo): a tool-calling agent target with a
   three-tree forest, including a 2x2 grid that classifies every tool's data by
   who authored it and who stores it. A good study in modelling a complex
   system's real trust structure.
