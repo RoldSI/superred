@@ -353,7 +353,7 @@ from dotenv import load_dotenv
 
 from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
-from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG  # ⚠️ non-release module name
+from chatbot_target import ChatbotTarget, USER_TAG, MODEL_TAG  # ⚠️ non-release module name
 from crescendo_optimizer import CrescendoOptimizer  # ⚠️ non-release module name
 from security_claim_sorry_bench import sorry_bench_claim  # ⚠️ non-release module name
 
@@ -381,11 +381,12 @@ async def main() -> None:
         optimizer_factory=lambda: CrescendoOptimizer(),
         target_factory=target_factory,
         security_claim=claim,
-        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
+        scope=frozenset({USER_TAG}),
+        read_only=frozenset({MODEL_TAG}),   # read the responses, cannot rewrite them
         llm_config=LLMConfig(model="gpt-4o", api_base=api_base, api_key=api_key),
         task_cost_cap_usd=5.0,
         include_feedback=True,
-        results_dir="results",            # root; this run lands in its own folder inside it
+        results_dir="results",            # the results folder; this run lands in its own subfolder
         attacker_label="crescendo",       # short names used in the folder + dashboard
         target_label="chatbot",
         claim_label="sorry-bench",
