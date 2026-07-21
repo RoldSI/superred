@@ -34,7 +34,13 @@
       url: /reference/task
     - title: SecurityClaim
       url: /reference/security-claim
+    - title: Events & Trajectory
+      url: /reference/events-and-trajectory
+    - title: Security Domains
+      url: /reference/security-domains
     - title: Core Types
       url: /reference/types
+    - title: Results & Persistence
+      url: /reference/results
     - title: Breaking Changes
       url: /reference/breaking-changes
