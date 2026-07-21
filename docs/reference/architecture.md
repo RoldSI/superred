@@ -143,8 +143,7 @@ specified in [Results & Persistence](/reference/results).
 
 **Change history:**
 
-- **[Breaking Changes](/reference/breaking-changes)** per-version migration
-  notes.
+- **[Migration](/reference/migration)** per-version migration notes.
 
 ## Design commitments
 

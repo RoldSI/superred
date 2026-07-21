@@ -7,14 +7,16 @@
       url: /guide/core-concepts
     - title: Using a Module
       url: /guide/using-modules
+    - title: Running Evaluations
+      url: /guide/running-evaluations
     - title: Writing a Target
       url: /guide/writing-a-target
     - title: Writing an Optimizer
       url: /guide/writing-an-optimizer
     - title: Writing Tasks
       url: /guide/writing-tasks
-    - title: Running Evaluations
-      url: /guide/running-evaluations
+    - title: Publishing a Module
+      url: /guide/publishing-a-module
     - title: Security Domains
       url: /guide/security-domains
     - title: Advanced Patterns
@@ -42,5 +44,5 @@
       url: /reference/types
     - title: Results & Persistence
       url: /reference/results
-    - title: Breaking Changes
-      url: /reference/breaking-changes
+    - title: Migration
+      url: /reference/migration

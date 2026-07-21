@@ -387,3 +387,21 @@ body {
   .dc-figure > figure { transition: none; }
   .dc-figure:hover > figure { transform: none; }
 }
+
+/* ---- figures (screenshots in the guide/reference) ---- */
+.content .doc-figure {
+  margin: 1.6rem 0;
+}
+.content .doc-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.content .doc-figure figcaption {
+  margin-top: 0.55rem;
+  font-size: var(--fs-small);
+  line-height: 1.45;
+  color: var(--gray);
+}
