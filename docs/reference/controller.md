@@ -6,360 +6,293 @@ permalink: /reference/controller
 
 # Controller
 
-The controller is the main orchestrator for red-teaming evaluations. One `Controller` instance evaluates one security claim against one threat model, a single `(scope, llm_config)` combination. Sweeping multiple threat models is the caller's job: instantiate one `Controller` per combination and run them sequentially, via `asyncio.gather`, or (to share one live dashboard) via `run_all`.
+The **Controller** is the orchestrator. It runs one
+[`SecurityClaim`](/reference/security-claim) against one **threat model**, drives
+the [event loop](/reference/events-and-trajectory) between a fresh target and a
+fresh optimizer for each task, enforces the security scope, and returns one
+[`ThreatModelResult`](/reference/results#threatmodelresult).
+
+A **threat model** is one `(scope, llm_config)` combination, both fixed at
+construction. One Controller measures exactly that one combination. Comparing
+several is the [caller's job](#sweeping-multiple-threat-models).
+
+This page covers how the Controller is built and how it runs. What a run
+**produces**, the result objects, the on-disk tree, resume, and reporting, is on
+[Results & Persistence](/reference/results).
 
 ## Construction
 
 ```python
-from superred.core.controller import Controller, TargetFactory
-from superred.core.types.llm import LLMConfig
-from superred.core.types.security_domain import Scope
+from superred.core import Controller, TargetFactory, LLMConfig, Scope
 
-# Produces fresh target instances; declares how many tasks may run in
-# parallel against independent instances.
+# A factory produces fresh target instances and declares how many tasks may
+# run in parallel against independent instances.
 target_factory = TargetFactory(
     create=lambda: MyTarget(api_key="sk-..."),  # manual values at construction
     concurrency=8,                              # default is 1 (sequential)
 )
 claim = SecurityClaim.from_tasks([task_a, task_b])
 
-llm_config = LLMConfig(
-    model="gpt-4o-mini",
-    api_base="https://api.openai.com",
-    api_key="sk-...",
-)
-
-scope: Scope = frozenset({external_tag})
-
 controller = Controller(
     optimizer_factory=lambda: MyOptimizer(),  # fresh optimizer per task
-    target_factory=target_factory,            # fresh target per task; bounded concurrency
+    target_factory=target_factory,            # fresh target per task
     security_claim=claim,
-    scope=scope,                              # read & write surface (visible + injectable)
+    scope=frozenset({external_tag}),          # read & write surface (visible + injectable)
     read_only=frozenset(),                    # optional: visible-but-not-injectable tags
-    llm_config=llm_config,                    # optional, omit for non-LLM optimizers
-    task_cost_cap_usd=5.00,                   # per-task attacker budget (USD); None = unlimited
-    max_runs_per_task=100,                    # safety limit, default 100
-    include_feedback=True,                    # populate RunEndEvent.evaluation (default True)
-    # --- output ---
-    persist=True,                             # write a results tree (default True)
-    results_dir=None,                         # results folder; None = SUPERRED_RESULTS_DIR or ./superred-results/
-    overwrite=False,                          # True re-runs a resumable experiment from scratch
-    report="auto",                            # live dashboard on a TTY, plain lines otherwise; False = silent
-    attacker_label="my-optimizer",            # short names for the experiment folder + dashboard
+    llm_config=LLMConfig(                      # optional; omit for a non-LLM optimizer
+        model="gpt-4o-mini",
+        api_base="https://api.openai.com",
+        api_key="sk-...",
+    ),
+    task_cost_cap_usd=5.00,                    # per-task attacker budget (USD); None = unlimited
+    max_runs_per_task=100,                     # safety cap; None resolves to 100
+    include_feedback=True,                     # populate RunEndEvent.evaluation (default True)
+    # --- output (see Results & Persistence) ---
+    persist=True,                              # write a results tree (default True)
+    results_dir=None,                          # results ROOT; None = env or ./superred-results/
+    overwrite=False,                           # re-run a resumable experiment from scratch
+    report="auto",                             # live dashboard on a TTY, plain otherwise; False = silent
+    reporter=None,                             # inject a custom ProgressReporter (wins over report)
+    attacker_label="my-optimizer",             # short names for the experiment folder + dashboard
     target_label="my-target",
     claim_label="my-claim",
 )
-# `scope` is what the attacker can read AND write; `read_only` adds tags it
-# can only read. To see the whole system but inject only the prompt:
-#   Controller(scope=frozenset({prompt_tag}),
-#              read_only=frozenset({system_tag}), ...)
 
-tmr = await controller.run()  # -> ThreatModelResult
+tmr = await controller.run()   # -> ThreatModelResult
 ```
 
-### `scope` may be a fixed `Scope` or a per-task `ScopeResolver`
+The full constructor parameters, with types and defaults:
 
-`scope` accepts either a fixed `Scope` (the classic behavior above, one read & write surface applied to every task) **or** a `ScopeResolver` (a `Callable[[Task], Scope]`, exported as `superred.core.ScopeResolver`) that computes the read & write scope **once per task**. `callable(scope)` is the discriminator. `read_only` independently accepts the same two forms (a fixed `Scope` or a `ScopeResolver`), resolved separately per task; the two resolvers are unrelated.
+| Parameter | Type | Default | Meaning |
+|-----------|------|---------|---------|
+| `optimizer_factory` | `Callable[[], Optimizer]` | required | builds a fresh optimizer per task |
+| `target_factory` | `TargetFactory` | required | builds fresh targets; carries `concurrency` |
+| `security_claim` | `SecurityClaim` | required | the tasks to run |
+| `scope` | `Scope \| ScopeResolver` | required | read & write surface (or a per-task resolver) |
+| `read_only` | `Scope \| ScopeResolver` | `frozenset()` | visible-but-not-injectable surface |
+| `llm_config` | `LLMConfig \| None` | `None` | the attacker's model; `None` = non-LLM |
+| `task_cost_cap_usd` | `float \| None` | `None` | per-task attacker cost cap; `None` = unlimited |
+| `max_runs_per_task` | `int \| None` | `None` (→ 100) | per-task run cap; validated `>= 1` |
+| `include_feedback` | `bool` | `True` | whether `RunEndEvent` carries the evaluation |
+| `results_dir` | `str \| Path \| None` | `None` | results **root** (see [persistence](/reference/results#persistence)) |
+| `scope_label` | `str \| None` | `None` | names a dynamic-scope run; required in that mode |
+| `persist` | `bool` | `True` | write a results tree |
+| `overwrite` | `bool` | `False` | force a full recompute of a resumable run |
+| `reporter` | `ProgressReporter \| None` | `None` | custom progress observer; wins over `report` |
+| `report` | `bool \| Literal["auto"]` | `"auto"` | live progress; `False` = silent |
+| `attacker_label` / `target_label` / `claim_label` | `str \| None` | `None` | short display names |
+
+The Controller does not create an event loop; the caller provides one via
+`asyncio.run(controller.run())` or an existing loop.
+
+### `TargetFactory`
+
+A frozen dataclass bundling "how to make a target" with "how many can run at
+once":
+
+- `create: Callable[[], Target]` returns a fresh target instance.
+- `concurrency: int = 1` how many tasks may run in parallel against independent
+  instances (validated `>= 1`).
+
+Target authors choose `concurrency` by the target's real limits: a chatbot
+wrapping an API call can comfortably use 8 or more; a heavy sandboxed target
+usually stays at 1 unless it pools internally. For a single shared instance
+(tests, an expensive resource), use the classmethod `TargetFactory.singleton(target)`,
+which locks `concurrency=1` because a shared instance cannot safely serve
+parallel tasks. The Controller still calls `target.teardown()` once per task, so
+a multi-task singleton needs an idempotent teardown.
+
+## Scope may be a fixed `Scope` or a per-task `ScopeResolver`
+
+`scope` accepts either a fixed [`Scope`](/reference/security-domains#scope-and-scope_includes)
+(one read & write surface applied to every task) **or** a
+[`ScopeResolver`](/reference/security-domains#per-task-scopes-scoperesolver) (a
+`Callable[[Task], Scope]` that computes the scope **once per task**).
+`read_only` independently accepts the same two forms, resolved separately.
+`callable(scope)` is the discriminator.
 
 ```python
 from superred.core import ScopeResolver
 from my_target import DB_ORDERS_TAG, DB_CUSTOMERS_TAG
 
-def resolve(task: Task) -> Scope:
-    # grant each task exactly the surface its goal needs
+def resolve(task) -> frozenset:
     if task.goal.description.startswith("orders:"):
         return frozenset({DB_ORDERS_TAG})
     return frozenset({DB_CUSTOMERS_TAG})
 
 controller = Controller(
-    optimizer_factory=lambda: MyOptimizer(),
-    target_factory=target_factory,
-    security_claim=claim,
-    scope=resolve,             # a ScopeResolver, not a frozenset
-    scope_label="per-goal",    # REQUIRED in dynamic mode (see below)
+    optimizer_factory=..., target_factory=target_factory, security_claim=claim,
+    scope=resolve,            # a resolver, not a frozenset
+    scope_label="per-goal",   # REQUIRED whenever scope or read_only is a resolver
 )
 ```
 
-- **`scope_label` is required in dynamic mode.** When **either** `scope` or `read_only` is callable, `scope_label` must be a non-empty `str` (else `ValueError` at construction). It names the run, since there is no single concrete scope to name it by. When **both** are fixed `frozenset`s, `scope_label` must be `None` (else `ValueError`), and the existing non-empty `(scope | read_only)` check still applies.
-- **A resolver may skip a task.** Either resolver raising `NotApplicable` contributes an empty set for its own dimension, exactly like returning `frozenset()`. The task is skipped (lands in `ThreatModelResult.skipped_tasks`, the same channel as `task.configure_target` skips) when the resolved visibility (`scope | read_only`) is empty: no tag is granted in either dimension. Any tag (read or write, from either resolver) means the task runs (e.g. `scope` `NotApplicable` but `read_only` non-empty yields a read-only-only run with no injectable controllables). Use this when a task has no meaningful surface.
-- **A resolver failure is contained per task.** If a resolver raises any exception *other* than `NotApplicable`, that one task becomes a contained error: `TaskResult.stop_reason == "error"`, `TaskResult.error` set, and sibling tasks are unaffected, so the threat model is not aborted.
-- **Return the target's exported tag singletons.** Scope matching is by identity, so the resolver MUST return the same `SecurityDomainTag` instances the target exposes (import them from the target module). A freshly constructed tag with the same `name`/`parent` will not match and will gate everything out.
+The rules (`scope_label` requirement, task-skip on empty visibility, per-task
+error containment, identity matching) are specified in
+[Security Domains](/reference/security-domains#per-task-scopes-scoperesolver).
+The resolved scope gates **all** optimizer-facing surfaces for that task (see
+[Security domain filtering](#security-domain-filtering)).
 
-The resolved scope gates **all** optimizer-facing surfaces for that task: the injectable controllables list, the observables list, read-only controllables re-presented as observables, the `FilteredTrajectory` view, the `security_domain_filter` (inject vs `ControllableNoInjection`), the feedback `sub_scores` filter, and the `RunEndEvent.security_domain`.
+## The run lifecycle
 
-For single-instance targets (tests, expensive-to-construct resources), use
-the `TargetFactory.singleton(target)` classmethod, concurrency is locked
-to 1 since a shared instance can't safely serve parallel tasks. The
-controller still calls `target.teardown()` once per task, so a multi-task
-singleton needs an idempotent teardown.
+`await controller.run(*, reporter=None) -> ThreatModelResult` runs every task in
+the claim against the configured threat model. (The keyword-only `reporter`
+overrides the constructor's for this call; `run_all` uses it to inject a shared
+dashboard lane.) Tasks run concurrently, bounded by `target_factory.concurrency`
+(an `asyncio.Semaphore` plus `asyncio.gather`), and results are collected in claim
+order.
 
-The controller does not create an asyncio event loop, the caller provides it via `asyncio.run()` or an existing loop.
+For each task:
 
-Sweeping multiple threat models (one shared live dashboard via `run_all`):
+1. `target = target_factory.create()` a fresh target owned by this task.
+2. `task.configure_target(target)`. If it raises `NotApplicable`, the task is
+   collected into `skipped_tasks` and not retried.
+3. Build the `LLMClient` from `llm_config` (fresh per task, so the budget is
+   per-task). With no `llm_config`, a noop client is used.
+4. `optimizer = optimizer_factory()` a fresh optimizer.
+5. `optimizer.initialize(goal, filtered_controllables, filtered_observables,
+   llm_client)`, only in-scope controllables and observables are passed.
+6. Create an `EventChannel` and launch `optimizer.run(channel)` as a concurrent
+   task.
+7. **Run loop**, until the optimizer signals done or `max_runs_per_task`:
+   - Create a `Trajectory(filtered_scope=scope)`; its `.filtered` view is the
+     optimizer's.
+   - Send `RunStartEvent` (carrying the filtered trajectory).
+   - `target.run(emit, send_event)`. The target emits observable events and pauses
+     at controllable points; the composed middleware filters and records (see
+     [below](#security-domain-filtering)).
+   - `task.evaluate(trajectory, target)` produces an `EvaluationResult`; the
+     Controller filters its `sub_scores` by scope.
+   - Send `RunEndEvent(evaluation=...)` (persisted to the trajectory). With
+     `include_feedback=True`, the filtered evaluation is attached.
+   - Close the trajectory; call `target.reset_ephemeral_state()` for the next run.
+   - Track best score and success across runs.
+8. Close the channel, await the optimizer task, `optimizer.teardown()`. A final
+   `target.reset_ephemeral_state()` then `target.teardown()`, and the instance is
+   discarded.
+
+A **run** is one full pass of the target plus its evaluation. A task may take many
+runs; the loop ends when the optimizer returns `RunEndResponse(done=True)`, a
+`BudgetExhaustedError` is raised, or `max_runs_per_task` is reached. The
+`stop_reason` on each [`TaskResult`](/reference/results#taskresult) records which.
+
+Throughout, the Controller streams live progress to a
+[reporter](/reference/results#live-progress-reporting) and, unless `persist=False`,
+[persists](/reference/results#persistence) each task the moment it finishes.
+
+## Security domain filtering
+
+Enforcing the threat model is the Controller's core job. It filters the scope
+across **every** optimizer-facing surface. It derives two scopes from its `scope`
+and `read_only` arguments: the **write scope** (= `scope`) and the **visibility
+scope** (= `scope | read_only`); when `read_only` is empty they are identical.
+
+1. **Controllables.** Only the **injectable** ones (matched against the write
+   scope) are passed to `initialize()`. The list means exactly "what the optimizer
+   can inject into."
+2. **Observables.** In-scope observables (visibility scope), **plus** each
+   read-only controllable re-presented as an `ObservableValue` (with
+   `content=None`). So `observables` means "what the optimizer can read."
+3. **Controllable events.** Events for controllables outside the write scope are
+   answered with `ControllableNoInjection` without reaching the optimizer. This is
+   the [`security_domain_filter` middleware](/reference/events-and-trajectory#middleware-where-scope-and-recording-live)
+   composed onto `channel.send`. Because it is given the **write** scope, events
+   under `read_only` tags are also declined, but, being within the visibility
+   scope, they and their responses stay recorded and visible.
+4. **Trajectory.** The optimizer receives a
+   [`FilteredTrajectory`](/reference/events-and-trajectory#trajectory) of only
+   in-scope items (visibility scope).
+5. **Feedback.** `sub_scores` whose `security_domain` is out of scope are dropped
+   (an untagged sub-score is always visible). The `primary_score`, `success`, and
+   `rationale` are always delivered.
+
+The full model, tags, forest, `scope` versus `read_only`, and resolvers, is on
+[Security Domains](/reference/security-domains). The filtering itself is
+implemented as [middleware](/reference/events-and-trajectory#middleware-where-scope-and-recording-live)
+composed onto the channel:
+
+```python
+send_event = compose(
+    trajectory_recorder(trajectory),          # records every event and response
+    security_domain_filter(write_scope),      # declines non-injectable controllables
+)(channel.send)
+```
+
+## LLM access and budget
+
+The Controller mediates the optimizer's LLM access; this is part of the threat
+model (it defines the attacker's compute).
+
+- **Configuration.** `llm_config=LLMConfig(...)` sets the model and credentials
+  (optional; omit for a non-LLM optimizer, which then gets a noop client).
+- **Per-task budget.** `task_cost_cap_usd` (USD) caps the attacker's cost. A fresh
+  [`LLMClient`](/reference/types#llmclient-corellmpy) is built per task, so the cap
+  resets per task (`None` = unlimited). It bounds only the attacker; the judge and
+  target are never bounded by it.
+- **Constrained client.** The `LLMClient` locks the model and credentials; the
+  optimizer cannot override them. Cost is computed per call via
+  `litellm.completion_cost()`, and a pre-call check raises `BudgetExhaustedError`
+  once the cap is reached.
+- **Usage tracking.** Each result carries usage (see
+  [`RunResult`](/reference/results#runresult) / [`TaskResult`](/reference/results#taskresult)),
+  enabling per-run cost and budget-versus-performance analysis.
+
+## Sweeping multiple threat models
+
+One Controller is one threat model. A sweep is several Controllers, built by the
+caller. To share **one** live dashboard across them, use `run_all`:
+
+{% include diagrams/d6.html %}
 
 ```python
 import itertools
+from superred.core import Controller
 from superred.core.controller import run_all
 
 controllers = [
     Controller(
         scope=s, llm_config=c,
-        optimizer_factory=..., target_factory=target_factory,
-        security_claim=claim,
+        optimizer_factory=..., target_factory=target_factory, security_claim=claim,
     )
     for s, c in itertools.product(scopes, configs)
 ]
-results = await run_all(controllers, concurrency=4)  # <=4 threat models at once
+results = await run_all(controllers, concurrency=4)   # <= 4 threat models at once
 ```
 
-## Run lifecycle
-
-`await controller.run() -> ThreatModelResult` runs every task in the security claim against the configured `(scope, llm_config)`. Tasks run concurrently bounded by `target_factory.concurrency` (`asyncio.Semaphore` + `asyncio.gather`); results are collected in input order.
-
-For each task:
-
-1. `target = target_factory.create()`, fresh `Target` instance owned by this task.
-2. `task.configure_target(target)`, if `NotApplicable`, the task is collected into `skipped_tasks` and not retried.
-3. Create `LLMClient` from `llm_config` (fresh per task, budget is per-task). If no `llm_config`, use a noop client.
-4. Create fresh optimizer via `optimizer_factory()`.
-5. `optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)`, only controllables and observables within the scope are passed.
-6. Create `EventChannel`, launch `optimizer.run(channel)` as concurrent `asyncio.Task`.
-7. **Run loop** (until optimizer signals done or `max_runs_per_task`):
-   - Create `Trajectory(filtered_scope=scope)`. Access `trajectory.filtered` for the optimizer's view.
-   - Send `RunStartEvent(filtered_trajectory)` through the channel.
-   - `target.run(emit, send_event)`, target emits `ObservableEvent` instances; `send_event` bridges to channel with security domain filtering. The `trajectory_recorder` middleware records events and responses directly to the trajectory.
-   - `task.evaluate(trajectory, target)`, returns `EvaluationResult`; controller filters `sub_scores` by scope.
-   - Send `RunEndEvent(evaluation=filtered_eval, security_domain=<scope_tag>)` through the channel; it is persisted to the trajectory. When `include_feedback=True` (default) the evaluation is attached.
-   - Close the trajectory; call `target.reset_ephemeral_state()` to reset ephemeral state for the next run within this task.
-   - Track best score / success across runs.
-   - On exception inside the run: the partial trajectory is preserved as a final `RunResult` with a zero-score evaluation; the formatted exception lands on `TaskResult.error`; `stop_reason = "error"`; loop ends.
-8. Close channel, await optimizer task, `optimizer.teardown()`. Final `target.reset_ephemeral_state()` (in `finally`) followed by `target.teardown()`; the per-task target instance is then discarded.
-
-Throughout the run the controller streams live progress (a shared live dashboard on an interactive terminal, plain lines otherwise; see [Live progress reporting](#live-progress-reporting)). Unless `persist=False`, each task's directory is published to disk the moment it finishes, so an interrupted run leaves every completed task on disk. Re-running the same experiment resumes: tasks that already produced a valid measurement are kept, only errored or missing tasks recompute (see [Resume](#resume-re-running-the-same-experiment)). After all tasks finish, `result.json` is written as a completion marker, a final results view is rendered, and the controller returns the `ThreatModelResult`.
-
-### Internal structure
-
-- `_iterate_tasks(scope, llm_config)`, runs the security claim with `asyncio.Semaphore(target_factory.concurrency)` + `asyncio.gather`. Each in-flight task acquires the semaphore, calls `target_factory.create()`, runs the task, then `target.teardown()` in `finally` before releasing the slot. Results are reassembled in input order.
-- `_run_task(task, scope, llm_config, target)`, manages the per-task lifecycle: configure, create fresh optimizer, initialize, build middleware stack, run loop, collect results.
-- `_run_single(task, target, channel, scope, run_number, trajectory)`, executes one iteration. The trajectory is owned by `_run_task` so a partial trajectory survives an exception. Returns `(evaluation, done)`.
-
-The `send_event` callback passed to `target.run` is built by composing middleware onto `channel.send`:
-```python
-send_event = compose(
-    trajectory_recorder(trajectory),
-    security_domain_filter(write_scope),
-)(channel.send)
-```
-
-The filter receives the **read & write scope** (the controller's `scope`); all other filtering uses the full visibility scope (`scope | read_only`). When `read_only` is empty the two are identical.
-
-Users can add custom middleware (logging, tracing, budget enforcement) by extending the composition.
-
-## Security domain filtering
-
-The controller enforces the security domain scope across **all optimizer inputs**:
-
-1. **Controllables**: Only the **injectable** ones are passed to `optimizer.initialize()`, filtered with `scope_includes(write_scope, c.security_domain)` (the read & write `scope`). Out-of-scope and read-only controllables are not in this list, so it means exactly "what the optimizer can inject into."
-2. **Observables**: Filtered with `scope_includes(visibility, o.observable.security_domain)` before `optimizer.initialize()`, **plus** each read-only controllable (visible but not injectable) re-presented as an `ObservableValue` (with `content=None`, since its value is revealed at runtime on the trajectory). So `observables` means "what the optimizer can read," including read-only controllables. Out-of-scope observables are never exposed.
-3. **Events**: `ControllablePreCallEvent` and `ControllablePostCallEvent` for out-of-scope controllables are answered with `ControllableNoInjection` without reaching the optimizer. Implemented as the `security_domain_filter` middleware composed onto `channel.send`. The filter is given the **read & write `scope`**, so controllable events under `read_only` tags, visible but not injectable, are declined the same way. The difference from out-of-scope events is visibility: a read-only event is inside the full visibility scope, so it (and its `ControllableNoInjection`) remains visible through the filtered trajectory, observables, and feedback.
-4. **Trajectory**: The optimizer receives a `FilteredTrajectory` (via `RunStartEvent`) that only exposes items within the security domain scope.
-5. **Feedback**: Each `sub_score` in the `EvaluationResult` carries a `security_domain`. The controller filters `sub_scores`, dropping only those whose `security_domain` is out of scope (an untagged sub-score, `security_domain=None`, is always visible). The `RunEndEvent` carries the filtered evaluation directly (when `include_feedback=True`, the default) and is persisted to the trajectory with `security_domain` set to a tag from the scope. The `primary_score` carries no `security_domain` and is never filtered; it, `success`, and `rationale` are always included (the optimizer needs the main optimization signal). The optimizer reads feedback from `event.evaluation` on `RunEndEvent`, or from past trajectories.
-
-A `Scope` is a `frozenset[SecurityDomainTag]`. `scope_includes(scope, tag)` returns `True` if ANY tag in the scope includes the target tag. This allows testing specific security boundaries, scoping to `{external_tag}` tests only external-facing surfaces, while scoping to `{root_tag}` tests everything.
-
-Access level is a property of the scope, not of each tag. The controller takes two sets: `scope` (read & write, visible and injectable) and an optional `read_only` set (visible only). `read_only` defaults to empty, so the whole `scope` is read & write, the classic behavior. To make part of the surface read-only, list it under `read_only` instead: `Controller(scope={prompt}, read_only={system})` lets the attacker see the whole `system` subtree but inject only into `prompt`. A `read_only` tag already covered by `scope` has no effect (read & write overrules, only `scope` drives the injection check, so it stays injectable); `scope` and `read_only` cannot both be empty. Internally only the injection check (item 3) uses `scope`; items 1, 2, 4, 5 and the `FilteredTrajectory` use the full visibility scope `scope | read_only`, so read-only information flows through the exact same recording mechanism as read & write surfaces.
-
-## Unified trajectory as event log
-
-There is no separate event log. The `trajectory_recorder` middleware records all events and responses directly into the trajectory as `Event | EventResponse` objects:
-
-- **Controllable events**, `ControllablePreCallEvent`, `ControllablePostCallEvent`.
-- **Controllable responses**, `ControllableInjection`, `ControllableNoInjection`.
-- **Observable events**, `ObservableEvent` emitted by the target (model requests, model responses, etc.).
-- **RunEndEvent**, persisted to the trajectory by the controller after evaluation. Carries `evaluation: EvaluationResult | None` and has `security_domain` set from the scope.
-
-The trajectory IS the event log. `RunStartEvent` is NOT persisted to the trajectory, it carries no additional information and always appears at a fixed position. `RunEndEvent` IS persisted because it carries the evaluation result. To inspect events and responses for a run, query the trajectory items by type.
-
-## Result types
-
-### RunResult (frozen)
-
-One target execution + evaluation:
-- `trajectory: Trajectory`, the run trajectory.
-- `evaluation: EvaluationResult`, the evaluation result for this run.
-- `llm_usage: LLMUsage`, cumulative optimizer LLM usage after this run. This is a cumulative snapshot, each successive run includes all prior usage, enabling budget-vs-performance tracking.
-- `run_usage_delta: LLMUsage` (default empty), **this run's own** usage: `llm_usage` minus the previous run's cumulative snapshot. Summing `run_usage_delta` across a task's runs equals the task total; summing `llm_usage` over-counts (it would multiply-count the cumulative snapshots). Use the delta for per-run cost, the cumulative for budget curves.
-- `started_at: datetime | None` / `ended_at: datetime | None` (both default `None`), wall-clock UTC bounds of this run.
-- `evaluated: bool` (default `True`), whether the score came from the evaluator; `False` for the synthetic zero-score run appended on an error or budget path.
-- `errored: bool` (default `False`), whether the run raised mid-execution.
-- `done: bool` (default `False`), whether the optimizer signalled it wanted to stop after this run.
-
-### TaskResult (frozen)
-
-All runs for one task:
-- `task: Task[Target]`, the task that was evaluated.
-- `runs: list[RunResult]`, all run results, in order.
-- `best_score: Score`, highest primary score across all runs.
-- `best_evaluation: EvaluationResult`, the evaluation that produced the best score.
-- `success: bool`, whether any run achieved the adversarial goal.
-- `llm_usage: LLMUsage`, total optimizer LLM usage across all runs.
-- `stop_reason: Literal["done", "max_runs", "budget_exhausted", "error"]`, why the run loop ended: optimizer signaled `RunEndResponse(done=True)`, hit `max_runs_per_task`, `BudgetExhaustedError` was raised, or an unexpected exception escaped the optimizer/target/evaluator and the task was abandoned.
-- `scope: Scope` (default `frozenset()`): the read & write scope enforced for **this** task. In static mode it equals the controller's `scope` for every task; with a `ScopeResolver` it is the per-task resolved scope.
-- `read_only: Scope` (default `frozenset()`): the read-only scope enforced for **this** task. In static mode it equals the controller's `read_only` for every task; with a `ScopeResolver` it is the per-task resolved read-only scope.
-- `error: str | None`: formatted exception (type + message + traceback) when something went wrong, `None` otherwise. Set whenever the controller observes an exception associated with the task. Most commonly populated with `stop_reason="error"`, but also populated as a bonus diagnostic when the run loop classified the task cleanly (`"done"` / `"max_runs"` / `"budget_exhausted"`) yet the optimizer task subsequently raised during teardown. Consumers should treat `error` and `stop_reason` as independent fields: `error is not None` does not imply `stop_reason == "error"`, and vice versa is the common (but not required) case.
-- `started_at: datetime | None` / `ended_at: datetime | None` (both default `None`), wall-clock UTC bounds of the task's whole run loop.
-
-### ThreatModelResult (frozen)
-
-Results for one (scope, llm_config) combination:
-- `scope: Scope`: the visibility scope tested. **In dynamic mode (a `ScopeResolver`) this is an empty frozenset**; the per-task truth lives on each `TaskResult.scope`.
-- `read_only: Scope`: extra visible-but-not-injectable tags (empty for an all-read & write run; also empty in dynamic mode).
-- `scope_label: str | None` (default `None`): `None` in static mode (unchanged); in dynamic mode it is the label passed to the controller and names the run (since `scope`/`read_only` are empty here).
-- `llm_config: LLMConfig | None`, the LLM configuration used, or `None` when no LLM configs were provided.
-- `task_cost_cap_usd: float | None` (default `None`), the attacker's per-task cost cap in USD, or `None` for unlimited.
-- `task_results: list[TaskResult]`, results for each evaluated task (kept and reran tasks merged in claim order).
-- `skipped_tasks: list[Task[Target]]`: tasks that raised `NotApplicable` (during `configure_target` or, in dynamic mode, from the resolver).
-- `started_at: datetime | None` / `ended_at: datetime | None` (both default `None`), wall-clock UTC bounds of the whole threat-model run.
-
-> **Resume note.** Kept tasks (not re-run) are reconstructed from disk into `task_results` with faithful scalar metrics but an **empty `runs` list**: their full trajectories stay on disk and are not re-loaded into memory. Reran tasks carry their full `runs`.
-
-## LLM access and budget tracking
-
-The controller mediates LLM access for the optimizer. This is part of the threat model, it defines what computational resources the attacker has.
-
-- **Configuration**: Pass `llm_config=LLMConfig(...)` to the controller constructor (optional, omit for non-LLM optimizers). The config specifies the model and API credentials.
-- **Per-task budget**: Pass `task_cost_cap_usd` (USD) for a per-task cost cap on the attacker's LLM. A fresh `LLMClient` is created per task, so the cap resets per task (`None` = unlimited). It bounds only the attacker; the judge and target are never bounded by it.
-- **Non-LLM optimizers**: When `llm_config` is `None`/omitted, the optimizer receives a noop `LLMClient` that raises `BudgetExhaustedError` on any call.
-- **Constrained client**: The `LLMClient` locks the model, API base, and API key. The optimizer cannot override them.
-- **Cost-based budget enforcement**: Pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches the client's cost cap (`task_cost_cap_usd` for the attacker). Cost is computed per call via `litellm.completion_cost()`, which uses the model's pricing to convert token usage to USD.
-- **Usage tracking**: Each `RunResult` includes a cumulative `llm_usage` snapshot (calls, cost) plus a `run_usage_delta` (that run's own spend). Each `TaskResult` includes the total `llm_usage`. This enables both per-run cost and budget-vs-performance analysis across runs.
-- **Summary output**: The live progress display and the persisted `summary` include the attack-success rate, a stop-reason histogram, and total call counts and cost (see [Live progress reporting](#live-progress-reporting)).
+`run_all(controllers, *, concurrency=None, report="auto")` runs the Controllers
+(all at once when `concurrency` is `None`), coordinates them onto a single shared
+dashboard, and returns their `ThreatModelResult`s in input order. A bare
+`asyncio.gather(*(c.run() for c in controllers))` also runs and persists
+correctly, but does not coordinate the live display. If they share one
+`results_dir` root, the `experiments.json` index links them all (see
+[persistence](/reference/results#persistence)).
 
 ## Design decisions
 
-- **Concrete class, not ABC**: There is one orchestration logic.
-- **Optimizer factory**: A fresh optimizer is created for each (task, scope, llm_config) combination via `optimizer_factory()`. This ensures clean state and allows threat model-specific initialization.
-- **Target factory**: A fresh target is created for each task via `target_factory.create()`. Concurrent tasks never share mutable target state. The factory carries the per-target concurrency limit, which the controller enforces via `asyncio.Semaphore`. Cheap targets (a chatbot wrapping an API) should bump this; heavy targets that hold expensive resources can either stay at the default of 1 or pool internally inside their factory.
-- **Channel-based**: Controller creates an `EventChannel` per task. Target's `send_event` callback bridges to `channel.send()` with filtering. Optimizer pulls from channel in `run()`.
-- **Multi-run loop**: Runs until optimizer signals `RunEndResponse(done=True)` or `max_runs_per_task` safety limit. `max_runs_per_task` is validated >= 1 at construction.
-- **Concurrent optimizer**: `optimizer.run(channel)` is launched as an `asyncio.Task`. The optimizer stays alive across all runs for a task, one channel, one optimizer task per task.
-- **Ephemeral reset after each run**: `target.reset_ephemeral_state()` is called after each evaluation to reset ephemeral state.
-- **Exception-safe teardown**: `optimizer.teardown()` is called per task in a `finally` block. Each task's `target.teardown()` is called in `_iterate_tasks`'s per-task `finally` so target resources are released before the next task's semaphore slot opens, regardless of how the task ended.
-- **Exception-safe channel shutdown**: If `target.run()` or `task.evaluate()` raises, the `finally` block in `_run_task` closes the channel and awaits the optimizer task, preventing deadlock.
-- **Per-task error containment**: An unexpected exception escaping `optimizer.on_event`, `target.run`, `task.evaluate`, or `target.reset_ephemeral_state` is caught inside the run loop. The task ends with `stop_reason="error"` and any runs already completed before the failure are preserved in `TaskResult.runs`. Errors raised outside the run loop (e.g. `task.configure_target` non-`NotApplicable`, `optimizer.initialize`) are caught at the `_iterate_tasks` level as a backstop and recorded as a synthetic error `TaskResult` with `runs=[]`. `BudgetExhaustedError` is preserved as `stop_reason="budget_exhausted"` wherever it originates inside the optimizer's run loop or `optimizer.initialize` (so an optimizer that exhausts its budget during a warmup call is not misclassified). `NotApplicable` continues to be handled distinctly (`skipped_tasks`). The rest of the threat model, and every later threat model, still runs and is persisted.
-- **Post-task target reset**: `target.reset_ephemeral_state()` is called at the end of every task's run loop in the `finally` block, even when the loop ended via an error and the inner-loop reset-after-success was skipped. This means the next task in the threat model always starts against a target that has been told to reset its ephemeral state at least once after the previous task's last run. The call is wrapped so a failing `target.reset_ephemeral_state()` is logged but does not propagate or block the next task. The `optimizer.initialize` early-return paths (budget-exhausted and generic error) do not invoke this post-task reset because the run loop never started; targets whose `configure_target` mutates more than config slots should not rely on `reset_ephemeral_state` running in that case.
-- **Unified trajectory**: Events and responses are recorded directly to the trajectory via the `trajectory_recorder` middleware. No separate event log, the trajectory is the single source of truth.
-- **CLI-ready**: Constructor takes plain parameters. A future CLI module can parse config, instantiate components, call `asyncio.run(controller.run())`. `ThreatModelResult` provides structured output for programmatic use.
-- **LLM access as threat model parameter**: The model and budget are experiment-level settings, not optimizer choices. The controller creates a constrained `LLMClient` per task and the optimizer cannot escape the configured model/credentials. Budget limits are a fairness measure for comparing optimizer strategies.
-- **Per-task LLM budget**: Each task gets a fresh `LLMClient` with reset counters. This ensures budget fairness when evaluating across multiple tasks and enables per-task budget analysis.
-- **Cumulative usage snapshots plus per-run delta**: `RunResult.llm_usage` is cumulative (includes all prior runs), which is what budget-vs-performance curves want, each point shows (total_budget_spent, score_at_that_point). `RunResult.run_usage_delta` carries the same run's own spend so per-run cost is available without differencing snapshots. Summing deltas across a task equals the task total; summing the cumulative snapshots does not.
-
-## Live progress reporting
-
-The controller streams live progress at each lifecycle point (threat-model start, task start, each run, task complete, task skipped, diagnostics, threat-model end). One constructor argument (`report`) controls it:
-
-- **`report: bool | Literal["auto"] = "auto"`**. `True`/`"auto"` show progress; `False` is silent. What "show" means degrades automatically to the terminal:
-  - On a real interactive terminal you get a **live dashboard** (a `rich` canvas): a top bar with overall progress (tasks done, attack-success rate, running count, cost, elapsed), then one block per threat model carrying its own identity (attacker/target/claim/model/scope/budget) and metrics, with the currently-running tasks listed indented beneath it (each with a live run/score/cost). A final results view renders when the run ends.
-  - On a non-TTY, in CI (`CI` set), under `NO_COLOR`, on a dumb terminal, or when output is piped, it falls back to **plain line output**: a start banner, one line per task completion, and an end summary.
-  - `SUPERRED_NO_DASHBOARD` forces plain output even on a TTY.
-
-**Concurrent controllers share one dashboard.** Run a sweep through `run_all` and the threat models render into a single shared live canvas, one row (lane) each, rather than fighting over the terminal. (A bare `asyncio.gather(*(c.run() ...))` runs and persists correctly but does not coordinate the live display: each `run()` grabs the process-global dashboard independently, so a capped sweep can stop, re-arm, and mix with plain output.) `run_all` owns one canvas for the whole sweep via `Dashboard.expect(n)`. `rich` (`>=14,<15`) is a core dependency.
-
-## Persistence (schema v4)
-
-Persistence is **on by default** (`persist=True`). Set `persist=False` to write nothing. Each run lands in one self-describing directory tree that the [reader API](#reading-results-back), the [resume engine](#resume-re-running-the-same-experiment), and a static results website can consume without globbing.
-
-```
-{results_folder}/
-├── experiments.json                      ← cross-experiment index (sweep landing)
-└── {slug}-{hash8}/                        ← one experiment (one threat model)
-    ├── manifest.json                      ← index: params + summary + tasks[]
-    ├── result.json                        ← claim-level final metrics (completion marker)
-    ├── logs/diagnostics.log               ← experiment-level diagnostics
-    ├── tasks/
-    │   └── 00001__{goalslug}/             ← CURRENT (latest) result for this task
-    │       ├── task.json                  ← per-task result + metrics
-    │       ├── iterations.json            ← per-run score/metric progression (the accumulator)
-    │       ├── trajectories/run_00001.json
-    │       └── logs/diagnostics.log       ← this task's diagnostics (JSONL)
-    └── previous_01/                        ← immutable snapshot of a prior run
-        result.json  tasks/...
-```
-
-- **Results folder**: `results_dir` is the folder results are written to. When omitted it resolves to the `SUPERRED_RESULTS_DIR` environment variable, else `./superred-results/`. Many controllers in a sweep share **one** folder, each landing in its own `{slug}-{hash8}` subfolder, and the shared `experiments.json` indexes them all.
-- **Experiment folder name**: `{slug}-{hash8}`. `{slug}` is a short human label `{attacker}__{target}__{claim}__{model}` (segments sanitized and truncated; it does **not** list scope tags). `{hash8}` is 8 hex of a sha256 over the **measurement identity** (attacker, target, claim, model, scope, read_only, budget, max_runs, feedback), so two distinct threat models never collide and a rerun of identical parameters resolves to the same folder (and resumes). The schema version is deliberately **excluded** from the identity, so a framework upgrade still resumes a prior run. The slug names come from `attacker_label` / `target_label` / `claim_label`, each falling back to a factory/class name, else a generic default. When `llm_config` is `None`, the model segment is `no-llm`.
-- **`result.json`** (claim-level, the completion marker, written last): `schema_version` (`4`), an `experiment` block (the identity + display parameters), `timing` (`started_at`, `completed_at`), and a `summary` block: `asr`, `n_tasks`, `n_success`, `n_completed`, `n_failed`, `n_error`, `n_budget_exhausted`, `n_skipped`, `max_primary_score`, `mean_primary_score`, `total_llm_usage`. `asr = n_success / n_completed` where `n_completed = done + max_runs + budget_exhausted` (errored and skipped tasks are excluded from the denominator). No trajectories at this level.
-- **`manifest.json`**: the same `experiment` block and `summary`, a `status` (`in_progress` / `complete`), and a `tasks[]` array of scalar per-task entries (index, goal, `goal_hash`, `dir`, status, success, best score, stop reason, run count, cost, timing). It is rewritten as tasks land, so it is always a current index of what is on disk.
-- **`tasks/{NNNNN}__{goalslug}/task.json`**: the per-task result. Repeats `schema_version`, `index`, `goal`, `goal_hash`, that task's own resolved `scope`/`read_only`, `llm_config` (model only), `task_cost_cap_usd`, plus `status`, `success`, `stop_reason`, `best_score`, `best_evaluation`, `n_runs`, `llm_usage`, `timing`, and `error` (the formatted traceback, present when the task failed). Written incrementally: a task's directory is published the moment it finishes (success, failure, error, or budget-exhausted), so an interrupted run leaves every completed task on disk.
-- **`iterations.json`** (the accumulator): the per-run progression, one entry per run with `primary_score`, `success`, `evaluated`/`errored`/`done`, per-run `usage_delta` and `usage_cumulative`, `timing`, and a relative path to that run's trajectory file.
-- **`trajectories/run_NNNNN.json`**: one file per run, the full serialized trajectory (events and responses).
-- **Failed tasks are still persisted**: per-task error containment (see [Design decisions](#design-decisions)) means one task's crash does not abandon the threat model. The failing task lands on disk with `status="error"`, the partial trajectory accumulated before the crash, and the traceback under `error`.
-- **Atomicity and crash safety**: every file is written tmp + `os.replace`; every task directory is published tmp-dir + `rename`. `manifest.json` carries `status="in_progress"` while the run is live and flips to `status="complete"` only once `result.json` (the completion marker) is written last, so an interrupted run is recognizable by its still-`in_progress` manifest.
-
-### Resume: re-running the same experiment
-
-Because the folder name is the measurement identity, re-running the **same** controller resolves to the **same** `{slug}-{hash8}` folder and **resumes** rather than colliding:
-
-- Tasks whose prior result was a valid measurement (`success`, `failed`, or `budget_exhausted`) are **kept** and not re-run. Only `error`, interrupted, or missing tasks recompute.
-- A task is matched to its prior result by (same 1-based index + same goal content hash), so appending tasks to a claim resumes the existing ones and computes only the new ones.
-- **`overwrite=True`** forces a full recompute of every task.
-- Kept tasks are folded back into the returned `ThreatModelResult` from disk with faithful scalar metrics but an empty `runs` list (their trajectories stay on disk, unread).
-- **Crash-safe rerun**: before any current file changes, the prior complete state is snapshotted immutably into the next `previous_NN/`. Kept tasks are shared into the snapshot by hardlink (copy fallback), so they belong to both the snapshot and the current state at no extra disk cost, and prior snapshots stay immutable. An interrupted rerun can never destroy the only copy of a prior result.
-
-### Security: persisted content is sensitive
-
-**This is a red-teaming framework. Persisted trajectories contain jailbreaks, planted secrets, and exfiltrated content, and they are NOT scrubbed.** `LLMConfig` serializes `{model}` only (`api_key` and `api_base` are never written), but that is the only redaction. Treat the whole results folder as **sensitive**: it holds working attacks and whatever the target leaked under them. Keep credentials out of prompts, observable payloads, and config values, since those flow verbatim into the trajectory files.
-
-### Reading results back
-
-`superred.core.persistence` exposes a small public reader API (for analysis code and the results website), so you never hand-parse the tree:
-
-```python
-from superred.core.persistence import (
-    load_experiments_index,   # (results_root) -> the cross-experiment index
-    load_manifest,            # (experiment_dir) -> params + summary + tasks[]
-    load_result,              # (experiment_dir) -> claim-level final metrics
-    iter_tasks,               # (experiment_dir) -> list[TaskView], one scalar view per task
-    load_task,                # (task_dir) -> per-task result + metrics
-    load_iterations,          # (task_dir) -> per-run progression
-    load_trajectory,          # (task_dir, run_number) -> one run's full trajectory
-)
-```
-
-### Results website
-
-The framework ships a single self-contained static HTML dashboard (`dashboard.html`) for the results tree. Point it at (or serve) a results folder and it reads the JSON files, shows the metrics, filters tasks by outcome (success / failure / error), and drills into each task's runs and trajectories. It is generic and needs no build step; its internals are out of scope here.
-
-## Middleware (how filtering is implemented)
-
-The security filtering and trajectory recording are implemented as
-**middleware**: small functions that wrap the event handler. The Controller
-builds the target's `send_event` by composing them onto the channel:
-
-```python
-send_event = compose(
-    trajectory_recorder(trajectory),         # records every event and response
-    security_domain_filter(scope),           # declines non-injectable controllables
-)(channel.send)
-```
-
-The filter receives the read & write **`scope`** (not the wider visibility
-scope that also includes `read_only` tags), so it declines both out-of-scope
-controllable events and in-scope events under `read_only` tags (the latter stay
-recorded and visible; see
-[Security Domains](/guide/security-domains#access-levels-read-only-surfaces)).
-When `read_only` is empty the read & write scope equals the full visibility scope.
-
-`compose(a, b)(handler)` applies `a` outermost, then `b`, then the inner handler,
-with zero extra tasks or channels. The two built-ins
-(`security_domain_filter`, `trajectory_recorder`) live in
-`superred.core.middleware`.
-
-This is the mechanism that enforces scope, and it is worth understanding when
-reading the Controller. Note, though, that wiring custom middleware into a run is
-**not** a public extension point today: the Controller composes a fixed stack
-internally. If you need extra behaviour (rate limiting, tracing), the supported
-places to put it are inside your target's `run()` or your optimizer's
-`on_event()`. For the design rationale, see
-the [Architecture Overview](/reference/) above.
+- **A concrete class, not an ABC.** There is one orchestration logic.
+- **Fresh instances per task.** A new optimizer (`optimizer_factory()`) and a new
+  target (`target_factory.create()`) per task, so concurrent tasks never share
+  mutable state and each starts clean.
+- **Channel-based bridging.** The Controller creates one `EventChannel` per task
+  and bridges the target's `send_event` onto it through the middleware stack; the
+  optimizer pulls from the channel at its own pace.
+- **The optimizer outlives the runs.** `optimizer.run(channel)` is one task that
+  stays alive across every run of the task; only the target is reset between runs.
+- **Ephemeral reset between runs; fresh instance between tasks.**
+  `target.reset_ephemeral_state()` runs after each evaluation and once more at task
+  end (in a `finally`, so it runs even after an error). Durable state survives it;
+  it is discarded only when the next task gets a fresh instance.
+- **Per-task error containment.** An unexpected exception escaping the optimizer,
+  target, or evaluator is caught inside the run loop: the task ends with
+  `stop_reason="error"`, its partial trajectory and traceback are preserved, and
+  the rest of the run, and every later threat model, still runs and is persisted.
+  `BudgetExhaustedError` is preserved distinctly as `"budget_exhausted"`, and
+  `NotApplicable` as a skip.
+- **Exception-safe shutdown.** If a run raises, the `finally` closes the channel
+  and awaits the optimizer task, so no `channel.send` deadlocks; teardown of both
+  optimizer and target is wrapped in `finally`.
+- **The trajectory is the single event log.** Events and responses are recorded
+  directly onto the trajectory, the
+  [`trajectory_recorder`](/reference/events-and-trajectory#middleware-where-scope-and-recording-live)
+  for the controllable traffic, the target's `emit` for observable events, and the
+  controller itself for the `RunEndEvent`. There is no separate log.

@@ -1,0 +1,84 @@
+<div class="dc-figure">
+<figure data-screen-label="D1 architecture" style="margin:0;box-sizing:border-box;max-width:900px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:20px 24px;font-family:var(--font-serif);color:var(--ink);">
+  <div style="position:relative;width:100%;aspect-ratio:1120 / 640;">
+   <div style="position:absolute;inset:0;transform:scale(1.09);transform-origin:center;">
+
+    <svg viewBox="0 0 1120 640" preserveAspectRatio="xMidYMid meet" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+      <defs>
+        <marker id="d1ah" markerWidth="10" markerHeight="10" refX="7.6" refY="4.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L8.5,4.5 L0,9 Z" fill="#111111"></path>
+        </marker>
+      </defs>
+      <line x1="550" y1="104" x2="550" y2="148" stroke="#111111" stroke-width="1.4" marker-end="url(#d1ah)"></line>
+      <line x1="505" y1="210" x2="505" y2="298" stroke="#111111" stroke-width="1.4" marker-end="url(#d1ah)"></line>
+      <line x1="610" y1="210" x2="610" y2="298" stroke="#111111" stroke-width="1.4" marker-end="url(#d1ah)"></line>
+      <line x1="260" y1="468" x2="396" y2="468" stroke="#111111" stroke-width="1.6" marker-end="url(#d1ah)"></line>
+      <line x1="400" y1="500" x2="264" y2="500" stroke="#111111" stroke-width="1.6" marker-end="url(#d1ah)"></line>
+      <line x1="720" y1="468" x2="836" y2="468" stroke="#111111" stroke-width="1.6" marker-end="url(#d1ah)"></line>
+      <line x1="840" y1="500" x2="724" y2="500" stroke="#111111" stroke-width="1.6" marker-end="url(#d1ah)"></line>
+      <line x1="940" y1="520" x2="940" y2="543" stroke="#808080" stroke-width="1.2"></line>
+    </svg>
+
+    <!-- SecurityClaim -->
+    <div style="position:absolute;left:40.625%;top:7.19%;width:16.964%;height:9.06%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;">
+      <div style="font-size:16px;font-weight:500;line-height:1;">SecurityClaim</div>
+      <div style="font-size:10.5px;color:var(--gray);line-height:1;">re-iterable tasks</div>
+    </div>
+
+    <!-- Task -->
+    <div style="position:absolute;left:41.964%;top:23.44%;width:14.286%;height:9.375%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;">
+      <div style="font-size:16px;font-weight:500;line-height:1;">Task</div>
+      <div style="font-size:10.5px;color:var(--gray);line-height:1;">one objective</div>
+    </div>
+
+    <!-- Controller -->
+    <div style="position:absolute;left:35.71%;top:46.875%;width:28.57%;height:40.625%;box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;padding-top:14px;">
+      <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);">Framework</div>
+      <div style="font-size:23px;font-weight:500;line-height:1.1;margin-top:2px;">Controller</div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--gray-33);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:3px 12px;white-space:nowrap;">scope filter</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--gray-33);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:3px 12px;white-space:nowrap;">trajectory recorder</span>
+      </div>
+      <div style="position:absolute;left:0;bottom:0;width:100%;height:30.8%;background:var(--code-bg);border-top:1px solid var(--line);border-radius:0 0 5px 5px;display:flex;align-items:center;justify-content:center;">
+        <span style="font-family:var(--font-mono);font-size:12px;letter-spacing:0.02em;color:var(--gray);">EventChannel</span>
+      </div>
+    </div>
+
+    <!-- Target -->
+    <div style="position:absolute;left:5.36%;top:62.5%;width:17.86%;height:18.75%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0 8px;">
+      <div style="font-size:19px;font-weight:500;line-height:1;">Target</div>
+      <div style="font-size:11px;color:var(--gray);line-height:1.2;text-align:center;">the AI system &middot; run loop</div>
+    </div>
+
+    <!-- Optimizer -->
+    <div style="position:absolute;left:75%;top:62.5%;width:17.86%;height:18.75%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0 8px;">
+      <div style="font-size:19px;font-weight:500;line-height:1;">Optimizer</div>
+      <div style="font-size:11px;color:var(--gray);line-height:1.2;text-align:center;">the attacker &middot; actor task</div>
+    </div>
+
+    <!-- LLMClient (subordinate) -->
+    <div style="position:absolute;left:77.235%;top:85.16%;width:13.39%;height:6.56%;box-sizing:border-box;border:1px solid var(--line);border-radius:5px;background:var(--code-bg);display:flex;align-items:center;justify-content:center;gap:6px;">
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--gray-33);">LLMClient</span>
+      <span style="font-size:9.5px;color:var(--gray);font-style:italic;">optional</span>
+    </div>
+
+    <!-- arrow labels -->
+    <div style="position:absolute;left:20%;top:36%;width:24%;text-align:right;">
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--gray-33);line-height:1.2;">configure_target()</div>
+      <div style="font-size:9.5px;color:var(--gray);line-height:1.2;">before each run</div>
+    </div>
+    <div style="position:absolute;left:57%;top:36%;width:24%;text-align:left;">
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--gray-33);line-height:1.2;">evaluate()</div>
+      <div style="font-size:9.5px;color:var(--gray);line-height:1.2;">after each run</div>
+    </div>
+    <div style="position:absolute;left:52%;top:19.5%;font-size:11px;font-style:italic;color:var(--gray);">iterates tasks</div>
+
+    <div style="position:absolute;left:29.46%;top:71.1%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:11px;color:var(--ink);background:var(--paper);padding:0 5px;">Event</div>
+    <div style="position:absolute;left:29.46%;top:80.5%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:11px;color:var(--gray);background:var(--paper);padding:0 5px;">EventResponse</div>
+    <div style="position:absolute;left:69.64%;top:71.1%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:11px;color:var(--ink);background:var(--paper);padding:0 5px;">Event</div>
+    <div style="position:absolute;left:69.64%;top:80.5%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:11px;color:var(--gray);background:var(--paper);padding:0 5px;">EventResponse</div>
+
+   </div>
+  </div>
+</figure>
+</div>

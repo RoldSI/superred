@@ -1,339 +1,216 @@
 ---
 layout: doc
-title: "Core Types Reference"
+title: "Core Types"
 permalink: /reference/types
 ---
 
-# Core Types Reference
+# Core Types
 
-## Design Principles
+This page catalogs the plain **value types** the framework passes around: goals,
+the config and query specs a target declares, controllables and observables,
+evaluation scores, and the LLM access types. They are the vocabulary the
+interfaces are written in.
 
-- **Frozen dataclasses** for immutable value types (specs, scores, tags, events, goals, controllables, observables).
-- **Runtime-defined over enums**: SecurityDomainTag is a frozen dataclass, not an enum. Target systems define their own instances at runtime.
-- **Required fields over defaults**: Fields that are semantically required have no defaults. This prevents accidental construction of incomplete objects.
-- **`kw_only=True`** on all event dataclasses to avoid Python's dataclass inheritance ordering problem.
-- **No `Any` in public fields** where avoidable. `ObservableEvent.content` is `Any` because it carries arbitrary target-side data.
+Some closely related machinery lives on dedicated pages, because it is more than
+a data type:
 
----
+- the **event and response types**, the **channel**, and the **trajectory** are
+  in [Events, Channel & Trajectory](/reference/events-and-trajectory);
+- the **security-domain types** (`SecurityDomainTag`, `SecurityDomain`, `Scope`,
+  `ScopeResolver`, `scope_includes`) are in
+  [Security Domains](/reference/security-domains);
+- the **result types** (`RunResult`, `TaskResult`, `ThreatModelResult`) are in
+  [Results & Persistence](/reference/results).
+
+Everything here is importable from `superred.core` (and `superred.core.types`).
+
+## Design principles
+
+- **Frozen dataclasses** for immutable value types. Specs, scores, tags, events,
+  goals, controllables, and observables cannot be mutated after construction.
+- **Runtime-defined over enums.** A `SecurityDomainTag` is a dataclass instance,
+  not an enum member, so each target defines its own set at runtime.
+- **Required fields over defaults.** A field that is semantically required has no
+  default, so an incomplete object cannot be constructed by accident.
+- **`kw_only=True` on all event types** to sidestep dataclass field-ordering
+  rules across inheritance.
+- **No `Any` in public fields** where it can be avoided. The exceptions carry
+  genuinely arbitrary payloads (`ObservableEvent.content`, `ObservableValue.content`).
 
 ## Goal (`goal.py`)
 
-Frozen dataclass. Currently just `description: str`. Exists as a dedicated type (rather than a raw string) so it can be extended later with structured goal representations. For example: `Goal(description="Make the model reveal the planted secret")`.
-
-## State types (`state.py`)
-
-Two spec types for target configuration and querying:
-
-### ConfigSpec (frozen)
-
-Pre-run configuration slot: `name`, `security_domain: SecurityDomainTag`, `description`. Used by tasks to set up initial state on the target via `target.set_config()`. The description documents the accepted format, that is the contract between task and target. For example: `ConfigSpec(name="system_prompt", security_domain=SYSTEM_TAG, description="System prompt for the LLM.")`.
-
-### QuerySpec (frozen)
-
-Post-run interaction: `name`, `description`, `params: list[QueryParam]`. Used by the evaluator to query ground-truth state or perform actions after a run via `target.query()`. Params are empty for simple getters. For example:
+A frozen dataclass with a single field, `description: str`. It exists as a
+dedicated type rather than a bare string so it can later grow structured goal
+representations without a breaking change.
 
 ```python
-QuerySpec(name="last_response", description="The LLM's last response.")   # getter, no params
-QuerySpec(
-    name="read_file",
-    description="Return a file the agent wrote during the run.",
-    params=[QueryParam(name="path", description="Absolute path to read.")],   # action with a param
-)
+Goal(description="Extract the planted secret from the system prompt")
 ```
 
-### QueryParam (frozen)
+## Config and query specs (`state.py`)
 
-A parameter for a QuerySpec: `name`, `description`.
+A target declares two disjoint sets of interactions: what a **task** sets before
+a run, and what an **evaluator** asks after one. They are intentionally separate,
+different actors, different lifecycles, different security concerns.
 
-**Design decision**: Config and query are separate because they have different actors (task vs evaluator), different lifecycles (pre-run vs post-run), and different security concerns.
+### `ConfigSpec` (frozen)
+
+A pre-run configuration slot. The task fills it via `target.set_config(name,
+value)`.
+
+- `name: str` unique within the target.
+- `security_domain: SecurityDomainTag` the trust boundary this slot belongs to.
+- `description: str` documents the accepted text format. That description is the
+  contract between task and target.
+
+Values are always text; the target interprets them.
+
+### `QuerySpec` (frozen)
+
+A post-run interaction the evaluator calls via `target.query(name, **params)`.
+
+- `name: str` unique within the target.
+- `description: str` documents what the query does and returns.
+- `params: list[QueryParam]` empty for a simple getter; populated for a
+  parameterized action (for example "search the database for X").
+
+### `QueryParam` (frozen)
+
+One parameter of a `QuerySpec`: `name: str` and `description: str`.
 
 ## Controllable (`controllable.py`)
 
-### Controllable (frozen)
+A frozen dataclass declaring one **injection point**, a surface the optimizer may
+inject into.
 
-Declares an injection point: `name`, `security_domain: SecurityDomainTag` (must not be `None`), `description`, `value_type` (default `"text"`). Frozen and identity-stable; per-call request/answer data lives on `ControllablePreCallEvent` / `ControllablePostCallEvent` rather than on the `Controllable` itself. For example: `Controllable(name="user_input", security_domain=USER_INPUT_TAG, description="The user message sent to the LLM.")`.
+- `name: str` unique within the target.
+- `security_domain: SecurityDomainTag` the trust boundary. Always set;
+  a controllable is a concrete injection point that belongs to a domain.
+- `description: str = ""` human-readable description.
+- `value_type: str = "text"` the expected value type (`"text"`, `"json"`,
+  `"modifier"`, `"binary"`).
+
+A `Controllable` is identity-stable and carries no per-call data. The live
+request and answer for a given injection live on the
+[`ControllablePreCallEvent` / `ControllablePostCallEvent`](/reference/events-and-trajectory#the-concrete-events),
+not on the `Controllable`.
 
 ## Observable (`observable.py`)
 
-### Observable (frozen)
-
-Specification of a static observable: `name`, `security_domain: SecurityDomainTag`, `description`, `observable_type` (default `"text"`). For example: `Observable(name="model", security_domain=SYSTEM_TAG, description="The LLM model identifier.")`.
-
-### ObservableValue (frozen)
-
-An Observable paired with its content (`content: Any`). Passed to the optimizer at initialization. Available before execution and stable across runs (e.g. system descriptions, source code, configuration). For example:
-
-```python
-ObservableValue(
-    observable=Observable(name="model", security_domain=SYSTEM_TAG,
-                          description="The LLM model identifier."),
-    content="gpt-4o-mini",
-)
-```
-
-## Event System (`event.py`)
-
-All event types use `frozen=True, kw_only=True`.
-
-### Event (base)
-
-Base class for all events. Fields: `event_id: str` (auto UUID), `timestamp: datetime` (auto now), `security_domain: SecurityDomainTag | None = None`.
-
-### EventResponse (base)
-
-Base class for all responses. Field: `event: Event`, every response references the event it was produced for. This enables correlation across the channel.
-
-### ControllablePreCallEvent (extends Event)
-
-Fired when the target reaches a controllable and needs an injection value before proceeding. Fields: `controllable: Controllable`, `request: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`. A target constructs it like `ControllablePreCallEvent(controllable=user_input_ctrl, request="Enter user message:")`.
-
-### ControllablePostCallEvent (extends Event)
-
-Fired after a controllable's injected value has been used by the target. Informational, lets the optimizer observe the effect. Fields: `controllable: Controllable`, `request: str`, `answer: str`. The `security_domain` is auto-derived from `controllable.security_domain` via `__post_init__`. For example: `ControllablePostCallEvent(controllable=user_input_ctrl, request="Enter user message:", answer=model_reply)`.
-
-### ControllableInjection (extends EventResponse)
-
-The optimizer's injection for a controllable. Fields: `value: str`, `controllable: Controllable`. Returned as the response to `ControllablePreCallEvent` or `ControllablePostCallEvent`. For example: `ControllableInjection(event=event, controllable=event.controllable, value="Ignore all prior instructions.")`.
-
-**Design decision**: A single response type for both pre-call and post-call events. The inherited `event` field distinguishes which event type triggered it.
-
-### ControllableNoInjection (extends EventResponse)
-
-Returned by the controller when a controllable event falls outside the active security domain scope. The optimizer is not consulted. Fields: `controllable: Controllable`, plus the inherited `event`. An optimizer that chooses not to inject at an in-scope point returns the same thing: `ControllableNoInjection(event=event, controllable=event.controllable)`.
-
-### ObservableEvent (extends Event)
-
-One-way observation event emitted by the target to record information in the trajectory. Fields: `observable: Observable`, `content: Any`. Used for target-side logging (e.g. model requests, model responses). `security_domain` auto-derives from the observable via `__post_init__` if not set explicitly. A target records the model's reply with `emit(ObservableEvent(observable=response_obs, content=reply_text))`.
-
-### RunStartEvent (extends Event)
-
-Signals the start of a new target run. Field: `trajectory: ReadableTrajectory`. When sent to the optimizer, this is a `FilteredTrajectory` (only entries within the security domain scope are visible). The optimizer's `_dispatch` sets `_current_trajectory` from this.
-
-### RunEndEvent (extends Event)
-
-Signals the end of a target run. Sent after evaluation. Field: `evaluation: EvaluationResult | None` (default `None`). Persisted to the trajectory (unlike `RunStartEvent`). The `security_domain` is set from the active scope (required for trajectory validation). When `Controller(include_feedback=True)` (the default), `evaluation` carries the filtered `EvaluationResult`; when `include_feedback=False`, `evaluation` is `None`. The optimizer reads feedback directly from `event.evaluation`, or from past trajectories. The optimizer's `_dispatch` archives the current trajectory on this event.
-
-### RunEndResponse (extends EventResponse)
-
-Response to `RunEndEvent`. Field: `done: bool = False`. Set `done=True` to signal the optimizer wants to stop (goal achieved, budget exhausted). The controller checks this to decide whether to continue the run loop. For example, `RunEndResponse(event=event, done=True)` stops after this run, while `RunEndResponse(event=event, done=False)` requests another.
-
-## Event Channel (`channel.py`)
-
-### EventEnvelope
-
-Pairs an event with its response mechanism. Fields: `event: Event` (public), plus internal future and loop reference.
-
-The receiver calls `respond(response)` exactly once to deliver the response back to the sender. Thread-safe, uses `call_soon_threadsafe` to resolve the future on the event loop thread, and a `threading.Lock` to prevent double-respond.
-
-### EventChannel
-
-Thread-safe bidirectional event-response channel.
-
-**Send side** (controller → optimizer):
-- `send(event) -> EventResponse`, creates a future, wraps event + future in an `EventEnvelope`, puts on internal `asyncio.Queue`, awaits future. Must be called from the event loop thread.
-
-**Receive side** (optimizer):
-- `receive() -> EventEnvelope | None`, pulls next envelope from queue. Returns `None` when channel is closed and all envelopes consumed.
-- `async for envelope in channel`, iterates envelopes until closed (raises `StopAsyncIteration` on `None`).
-
-**Lifecycle**:
-- `close()`, thread-safe. Puts a sentinel (`None`) on the queue. Uses `call_soon_threadsafe` if an event loop has been bound, `put_nowait` otherwise. Idempotent.
-
-**Design decision**: Uses `asyncio.Queue` internally, all queue access happens on the event loop thread. Thread safety for `respond()` and `close()` comes from `call_soon_threadsafe` bridging. The interface is designed so a future process-safe implementation (multiprocessing, sockets) can provide the same contract.
-
-**Location**: `core/channel.py` (not in `types/`, it's communication infrastructure, not a data type).
-
-## Middleware (`middleware.py`)
-
-Composable transformations on the `EventResponseHandler` callback. Zero overhead, pure function composition, no extra tasks or channels.
-
-### Middleware type
-
-`Middleware = Callable[[EventResponseHandler], EventResponseHandler]`, takes a handler, returns a wrapped handler.
-
-### compose(*middlewares)
-
-Composes middleware left-to-right (first listed = outermost). `compose(a, b)(handler)` means `a(b(handler))`: events pass through `a` first, then `b`, then the inner handler.
-
-### security_domain_filter(scope)
-
-Built-in middleware that filters controllable events by security domain. Events for controllables outside `scope` are answered with `ControllableNoInjection` without reaching the inner handler.
-
-The controller passes its **read & write `scope`** here (not the wider visibility scope, which also includes `read_only` tags): controllable events under tags it does not cover are declined automatically. Because `trajectory_recorder` sits outside the filter, those declined events are still recorded, and, being inside the full visibility scope, remain visible through the optimizer's `FilteredTrajectory`.
-
-### trajectory_recorder(trajectory)
-
-Built-in middleware that records events and responses directly to the trajectory. Takes only a `trajectory` parameter (no scope). Records `Event` and `EventResponse` objects as they pass through. `RunStartEvent` is NOT persisted. `RunEndEvent` IS persisted (it carries the evaluation result and has `security_domain` set from the scope).
-
-**Design decision**: Middleware is function composition, not channel pipes. Each middleware wraps the callback, no background tasks, no extra channels, no sentinel cleanup. This gives the composability of pipeline architectures with zero overhead.
-
-**Location**: `core/middleware.py`.
-
-## Trajectory (`trajectory.py`)
-
-The trajectory stores `Event | EventResponse` objects directly -- there is no `TrajectoryEntry` or `TrajectoryEntryType` wrapper. Events carry their own `security_domain`, and `EventResponse` objects derive theirs from the referenced event.
-
-### get_domain(item)
-
-Public function that extracts `security_domain` from a trajectory item. For `Event`, returns `item.security_domain` directly. For `EventResponse`, recurses via `get_domain(item.event)`.
-
-### Trajectory (class, thread-safe)
-
-Stream of `Event | EventResponse` objects for one run. Thread-safe via `threading.Lock` on all public methods.
-
-**Public API**:
-- `emit(item)`, producer pushes an Event or EventResponse. Validates that `get_domain(item)` is not `None` (every trajectory item must have a security domain). Raises `RuntimeError` if closed.
-- `close()`, signals no more items will be emitted.
-- `drain()`, returns all items since last drain, non-blocking. Advances an internal cursor.
-- `snapshot()`, returns all items so far without advancing cursor.
-- `__len__()`, number of items emitted.
-
-**Design decision**: Non-blocking consumption only. `drain()` is cursor-based for incremental reading. `snapshot()` provides full history. Both are thread-safe.
-
-### FilteredTrajectory (class, thread-safe)
-
-Read-only view of trajectory items within a security domain scope. Created by passing ``filtered_scope`` to the :class:`Trajectory` constructor, accessed via ``trajectory.filtered``.
-
-**Public API**:
-- `snapshot()`, returns all in-scope items received so far.
-- `drain()`, returns in-scope items received since last drain. Maintains its own cursor.
-
-No `emit()` or `close()`, read-only. Uses `__slots__` to prevent `__dict__`.
-
-**Push-based encapsulation**: Items are pushed from Trajectory to FilteredTrajectory at emit time. FilteredTrajectory holds **no reference** to the underlying Trajectory, not as an attribute, not in a closure, nowhere. This is a deliberate security boundary: the optimizer receives a FilteredTrajectory and cannot reach the unfiltered data through any mechanism.
-
-**Design decision**: Push-based rather than pull-based. Filtering happens once at emit time (efficient). The Trajectory holds a reference to its filtered view (parent --> child), but the reverse direction is impossible. `__slots__` prevents arbitrary attribute injection. The scope is specified at Trajectory construction time -- no post-hoc subscription machinery needed.
-
-### ReadableTrajectory (type alias)
-
-`ReadableTrajectory = Trajectory | FilteredTrajectory`, used in event types and optimizer annotations where either a full or filtered trajectory is accepted.
-
-### EventHandler / EventResponseHandler (type aliases)
-
-Defined in `event.py`:
-- `EventHandler = Callable[[Event], None]`, fire-and-forget callback for one-way events. Passed to `target.run(emit, ...)`; the target calls `emit(ObservableEvent(observable=..., content=...))`. This restricts the target to only emitting, without access to reading or closing the trajectory.
-- `EventResponseHandler = Callable[[Event], Awaitable[EventResponse]]`, two-way callback at controllable points. Passed to `target.run(..., send_event)`; the target awaits `send_event(ControllablePreCallEvent(...))` and uses the response.
+Two frozen types describe **static context** the optimizer may read, facts about
+the target that are known before any run and stable across runs (a system prompt,
+source code, a tool catalogue). Anything that *happens during* a run belongs on
+the trajectory as an `ObservableEvent` instead.
+
+### `Observable` (the spec)
+
+- `name: str` unique within the target.
+- `security_domain: SecurityDomainTag` the trust boundary. Always set.
+- `description: str = ""`.
+- `observable_type: str = "text"` (`"text"`, `"code"`, `"config"`, `"json"`).
+
+### `ObservableValue` (spec plus content)
+
+- `observable: Observable`
+- `content: Any = None` the value. A read-only controllable re-presented as an
+  observable carries `content=None`, because its value is revealed at runtime on
+  the trajectory rather than up front.
+
+`get_observables()` returns `ObservableValue`s; `initialize()` hands them to the
+optimizer.
 
 ## Evaluation (`evaluation.py`)
 
-### Score (frozen)
+The output of judging one run. Produced by a task's `evaluate()`, filtered by the
+Controller, and delivered to the optimizer on the `RunEndEvent`.
 
-A named numeric score. Higher is always better. Fields: `value: float`, `security_domain: SecurityDomainTag | None`, `name: str` (default `"primary"`). The security domain tags a sub-score to a scope; `None` means the score is always visible regardless of scope. The controller filters `sub_scores` by the active scope (dropping only out-of-scope ones) before attaching the evaluation to `RunEndEvent`. The `primary_score` carries no `security_domain` and is never filtered. For example:
+### `Score` (frozen)
 
-```python
-Score(value=1.0)                                          # a primary score (unscoped)
-Score(value=0.3, security_domain=DB_TAG, name="db_leak")  # a scoped sub-score
-```
+A single named number. **Higher is always better**; the scale is whatever the
+task defines.
 
-### EvaluationResult (frozen)
+- `value: float`
+- `security_domain: SecurityDomainTag | None = None` which boundary the score
+  pertains to. `None` means "always visible" (unscoped). On a `primary_score` it
+  **must** be `None`.
+- `name: str = "primary"` the dimension name (for example `"asr"`,
+  `"utility_degradation"`).
 
-The result of evaluating one run:
-- `success: bool`, whether the adversarial goal was achieved (binary).
-- `primary_score: Score`, the main score for optimization.
-- `sub_scores: dict[str, Score]`, named sub-scores for multi-objective analysis (default empty).
-- `rationale: str`, optional free-text explanation from the evaluator (default empty).
+### `EvaluationResult` (frozen)
 
-For example:
+- `success: bool` whether the adversarial goal was achieved (binary).
+- `primary_score: Score` the main optimization signal, always delivered to the
+  optimizer (subject only to `include_feedback`).
+- `sub_scores: dict[str, Score] = {}` named sub-scores for multi-objective
+  analysis, keyed by what each evaluates. Each may carry its own
+  `security_domain`.
+- `rationale: str = ""` optional free-text explanation.
 
-```python
-EvaluationResult(
-    success=True,
-    primary_score=Score(value=1.0),
-    sub_scores={"db_leak": Score(value=0.3, security_domain=DB_TAG, name="db_leak")},
-    rationale="Secret found in the model's response.",
-)
-```
+**Enforced invariant.** `__post_init__` raises `ValueError` if `primary_score`
+carries a non-`None` `security_domain`. The primary score is the unscoped signal
+that is always delivered; attach security domains to `sub_scores` instead.
 
-**Design decision**: `sub_scores` is a dict keyed by what each score evaluates, not a list. This prevents unnamed/unidentifiable scores. Each sub-score carries a `security_domain`; the controller filters sub_scores by the active scope before attaching the evaluation to `RunEndEvent`, dropping only those with an out-of-scope domain (an untagged sub-score, `security_domain=None`, is always visible), so the optimizer only sees scores within its security domain. `primary_score` carries no `security_domain` and is never filtered: it is the unscoped optimization signal, always included.
+How feedback is filtered: two orthogonal controls apply. The Controller's
+`include_feedback` flag turns feedback on or off as a whole (the whole
+`EvaluationResult`, or `None`). Independently, scope filtering drops only
+`sub_scores` whose `security_domain` is out of scope; an untagged sub-score stays,
+and the `primary_score`, `success`, and `rationale` are never filtered. This is
+detailed in [Security Domains](/reference/security-domains#the-five-filtered-surfaces).
 
-## Security Domains (`security_domain.py`)
+## LLM types (`llm.py`)
 
-### SecurityDomainTag (frozen)
+These define the optimizer's access to a model. Access and budget are separate:
+`LLMConfig` is pure access, and the spending cap is set elsewhere (on the
+Controller for the attacker, or on the client for any other caller).
 
-A node in a domain tree. Fields: `name: str`, `parent: SecurityDomainTag | None` (default `None` for roots). Not an enum, fully runtime-defined by the target system.
+### `LLMConfig` (frozen)
 
-`tag.includes(other)` walks from `other` up the ancestor chain to check if it reaches `tag`. Example: `internal.includes(user)` is `True` because `user` is a descendant of `internal`.
+- `model: str` a LiteLLM model identifier (for example `"gpt-4o-mini"`).
+- `api_base: str` the API base URL.
+- `api_key: str` the provider key.
 
-A target might define:
-```
-internal
-├── external
-│   ├── user
-│   └── api
-physical (separate root)
-```
+There is deliberately **no budget field**: the same `LLMConfig` is reused by the
+attacker and by judges, each with its own cap or none. Its `__repr__` masks the
+key (first four characters plus `...`, or `***` for a short key), so it will not
+leak into logs.
 
-## LLM Types (`llm.py`)
+### `LLMUsage` (frozen)
 
-### LLMConfig (frozen)
+Cumulative usage counters: `calls: int = 0` and `cost: float = 0.0` (USD,
+computed by `litellm.completion_cost()`). Used throughout the
+[result types](/reference/results#result-objects) to report attacker spend.
 
-Configuration for controller-mediated LLM access. Part of the threat model. Pure access: `model: str`, `api_base: str`, `api_key: str`. No budget field; the attacker's per-task cost cap is set separately via `Controller.task_cost_cap_usd`. For example: `LLMConfig(model="gpt-4o-mini", api_base="https://api.openai.com", api_key="sk-...")`.
+### `BudgetExhaustedError` (Exception)
 
-The `__repr__` masks the API key (shows first 4 chars + `...`, or `***` for short keys).
+Raised when a cost cap is reached. Carries `usage: LLMUsage`, the usage at the
+moment of exhaustion.
 
-**Design decision**: Frozen because the LLM configuration is an experiment parameter that must not change during execution. Budget is intentionally not part of access: the same `LLMConfig` is reused by the attacker and by judges, each with its own cost cap (or none). Cost is computed per call via `litellm.completion_cost()`.
+### `LLMClient` (`core/llm.py`)
 
-### LLMUsage (frozen)
+The **constrained** async LLM client. The Controller builds one from an
+`LLMConfig` and hands it to the optimizer, which reaches it via `self.llm`. The
+model, API base, and API key are locked; the optimizer cannot change them.
 
-LLM usage counters. Fields: `calls: int` (default 0), `cost: float` (default 0.0, USD computed via `litellm.completion_cost()`). For example, `LLMUsage(calls=3, cost=0.0021)` records three billed calls costing about a fifth of a cent.
+Constructor: `LLMClient(config, cost_cap_usd=None)`. The cost cap (`None` =
+unlimited) is set by whoever builds the client; for the attacker it is the
+Controller's `task_cost_cap_usd`. Usage counters are guarded by a
+`threading.Lock`.
 
-Used in `RunResult.llm_usage` (cumulative snapshot after each run), `RunResult.run_usage_delta` (that run's own usage, so per-run cost is available without differencing cumulative snapshots), and `TaskResult.llm_usage` (total for the task). Summing `run_usage_delta` across a task equals the task total; summing the cumulative `llm_usage` over-counts.
+- `await complete(messages, **kwargs) -> ModelResponse` sends a chat completion
+  through litellm (an OpenAI-compatible interface). Behavior worth knowing:
+  - `model`, `api_base`, and `api_key` are **stripped** from `kwargs` so they
+    cannot be overridden; other kwargs (`temperature`, `max_tokens`, `stop`)
+    pass through.
+  - Before the call it raises `BudgetExhaustedError` if the cumulative cost has
+    reached the cap.
+  - After the call it raises `RuntimeError` if the response carries no usage data
+    (usage is required for cost tracking).
+  - It passes `drop_params=True` to litellm by default, so a sampling parameter a
+    given model does not support is dropped rather than raising. A couple of
+    provider-specific incompatibilities are handled the same way (for example
+    dropping `temperature` for models that reject it alongside `top_p`).
+- `usage -> LLMUsage` a thread-safe snapshot of cumulative usage.
 
-### Scope-carrying result fields
-
-The result types (defined in `core/controller.py`, fully documented in [the Controller docs](/reference/controller#result-types)) carry the scope each task ran under:
-
-- `TaskResult.scope: Scope` (default `frozenset()`): the read & write scope enforced for **this** task. In static mode it equals the controller `scope` for every task; with a `ScopeResolver` it is the per-task resolved scope.
-- `TaskResult.read_only: Scope` (default `frozenset()`): the read-only scope enforced for **this** task. In static mode it equals the controller `read_only` for every task; with a `ScopeResolver` it is the per-task resolved read-only scope.
-- `ThreatModelResult.scope: Scope` / `read_only: Scope`: the run-level scopes in static mode. **In dynamic mode (a `ScopeResolver`) both are empty frozensets** and the run identity lives on `scope_label` and each `TaskResult.scope`.
-- `ThreatModelResult.scope_label: str | None` (default `None`): `None` in static mode; in dynamic mode it is the label passed to the controller.
-
-The same result types also carry timing and per-run bookkeeping (all defaulted, so reading existing fields is unaffected): `started_at` / `ended_at` (`datetime | None`) on `RunResult`, `TaskResult`, and `ThreatModelResult`; `RunResult.run_usage_delta` (this run's own `LLMUsage`); and the `RunResult` flags `evaluated` (the score came from the evaluator, not a synthetic error/budget zero), `errored`, and `done`. `ThreatModelResult.task_cost_cap_usd` records the attacker's per-task cap. See [the Controller docs](/reference/controller#result-types) for the full field list.
-
-### BudgetExhaustedError (Exception)
-
-Raised by `LLMClient` when the cost budget is exhausted. Fields: `usage: LLMUsage`, the usage at the time of exhaustion. Inherits from `Exception`.
-
-## LLM Client (`core/llm.py`)
-
-### LLMClient
-
-Constrained async LLM client. Created by the controller from an `LLMConfig` and passed to the optimizer. The model, API base, and API key are locked, the optimizer cannot change them. Thread-safe: usage counters are protected by `threading.Lock`.
-
-**Public API**:
-- `complete(messages, **kwargs) -> ModelResponse`, send a chat completion via litellm. `model`, `api_base`, `api_key` are stripped from kwargs. Raises `BudgetExhaustedError` before the call if the cost budget is exhausted. Raises `RuntimeError` if the response is missing usage data (usage reporting is required for cost tracking).
-- `usage -> LLMUsage`, current cumulative usage (thread-safe snapshot).
-
-**Design decision**: Uses litellm internally so the optimizer gets an OpenAI-compatible interface (standard chat completions format). The client strips locked keys from kwargs rather than raising, this prevents accidental override while allowing kwargs passthrough for parameters like `temperature`, `max_tokens`, `stop`.
-
----
-
-### SecurityDomain (immutable class)
-
-A validated, immutable forest of SecurityDomainTag nodes. Construction validates:
-- No duplicate tag names.
-- Every tag's parent is in the domain (no orphans, raises `ValueError`).
-
-Immutable after construction via `__setattr__`/`__delattr__` overrides.
-
-**Properties**:
-- `roots`, tags with no parent.
-
-**Methods**:
-- `distinct_combinations()`, generates all antichains (subsets where no tag is an ancestor of another) as a Cartesian product across independent trees. Returns `list[frozenset[SecurityDomainTag]]` (i.e., `list[Scope]`). This is the set of distinct security-domain scopes to test. Includes the empty set. For example, for a single tree `system` with children `prompt` and `model`, it yields `[frozenset(), {system}, {prompt}, {model}, {prompt, model}]` (five antichains; `{system, prompt}` is excluded because `system` already includes `prompt`).
-
-### Scope (type alias)
-
-`Scope = frozenset[SecurityDomainTag]`, a set of tags representing a multi-tag attack surface scope. The controller uses scopes to filter all optimizer inputs. `scope_includes(scope, tag)` returns `True` if any tag in the scope includes the target tag (via `SecurityDomainTag.includes()`).
-
-### ScopeResolver (type alias)
-
-`ScopeResolver = Callable[[Task], Scope]` (exported from `superred.core`): a function the controller calls **once per task** to compute that task's `Scope`. Both the `Controller`'s `scope` and `read_only` arguments accept either a fixed `Scope` (applied to every task) or a `ScopeResolver` (resolved per task, independently of each other); `callable(...)` is the discriminator. A resolver may raise `NotApplicable`, which contributes an empty set for its dimension (the same as returning `frozenset()`); the task is skipped when the resolved visibility (`scope | read_only`) is empty, i.e. no tag is granted in either dimension. Resolvers must return the target's exported `SecurityDomainTag` singletons, since scope matching is by identity. See [the Controller docs](/reference/controller#scope-may-be-a-fixed-scope-or-a-per-task-scoperesolver).
-
-### scope_includes (function)
-
-`scope_includes(scope: Scope, tag: SecurityDomainTag) -> bool`, helper that checks whether a security domain tag falls within a scope. Returns `True` if `any(s.includes(tag) for s in scope)`.
-
-### Access level (read-only surfaces)
-
-Access level is not a property of a tag, it is expressed at the Controller by which of two `Scope` sets a tag lands in. `scope` is the read & write surface (visible and injectable); the optional `read_only` set adds tags that are visible only. `read_only` defaults to empty, so the whole `scope` is read & write (the classic behavior). Tags listed under `read_only` stay on every filtered view the optimizer sees, but their controllable events are answered with `ControllableNoInjection`. A `read_only` tag already covered by `scope` has no effect (read & write overrules, the injection filter consults `scope` alone, so it stays injectable); `scope` and `read_only` cannot both be empty. This replaces the older module-side pattern of declaring separate `*_readable` subtags and emitting the same information twice.
+An optimizer run without an `llm_config` receives a **noop** client that raises
+`BudgetExhaustedError` on any call, so a non-LLM optimizer still satisfies the
+`self.llm` contract.
