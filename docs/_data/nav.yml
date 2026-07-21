@@ -15,6 +15,8 @@
       url: /guide/writing-an-optimizer
     - title: Writing Tasks
       url: /guide/writing-tasks
+    - title: Publishing a Module
+      url: /guide/publishing-a-module
     - title: Security Domains
       url: /guide/security-domains
     - title: Advanced Patterns
