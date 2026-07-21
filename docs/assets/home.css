@@ -71,6 +71,41 @@ a { color: var(--ink); }
 .section p:last-child { margin-bottom: 0; }
 .muted { color: var(--gray); }
 
+/* Intro pull-quote: opens the page as one centered statement. Overrides the
+   section's two-column grid so the text is truly centered (not offset into the
+   body column), and lifts the type into an italic serif quote that stands
+   apart from body copy. The two-class selector beats `.section p`. */
+.intro-quote {
+  display: block;
+  text-align: center;
+  padding-top: 3rem;
+  padding-bottom: 3rem;
+}
+.intro-quote .intro-lede {
+  max-width: 70ch;
+  margin: 0 auto;
+  font-size: clamp(1.25rem, 2vw, 1.45rem);
+  line-height: 1.5;
+  font-weight: 300;
+  color: #5c5c5c;
+}
+/* A big, faint opening quote mark keeps the block reading as a quote now that
+   the text is upright (italic hurt readability). */
+.intro-quote .intro-lede::before {
+  content: "\201C";
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 3.4rem;
+  line-height: 1;
+  color: #d0d0d0;
+}
+/* Bold terms carry the meaning: keep them full-ink and heavy while the rest of
+   the quote sits lighter, so the emphasis reads at a glance. */
+.intro-quote .intro-lede strong {
+  font-weight: 700;
+  color: var(--ink);
+}
+
 /* module catalogue (modules.html): JS-free sticky tabs + adaptive grid */
 .tabs > input { position: absolute; opacity: 0; width: 0; height: 0; }
 .tablist {
@@ -720,6 +755,8 @@ a { color: var(--ink); }
 }
 .aud-card {
   box-sizing: border-box;
+  text-decoration: none;
+  color: var(--ink);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
@@ -746,6 +783,20 @@ a { color: var(--ink); }
 }
 .audience .aud-points li::before { content: "\2192"; position: absolute; left: 0; color: var(--gray); }
 .audience .aud-points li em { font-style: italic; }
+/* A "go" link pinned to the bottom of each audience card, matching the
+   doc-card arrows. The card is an <article>, not a link, so the arrow is its
+   own <a>: margin-top:auto pushes it to the box end and it warms as the card
+   lifts, exactly like .card .go. */
+.aud-card .go {
+  align-self: flex-start;
+  margin-top: auto;
+  padding-top: 1.5rem;
+  color: var(--gray);
+  font-size: var(--fs-body);
+  text-decoration: none;
+  transition: color 160ms var(--ease);
+}
+.aud-card:hover .go { color: #ed2121; }
 
 /* ---- features grid ---- */
 .features {
