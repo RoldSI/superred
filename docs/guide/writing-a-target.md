@@ -39,6 +39,8 @@ You subclass `superred.core.interfaces.target.Target` and implement:
 | `reset_ephemeral_state()` | async method | reset ephemeral (per-run) state (called after each evaluation) |
 | `teardown()` | async method | release resources (called once at the end) |
 
+{% include diagrams/u2.html %}
+
 ## Minimal template
 
 This is the complete `MinimalLLMChatTarget` that ships as the
@@ -303,6 +305,8 @@ tagged `SYSTEM_TAG`.
 
 The target never sees the full trajectory. It only writes to it (through
 `emit`) and asks questions (through `send_event`).
+
+{% include diagrams/u3.html %}
 
 ### reset_ephemeral_state vs teardown
 

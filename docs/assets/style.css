@@ -346,7 +346,7 @@ body {
   .evf-tag { position: relative; left: auto; top: auto; transform: none; }
 }
 
-/* ---- Reference diagrams (D1-D7) ----
+/* ---- Design figures (reference D1-D7, guide U1-U8) ----
    Each is an inlined design-compiler figure: an absolutely-positioned SVG + HTML
    composition that reads the design-system tokens below. The tokens are scoped
    to .dc-figure so they never leak to the rest of the page (the site already

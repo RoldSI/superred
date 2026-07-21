@@ -53,6 +53,8 @@ A target may fan out into concurrent branches, each calling `send_event`
 independently. Each call suspends only its own branch and resumes when the
 attacker responds.
 
+{% include diagrams/u8.html %}
+
 ```python
 import asyncio
 

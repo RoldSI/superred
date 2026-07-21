@@ -225,6 +225,8 @@ composing them with `SecurityClaim.from_claims([...])`.
 
 ### The judge is out-of-band, never the attacker's LLM
 
+{% include diagrams/u5.html %}
+
 When success is decided by an LLM-as-judge, that judge gets its **own** model and
 credentials, passed into the factory and entirely separate from the optimizer's
 attacker LLM:
