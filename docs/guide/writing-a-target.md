@@ -383,6 +383,6 @@ subject of [Security Domains](/guide/security-domains).
   name" from "can override the system prompt" from "can rewrite the response".
   Its module docstring is a good model for documenting your own boundaries.
 - [`superred-modules/targets/agentdojo`](https://github.com/RoldSI/superred-modules/tree/main/targets/agentdojo): a tool-calling agent target with a
-  three-tree forest, including a 2x2 grid that classifies every tool's data by
-  who authored it and who stores it. A good study in modelling a complex
+  three-tree forest, including a `tools` tree of per-service data stores
+  (banking, workspace, slack, travel). A good study in modelling a complex
   system's real trust structure.
