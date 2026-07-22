@@ -10,9 +10,9 @@ permalink: /modules
   One flat catalogue rendered as tiles. Each list (optimizers / targets /
   security_claims) becomes a `type`, and every tile carries data-* attributes so
   the sidebar (search + type + suit + source) can filter it entirely client-side.
-  Clicking a tile opens a modal with install / import / use instructions plus
-  links to the paper (and HuggingFace dataset, for benchmarks). Glyph is chosen
-  by type, tinted by the module's primary suit.
+  Clicking a tile opens a modal with the install command, then the module's own
+  guide (its README in superred-modules) as the dominant next step, then the
+  paper and, for benchmarks, the HuggingFace dataset as background links.
 {%- endcomment -%}
 {% assign attacker_n = site.data.modules.optimizers | size %}
 {% assign target_n = site.data.modules.targets | size %}
@@ -66,9 +66,9 @@ permalink: /modules
         {%- assign groups = "attacker,target,claim" | split: "," -%}
         {%- for g in groups -%}
           {%- case g -%}
-            {%- when "attacker" -%}{% assign list = site.data.modules.optimizers %}{% assign href = "/guide/using-modules#using-an-optimizer" %}{% assign kind = "optimizer" %}
-            {%- when "target" -%}{% assign list = site.data.modules.targets %}{% assign href = "/guide/using-modules#using-a-target" %}{% assign kind = "target" %}
-            {%- when "claim" -%}{% assign list = site.data.modules.security_claims %}{% assign href = "/guide/using-modules#using-a-security-claim" %}{% assign kind = "security claim" %}
+            {%- when "attacker" -%}{% assign list = site.data.modules.optimizers %}{% assign kind = "optimizer" %}
+            {%- when "target" -%}{% assign list = site.data.modules.targets %}{% assign kind = "target" %}
+            {%- when "claim" -%}{% assign list = site.data.modules.security_claims %}{% assign kind = "security claim" %}
           {%- endcase -%}
           {%- for m in list -%}
           {%- assign primary = m.suit | first -%}
@@ -77,16 +77,21 @@ permalink: /modules
              data-kind="{{ kind }}"
              data-name="{{ m.name | escape }}"
              data-pip="{{ m.pip }}"
-             data-sym="{{ m.sym }}"
+             data-repo="{{ m.repo }}"
+             data-pending="{% if m.pending %}true{% endif %}"
              data-suit="{{ m.suit | join: ' ' }}"
              data-prov="{% if m.first_party %}first{% else %}port{% endif %}"
              data-blurb="{{ m.blurb | escape }}"
-             data-href="{{ href }}"
              data-paper="{{ m.paper }}"
              data-hf="{{ m.hf }}"
              data-search="{{ m.name | downcase }} {{ m.blurb | downcase }} {{ m.pip }}">
             <div class="mod-card-name">{{ m.name }}</div>
             <div class="mod-card-blurb">{{ m.blurb }}</div>
+            <div class="mod-card-tags">
+              {%- for s in m.suit -%}<span class="mod-suit mod-suit-{{ s }}">{{ s }}</span>{%- endfor -%}
+              {%- if m.first_party -%}<span class="mod-tag mod-tag-first">Author provided</span>
+              {%- else -%}<span class="mod-tag mod-tag-port">Community port</span>{%- endif -%}
+            </div>
           </button>
           {%- endfor -%}
         {%- endfor -%}
@@ -118,6 +123,8 @@ permalink: /modules
     <p class="mod-modal-blurb" id="mod-modal-blurb"></p>
 
     <div class="mod-modal-body" id="mod-modal-body"><!-- filled by JS --></div>
+
+    <div class="mod-modal-cta" id="mod-modal-cta"><!-- filled by JS --></div>
 
     <div class="mod-modal-links" id="mod-modal-links"><!-- filled by JS --></div>
   </div>
@@ -190,30 +197,11 @@ permalink: /modules
   var mTitle = document.getElementById("mod-modal-title");
   var mBlurb = document.getElementById("mod-modal-blurb");
   var mBody = document.getElementById("mod-modal-body");
+  var mCta = document.getElementById("mod-modal-cta");
   var mLinks = document.getElementById("mod-modal-links");
   var lastFocus = null;
 
-  // Type-specific import/use pattern, mirroring /guide/using-modules, using the
-  // module's real exported symbol. The Python package name is the pip name with
-  // dashes as underscores.
-  function usage(type, pip, sym) {
-    var mod = pip.replace(/-/g, "_");
-    if (type === "attacker") {
-      return "from " + mod + " import " + sym + "\n\n" +
-             "controller = Controller(\n" +
-             "    optimizer_factory=lambda: " + sym + "(),\n" +
-             "    ...\n)";
-    }
-    if (type === "target") {
-      return "from " + mod + " import " + sym + "\n\n" +
-             "target_factory = TargetFactory(\n" +
-             "    create=lambda: " + sym + "(...),\n)";
-    }
-    return "from " + mod + " import " + sym + "\n\n" +
-           "controller = Controller(\n" +
-           "    security_claim=" + sym + "(),\n" +
-           "    ...\n)";
-  }
+  var REPO = "https://github.com/RoldSI/superred-modules";
 
   function esc(s) {
     return String(s).replace(/[&<>]/g, function (c) {
@@ -236,15 +224,33 @@ permalink: /modules
     mTitle.textContent = d.name;
     mBlurb.textContent = d.blurb;
 
-    mBody.innerHTML =
-      codeBlock("Install", "pip install " + d.pip) +
-      codeBlock("Import & use", usage(d.type, d.pip, d.sym));
+    // Published modules show their install command; the rest say so plainly.
+    var pending = d.pending === "true";
+    mBody.innerHTML = d.pip
+      ? codeBlock("Install", "pip install " + d.pip)
+      : '<p class="mod-note">Pending publishing.</p>';
 
+    // The module's own guide is the next step after installing, so it gets a
+    // block of its own. A module still pending publishing has no README yet, so
+    // the same button points at its folder until one lands.
+    var guide = pending
+      ? REPO + "/tree/main/" + d.repo
+      : REPO + "/blob/main/" + d.repo + "/README.md";
+    mCta.innerHTML =
+      '<a class="mod-guide" href="' + guide + '" target="_blank" rel="noopener noreferrer">' +
+        '<span class="mod-guide-text">' +
+          '<span class="mod-guide-label">Guide</span>' +
+          '<span class="mod-guide-sub">Get started with ' + esc(d.name) + '</span>' +
+        '</span>' +
+        '<span class="mod-guide-arrow" aria-hidden="true">&#8599;</span>' +
+      '</a>';
+
+    // The paper and dataset are background reading, so they stay quiet.
     var links = "";
     if (d.paper) links += '<a class="mod-link" href="' + d.paper + '" target="_blank" rel="noopener noreferrer">Paper &#8599;</a>';
-    if (d.hf) links += '<a class="mod-link mod-link-hf" href="' + d.hf + '" target="_blank" rel="noopener noreferrer">HuggingFace &#8599;</a>';
-    links += '<a class="mod-link" href="' + d.href + '">Guide &#8599;</a>';
+    if (d.hf) links += '<a class="mod-link" href="' + d.hf + '" target="_blank" rel="noopener noreferrer">HuggingFace &#8599;</a>';
     mLinks.innerHTML = links;
+    mLinks.hidden = !links;                 // no stray divider when there are none
 
     lastFocus = document.activeElement;
     modal.hidden = false;
