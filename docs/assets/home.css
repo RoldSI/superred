@@ -106,146 +106,359 @@ a { color: var(--ink); }
   color: var(--ink);
 }
 
-/* module catalogue (modules.html): JS-free sticky tabs + adaptive grid */
-.tabs > input { position: absolute; opacity: 0; width: 0; height: 0; }
-.tablist {
-  position: sticky;
-  top: calc(var(--header-h) + 3rem);
-  z-index: 5;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin: 1.6rem 0 0.4rem;
-  padding: 0.5rem 0;
-  background: #fff;
-  border-bottom: 1px solid var(--line);
-}
-/* Opaque band that covers the gap between the header and the stuck tabs so
-   grid rows don't show through when scrolling. */
-.tablist::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
-  height: 3rem;
-  background: #fff;
-}
-.tablist label {
-  cursor: pointer;
-  padding: 0.35rem 0.85rem;
-  border-radius: 5px;
-  color: var(--gray);
-  font-size: var(--fs-small);
-  white-space: nowrap;
-}
-.tablist label:hover { color: var(--ink); }
-.tablist label .n { opacity: 0.55; }
-.tabpanel { display: none; }
-#tab-attackers:checked ~ .tablist label[for="tab-attackers"],
-#tab-targets:checked ~ .tablist label[for="tab-targets"],
-#tab-claims:checked ~ .tablist label[for="tab-claims"] {
-  color: var(--ink);
-  background: var(--code-bg);
-  font-weight: 500;
-}
-#tab-attackers:checked ~ .panel-attackers,
-#tab-targets:checked ~ .panel-targets,
-#tab-claims:checked ~ .panel-claims { display: block; }
+/* =================================================================
+   Module catalogue (modules.html): a filterable tile grid with a
+   sticky sidebar (search + type + suit + source). Client-side JS does
+   the filtering; the grid degrades to plain tiles without it.
+   ================================================================= */
 
-.mod-grid {
+/* The section drops its own left rail here: the sidebar IS the rail. So
+   override the base .section two-column grid (which would otherwise squeeze
+   the lone .section-body into its narrow 16rem first column). */
+.section.modules {
+  display: block;
+  padding-top: 2.5rem;
+}
+.mod-lede { margin-top: 0.8rem; }
+
+.mod-layout {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  align-items: baseline;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  column-gap: clamp(1.6rem, 4vw, 3rem);
+  align-items: start;
 }
-.mod-row { display: contents; }
-.mod-grid .mod-name,
-.mod-grid .mod-desc {
-  padding: 0.55rem 0;
-  border-top: 1px solid var(--line);
-}
-.mod-grid .mod-name {
-  padding-right: 1.75rem;
+
+/* ---- sidebar ---- */
+.mod-sidebar {
+  position: sticky;
+  top: calc(var(--header-h) + 2.5rem);
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.35rem;
+  gap: 1.5rem;
 }
-.mod-title { font-weight: 500; white-space: nowrap; }
-.mod-meta { display: flex; align-items: center; gap: 0.4rem; }
-.mod-meta .mod-suit, .mod-meta .mod-tag { margin-left: 0; }
-.mod-grid .mod-desc { color: var(--gray); }
-.mod-pip {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  font-weight: 400;
+.mod-search { position: relative; }
+.mod-search-icon {
+  position: absolute;
+  left: 0.7rem;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--gray);
-  background: var(--code-bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 0.08rem 0.45rem;
-  text-decoration: none;
-  white-space: nowrap;
+  pointer-events: none;
 }
-.mod-pip:hover { color: var(--ink); border-color: var(--gray); }
-
-/* custom filter dropdowns (tag-styled options) */
-.mod-filters { margin-left: auto; display: flex; gap: 0.5rem; }
-.dropdown { position: relative; }
-.dropdown-toggle {
-  font-family: inherit;
+.mod-search input {
+  width: 100%;
+  font-family: var(--serif);
   font-size: var(--fs-small);
   color: var(--ink);
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 0.3rem 0.6rem;
-  cursor: pointer;
-  display: inline-flex;
+  border-radius: 7px;
+  padding: 0.5rem 0.7rem 0.5rem 2.1rem;
+  transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+.mod-search input::placeholder { color: var(--gray); }
+.mod-search input:focus {
+  outline: none;
+  border-color: var(--gray);
+  box-shadow: var(--shadow-sm);
+}
+
+.mod-facet { border: 0; margin: 0; padding: 0; min-width: 0; }
+.mod-facet-h {
+  margin: 0 0 0.55rem;
+  padding: 0;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+/* type list: single-select rows with a right-aligned count */
+.mod-type {
+  display: flex;
   align-items: center;
-  gap: 0.35rem;
-}
-.dropdown-toggle::after { content: "\25BE"; color: var(--gray); font-size: 0.7em; }
-.dropdown-toggle:hover { border-color: var(--gray); }
-.dropdown-menu {
-  display: none;
-  position: absolute;
-  right: 0;
-  top: calc(100% + 5px);
-  z-index: 30;
-  min-width: 100%;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09);
-  padding: 0.3rem;
-}
-.dropdown.open .dropdown-menu { display: block; }
-.dropdown-menu button {
-  display: block;
+  justify-content: space-between;
   width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 0.3rem 0.4rem;
-  border-radius: 4px;
-  font-family: inherit;
+  gap: 0.5rem;
+  font-family: var(--serif);
   font-size: var(--fs-small);
   color: var(--gray);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.34rem 0.55rem;
   cursor: pointer;
-  white-space: nowrap;
+  text-align: left;
+  transition: color 140ms var(--ease), background 140ms var(--ease);
 }
-.dropdown-menu button:hover { background: var(--code-bg); }
-.dropdown .mod-suit, .dropdown .mod-tag, .dropdown .mod-src { margin-left: 0; }
-.mod-src {
-  display: inline-block;
-  padding: 0.02rem 0.5rem;
+.mod-type:hover { color: var(--ink); background: var(--code-bg); }
+.mod-type.is-active { color: var(--ink); background: var(--code-bg); font-weight: 500; }
+.mod-count {
+  font-family: var(--mono);
   font-size: var(--fs-small);
-  border-radius: 999px;
-  white-space: nowrap;
-  vertical-align: middle;
+  color: var(--gray);
+  opacity: 0.75;
 }
-.mod-src-first { color: #2c5aa0; background: #eef3fb; border: 1px solid #d6e0f0; }
+.mod-type.is-active .mod-count { opacity: 1; }
+
+.mod-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.1rem;
+  cursor: pointer;
+}
+.mod-check input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: #ed2121;
+  cursor: pointer;
+  flex: none;
+}
+.mod-check .mod-suit, .mod-check .mod-tag { margin-left: 0; cursor: pointer; }
+
+.mod-reset {
+  align-self: flex-start;
+  font-family: var(--serif);
+  font-size: var(--fs-small);
+  color: var(--gray);
+  background: none;
+  border: 0;
+  padding: 0.2rem 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 140ms var(--ease);
+}
+.mod-reset:hover { color: #ed2121; }
+
+/* ---- tile grid ---- */
+.mod-resultbar {
+  margin: 0 0 1rem;
+  font-size: var(--fs-small);
+  color: var(--gray);
+}
+.mod-resultbar #mod-shown { color: var(--ink); font-weight: 500; }
+.mod-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.9rem;
+}
+.mod-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 1.05rem 1.1rem 0.9rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease), border-color 180ms var(--ease);
+}
+.mod-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md);
+  border-color: #d9d9d9;
+}
+.mod-card[hidden] { display: none; }
+.mod-card-name {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.mod-card-blurb {
+  flex: 1;
+  color: var(--gray);
+  font-size: var(--fs-small);
+  line-height: 1.45;
+}
+/* Suit and source repeated on the tile, so the grid is scannable without
+   opening anything. The chips are the same ones the sidebar filters use. */
+.mod-card-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.mod-card-tags .mod-suit,
+.mod-card-tags .mod-tag { margin-left: 0; cursor: inherit; }
+
+.mod-empty {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--gray);
+}
+.mod-empty p { margin: 0 0 0.8rem; }
+.mod-outro { margin-top: 2.6rem; }
+
+@media (max-width: 860px) {
+  .mod-layout { grid-template-columns: 1fr; row-gap: 1.8rem; }
+  .mod-sidebar {
+    position: static;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.1rem 1.6rem;
+  }
+  .mod-search { grid-column: 1 / -1; }
+}
+@media (max-width: 480px) {
+  .mod-sidebar { grid-template-columns: 1fr; }
+}
+
+/* ---- module modal (install / import / use) ---- */
+body.mod-modal-lock { overflow: hidden; }
+.mod-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(1rem, 4vw, 2.5rem);
+}
+.mod-modal[hidden] { display: none; }
+.mod-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(17, 17, 17, 0.4);
+  animation: mod-fade 160ms var(--ease);
+}
+.mod-modal-panel {
+  position: relative;
+  width: min(38rem, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(17, 17, 17, 0.25);
+  padding: 1.6rem 1.7rem 1.8rem;
+  animation: mod-pop 180ms var(--ease);
+}
+@keyframes mod-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mod-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mod-modal-backdrop, .mod-modal-panel { animation: none; }
+}
+.mod-modal-x {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  display: inline-flex;
+  padding: 0.3rem;
+  color: var(--gray);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 140ms var(--ease), background 140ms var(--ease);
+}
+.mod-modal-x:hover { color: var(--ink); background: var(--code-bg); }
+.mod-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 0.9rem;
+  padding-right: 2rem;
+}
+.mod-modal-kind {
+  margin: 0 0 0.15rem;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.mod-modal-title { margin: 0; font-size: var(--fs-body); font-weight: 500; line-height: 1.15; }
+.mod-modal-blurb { margin: 0 0 1.3rem; color: var(--gray); }
+
+.mod-code { margin: 0 0 0.9rem; }
+.mod-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin-bottom: 0.35rem;
+}
+.mod-copy {
+  font-family: var(--serif);
+  font-size: var(--fs-small);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--gray);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.12rem 0.5rem;
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+.mod-copy:hover { color: var(--ink); border-color: var(--gray); }
+.mod-copy.is-copied { color: #2f8a4e; border-color: #b8e0c4; }
+.mod-code pre {
+  margin: 0;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  overflow-x: auto;
+}
+.mod-code code {
+  font-family: var(--mono);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre;
+}
+
+/* Installing is step one, reading the module's own guide is step two, so the
+   guide gets a block of its own rather than a pill in the link row. */
+.mod-guide {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.1rem;
+  padding: 0.8rem 1.1rem;
+  background: var(--ink);
+  color: #fff;
+  text-decoration: none;
+  border-radius: 8px;
+  transition: background 140ms var(--ease), box-shadow 140ms var(--ease), transform 140ms var(--ease);
+}
+.mod-guide:hover { background: #000; box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.mod-guide-text { display: flex; flex-direction: column; }
+.mod-guide-label { font-size: var(--fs-body); font-weight: 500; line-height: 1.3; }
+.mod-guide-sub { font-size: var(--fs-small); color: #b9b9b9; line-height: 1.4; }
+.mod-guide-arrow { font-size: var(--fs-body); line-height: 1; }
+
+.mod-modal-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+.mod-modal-links[hidden] { display: none; }
+.mod-link {
+  font-size: var(--fs-small);
+  color: var(--ink);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0.35rem 0.75rem;
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease), transform 140ms var(--ease);
+}
+.mod-link:hover { border-color: var(--gray); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+/* Shown in place of the install command for a module without a package. */
+.mod-note { margin: 0; font-size: var(--fs-small); color: var(--gray); }
 
 /* custom quick tooltip on tags */
 .hint { position: relative; display: inline-block; cursor: help; }
@@ -302,19 +515,6 @@ a { color: var(--ink); }
 .mod-suit-chatbot   { color: #4f5560; background: #eef0f2; border: 1px solid #dfe3e7; }
 .mod-suit-agentic   { color: #6b3fa0; background: #f3eefb; border: 1px solid #e2d6f4; }
 .mod-suit-assistant { color: #a35a00; background: #fbf1e3; border: 1px solid #eeddc4; }
-/* pip package name, links to the guide section on using this kind of module */
-.mod-pip {
-  font-family: var(--mono);
-  font-size: 0.82rem;
-  color: var(--gray);
-  text-decoration: none;
-  white-space: nowrap;
-}
-.mod-pip:hover { color: var(--ink); text-decoration: underline; }
-@media (max-width: 640px) {
-  .mod-grid { grid-template-columns: 1fr; }
-  .mod-grid .mod-desc { border-top: none; padding-top: 0; padding-bottom: 0.7rem; }
-}
 
 /* ---- hero ---- */
 .hero {
