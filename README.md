@@ -91,6 +91,13 @@ The security scope is determined by (a) subset of the security domain tree, (b) 
 
 (a) is enforced by the `Controller` through filtering the availability of emitted `Event`s to the `Optimizer`. (c) is enforced by the `Controller` through monitoring expenditure and blocking requests once the limit is reached
 
+#### output
+Running a `Controller` streams **live progress**: a colored dashboard on an interactive terminal (an overall-progress top bar, then a block per threat model with its identity and metrics and the currently-running tasks listed beneath it), degrading automatically to plain lines on a non-TTY, in CI, or when piped. Concurrent controllers share one dashboard, a block each. Pass `report=False` to silence it
+
+By default the `Controller` also writes a **resumable results tree** (one self-describing folder per threat model, under `./superred-results/` or `SUPERRED_RESULTS_DIR`), read back through the `superred.core.persistence` reader API and browsable via a static HTML dashboard the framework ships for the tree. Re-running the same experiment **resumes** it: only errored or missing tasks recompute. Pass `persist=False` to write nothing
+
+This is a red-teaming framework, so persisted trajectories contain jailbreaks, planted secrets, and exfiltrated content and are **not** scrubbed (only the LLM API key/base are withheld). Treat the whole results root as sensitive; it is gitignored by default
+
 ### SECURITY CLAIM
 A `SecurityClaim` is a set of `Task`s. It may either directly specify `Task`s or combine some set of existing `SecurityClaim`s into a new set of `Task`s
 

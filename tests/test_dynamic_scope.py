@@ -11,7 +11,7 @@ surface, construction validation, the skip/error containment paths, and the new
 
 from __future__ import annotations
 
-import json
+import re
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,14 @@ from superred.core.controller import Controller, TargetFactory, ThreatModelResul
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
+from superred.core.persistence import (
+    ExperimentMeta,
+    iter_task_dirs,
+    load_manifest,
+    load_result,
+    load_task,
+    plan_resume,
+)
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
@@ -540,7 +548,28 @@ class TestResultScopeFields:
 
 
 class TestDynamicScopePersistence:
-    async def test_filename_stem_uses_scope_label(self, tmp_path: Path) -> None:
+    """Persistence in dynamic-scope mode under the schema v4 layout.
+
+    In v4 the on-disk identity of an experiment is ``{slug}-{hash8}``: the slug
+    is a human label built from ``attacker__target__claim__model`` (no scope tag
+    names, no ``scope_label``), and the ``scope_label`` is folded into the
+    identity hash instead of the folder-name stem.  The run-level scope /
+    read_only are empty in dynamic mode; each task's own resolved scope lives in
+    that task's ``task.json``.  Re-running an identical Controller RESUMES the
+    same experiment dir rather than raising ``FileExistsError``.
+    """
+
+    @staticmethod
+    def _experiment_dir(root: Path) -> Path:
+        """Return the single experiment dir written under ``root``."""
+        dirs = [p for p in root.iterdir() if p.is_dir()]
+        assert len(dirs) == 1, f"expected one experiment dir, got {[p.name for p in dirs]}"
+        return dirs[0]
+
+    async def test_experiment_dir_uses_slug_hash_stem_not_label(self, tmp_path: Path) -> None:
+        """The experiment dir is ``{slug}-{hash8}``; the ``scope_label`` is NOT
+        the folder-name stem (it feeds the identity hash instead), and the slug
+        carries the attacker/target/claim/model, not the label or scope tags."""
         controller = Controller(
             scope=lambda _t: EXTERNAL_SCOPE,
             scope_label="my-label",
@@ -549,12 +578,39 @@ class TestDynamicScopePersistence:
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_config=STUB_LLM_CONFIG,
             results_dir=tmp_path,
+            persist=True,
+            report=False,
         )
         await controller.run()
-        assert (tmp_path / "my-label__test-model.json").exists()
-        assert (tmp_path / "my-label__test-model").is_dir()
+
+        exp_dir = self._experiment_dir(tmp_path)
+        # {slug}-{hash8}: slug of [a-z0-9._-], then a dash and 8 hex chars.
+        assert re.fullmatch(r"[a-z0-9._-]+-[0-9a-f]{8}", exp_dir.name), exp_dir.name
+        # The label is folded into the hash, never spelled out in the folder name.
+        assert "my-label" not in exp_dir.name
+        # The slug is attacker__target__claim__model; the model is present, the
+        # scope tag name ("external") is not part of the slug.
+        stem, _, hash8 = exp_dir.name.rpartition("-")
+        assert stem == "optimizer__target__securityclaim__test-model"
+        assert "external" not in stem
+        # result.json is the completion marker; manifest.json is the index.
+        assert (exp_dir / "result.json").exists()
+        assert (exp_dir / "manifest.json").exists()
+
+        # The scope_label is part of the measurement identity: changing it lands
+        # in a different {hash8} (a different experiment dir).
+        other = ExperimentMeta(
+            attacker="optimizer",
+            target="target",
+            claim="SecurityClaim",
+            model="test-model",
+            scope_label="a-different-label",
+        )
+        assert other.identity_hash() != hash8
 
     async def test_claim_summary_records_label_and_empty_scope(self, tmp_path: Path) -> None:
+        """The experiment block (in manifest.json and result.json) records the
+        scope_label and, in dynamic mode, empty run-level scope / read_only."""
         controller = Controller(
             scope=lambda _t: EXTERNAL_SCOPE,
             scope_label="my-label",
@@ -563,17 +619,23 @@ class TestDynamicScopePersistence:
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_config=STUB_LLM_CONFIG,
             results_dir=tmp_path,
+            persist=True,
+            report=False,
         )
         await controller.run()
-        payload = json.loads((tmp_path / "my-label__test-model.json").read_text())
-        assert payload["scope_label"] == "my-label"
-        assert payload["scope"] == []
-        assert payload["read_only"] == []
-        assert payload["version"] == 3
+
+        exp_dir = self._experiment_dir(tmp_path)
+        for payload in (load_manifest(exp_dir), load_result(exp_dir)):
+            assert payload["schema_version"] == 4
+            exp = payload["experiment"]
+            assert exp["scope_label"] == "my-label"
+            assert exp["scope"] == []
+            assert exp["read_only"] == []
 
     async def test_per_task_detail_records_own_resolved_scope(self, tmp_path: Path) -> None:
-        """Each detail file records the per-task resolved scope, so two tasks
-        at different scopes produce detail files with different scope arrays."""
+        """Each task's ``task.json`` records that task's OWN resolved scope, so
+        two tasks at different scopes produce task files with different scope
+        arrays (the run-level scope stays empty)."""
         controller = Controller(
             scope=_dispatch_resolver,
             scope_label="per-tool",
@@ -584,28 +646,54 @@ class TestDynamicScopePersistence:
             ),
             llm_config=STUB_LLM_CONFIG,
             results_dir=tmp_path,
+            persist=True,
+            report=False,
         )
         await controller.run()
-        subfolder = tmp_path / "per-tool__test-model"
-        details = sorted(subfolder.glob("*.json"))
-        assert len(details) == 2
-        scopes_recorded = sorted(json.loads(p.read_text())["scope"] for p in details)
-        # One file scoped to external, the other to internal.
+
+        exp_dir = self._experiment_dir(tmp_path)
+        task_dirs = iter_task_dirs(exp_dir)
+        assert len(task_dirs) == 2
+        scopes_recorded = sorted(load_task(td)["scope"] for td in task_dirs)
+        # One task scoped to external, the other to internal.
         assert scopes_recorded == [["external"], ["internal"]]
 
-    async def test_reused_label_stem_raises_file_exists(self, tmp_path: Path) -> None:
-        kwargs = dict(
-            scope=lambda _t: EXTERNAL_SCOPE,
-            scope_label="dup",
-            optimizer_factory=lambda: StubOptimizer(done=True),
-            target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
-            llm_config=STUB_LLM_CONFIG,
-            results_dir=tmp_path,
-        )
-        await Controller(**kwargs).run()  # type: ignore[arg-type]
-        with pytest.raises(FileExistsError):
-            await Controller(**kwargs).run()  # type: ignore[arg-type]
+    async def test_reused_identity_resumes_without_error(self, tmp_path: Path) -> None:
+        """Re-running an identical Controller (same results_dir + same identity)
+        RESUMES the same experiment dir instead of raising ``FileExistsError``:
+        the already-succeeded task is KEPT (not rerun) and no second experiment
+        dir is created."""
+        target = StubTarget()
+
+        def make() -> Controller:
+            return Controller(
+                scope=lambda _t: EXTERNAL_SCOPE,
+                scope_label="dup",
+                optimizer_factory=lambda: StubOptimizer(done=True),
+                target_factory=TargetFactory.singleton(target),
+                security_claim=SecurityClaim.from_tasks([StubTask()]),
+                llm_config=STUB_LLM_CONFIG,
+                results_dir=tmp_path,
+                persist=True,
+                report=False,
+            )
+
+        await make().run()
+        assert target.run_count == 1
+        exp_dir = self._experiment_dir(tmp_path)
+
+        # The resume plan keeps the prior success; nothing is scheduled to rerun.
+        plan = plan_resume(exp_dir, ["Test goal"], overwrite=False)
+        assert plan.keep == frozenset({1})
+        assert plan.rerun == frozenset()
+        assert plan.is_fresh is False
+
+        # Second run of the identical Controller must not raise and must resume:
+        # the kept task is not re-executed (run_count stays 1) and there is still
+        # exactly one experiment dir.
+        await make().run()
+        assert target.run_count == 1
+        assert self._experiment_dir(tmp_path) == exp_dir
 
 
 # ===========================================================================

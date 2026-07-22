@@ -261,6 +261,7 @@ class TestControllerInit:
             ),
             llm_config=STUB_LLM_CONFIG,
         )
+        assert controller.label.count("__") == 3  # {attacker}__{target}__{claim}__{model}-{hash}
         await controller.run()
         assert calls["n"] == 3
 

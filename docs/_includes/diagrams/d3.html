@@ -1,0 +1,81 @@
+<div class="dc-figure">
+<figure data-screen-label="D3 scope filtering" style="margin:0;box-sizing:border-box;max-width:940px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:26px 28px 22px;font-family:var(--font-serif);color:var(--ink);">
+
+  <div style="display:flex;align-items:stretch;gap:0;">
+
+    <!-- LEFT: tag forest -->
+    <div style="flex:0.92;box-sizing:border-box;padding-right:22px;display:flex;flex-direction:column;justify-content:center;">
+      <div style="font-size:9.5px;letter-spacing:0.09em;text-transform:uppercase;color:var(--gray);margin-bottom:14px;">Tag forest &middot; one (scope, read_only) selection</div>
+
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:12px;background:var(--paper);color:var(--ink);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;">system</span>
+          <span style="font-size:10.5px;color:var(--gray);">read-only</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding-left:20px;">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--gray);">&#9500;</span>
+          <span style="display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:12px;background:var(--ink);color:var(--paper);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;">system_prompt</span>
+          <span style="font-size:10.5px;color:var(--gray-33);">read &amp; write</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding-left:20px;">
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--gray);">&#9492;</span>
+          <span style="display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:12px;background:var(--paper);color:var(--ink);border:1px solid var(--ink);border-radius:5px;padding:4px 11px;">model_responses</span>
+          <span style="font-size:10.5px;color:var(--gray);">read-only</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:2px;">
+          <span style="display:inline-flex;align-items:center;font-family:var(--font-mono);font-size:12px;background:#f0f0f0;color:var(--gray);border:1px dashed #cfcfcf;border-radius:5px;padding:4px 11px;">user</span>
+          <span style="font-size:10.5px;color:var(--gray);">out of scope</span>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:22px;padding-top:16px;border-top:1px solid var(--line);">
+        <div style="display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--gray-33);"><span style="width:22px;height:15px;flex:none;border-radius:4px;background:var(--ink);border:1px solid var(--ink);"></span>read &amp; write, in <span style="font-family:var(--font-mono);font-size:10.5px;">scope</span>: visible + injectable</div>
+        <div style="display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--gray-33);"><span style="width:22px;height:15px;flex:none;border-radius:4px;background:var(--paper);border:1px solid var(--ink);"></span>read-only, in <span style="font-family:var(--font-mono);font-size:10.5px;">read_only</span>: visible, not injectable</div>
+        <div style="display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--gray);"><span style="width:22px;height:15px;flex:none;border-radius:4px;background:#f0f0f0;border:1px dashed #cfcfcf;"></span>out of scope: hidden entirely</div>
+      </div>
+    </div>
+
+    <!-- GUTTER -->
+    <div style="flex:none;width:82px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-left:1px solid var(--line);border-right:1px solid var(--line);">
+      <span style="font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gray);text-align:center;line-height:1.3;">Controller<br>filters</span>
+      <span style="font-size:26px;color:var(--ink);line-height:1;">&rarr;</span>
+    </div>
+
+    <!-- RIGHT: five surfaces -->
+    <div style="flex:1.35;box-sizing:border-box;padding-left:22px;">
+      <div style="font-size:9.5px;letter-spacing:0.09em;text-transform:uppercase;color:var(--gray);margin-bottom:12px;">The five filtered surfaces</div>
+
+      <div style="background:var(--code-bg);border:1px solid var(--line);border-radius:5px;padding:9px 12px;margin-bottom:14px;font-family:var(--font-mono);font-size:10.5px;line-height:1.7;color:var(--gray-33);">
+        <div><span style="color:var(--ink);">write scope</span> = &#123;system_prompt&#125;</div>
+        <div><span style="color:var(--ink);">visibility scope</span> = &#123;system_prompt, system&#125;</div><div style="color:var(--gray);padding-left:16px;">&#8618; covers the whole system subtree</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;">
+        <div style="display:grid;grid-template-columns:1fr auto;align-items:start;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);">
+          <span><span style="font-size:13px;font-weight:500;">Controllables</span><br><span style="font-size:11px;color:var(--gray-33);">only <span style="font-family:var(--font-mono);font-size:10px;">system_prompt</span> is injectable</span></span>
+          <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap;">write scope</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;align-items:start;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);">
+          <span><span style="font-size:13px;font-weight:500;">Observables</span><br><span style="font-size:11px;color:var(--gray-33);">whole subtree readable; read-only re-presented here</span></span>
+          <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap;">visibility scope</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;align-items:start;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);">
+          <span><span style="font-size:13px;font-weight:500;">Controllable events</span><br><span style="font-size:11px;color:var(--gray-33);">out-of-scope &amp; read-only auto-declined (<span style="font-family:var(--font-mono);font-size:10px;">NoInjection</span>)</span></span>
+          <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap;">write scope</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;align-items:start;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);">
+          <span><span style="font-size:13px;font-weight:500;">Trajectory</span><br><span style="font-size:11px;color:var(--gray-33);">filtered view: in-scope items only</span></span>
+          <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap;">visibility scope</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;align-items:start;gap:10px;padding:9px 0;">
+          <span><span style="font-size:13px;font-weight:500;">Feedback sub-scores</span><br><span style="font-size:11px;color:var(--gray-33);">out-of-scope sub-scores dropped; untagged stay</span></span>
+          <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);background:var(--paper);border:1px solid var(--line);border-radius:999px;padding:2px 8px;white-space:nowrap;">visibility scope</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line);font-size:12px;line-height:1.5;color:var(--gray);text-wrap:pretty;"><span style="font-family:var(--font-mono);font-size:11px;color:var(--gray-33);">system</span> is visible but not injectable; <span style="font-family:var(--font-mono);font-size:11px;color:var(--gray-33);">system_prompt</span> is both. Access level is set by which set a tag lands in (<span style="font-family:var(--font-mono);font-size:11px;">scope</span> or <span style="font-family:var(--font-mono);font-size:11px;">read_only</span>), not by the tag itself.</div>
+
+</figure>
+</div>

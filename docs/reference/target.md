@@ -1,89 +1,199 @@
 ---
 layout: doc
-title: "Target Interface"
+title: "Target"
 permalink: /reference/target
 ---
 
-# Target Interface
+# Target
 
-The AI system under test. Exposes five surfaces and a lifecycle.
+A **target** is the AI system under test, wrapped so the framework can drive it: a
+chatbot, a tool-using agent, a sandboxed application. A target is a **passive**
+attack surface, not an adversary. Its one job is to expose, faithfully and in
+full, everything an attacker might touch or observe, and then to run.
+
+You write a target by subclassing `Target` and implementing its surfaces and
+lifecycle. The guiding principle is to keep a target **general and reusable**:
+wrap "any LLM" or "the AgentDojo agent," and leave benchmark-specific goals and
+judging to the [Task](/reference/task) and [SecurityClaim](/reference/security-claim).
+
+## The five surfaces
+
+A target exposes its system through five kinds of surface. Two are for setup and
+evaluation (a task and an evaluator use them, off the event loop); two are the
+attacker-facing surfaces; one is the trust-boundary map.
+
+| Surface | Who uses it | When |
+|---------|-------------|------|
+| **Config** (`config_specs` / `set_config`) | the Task | before a run |
+| **Query** (`query_specs` / `query`) | the evaluator | after a run |
+| **Controllables** (`get_controllables`) | the Optimizer | during a run (inject) |
+| **Observables** (`get_observables`) | the Optimizer | before a run (read static context) |
+| **Security domain** (`security_domain`) | the Controller | to filter by scope |
+
+Each piece of information is exposed **exactly once**. A tool call the attacker can
+tamper with is a controllable (never also an observable); a fact the attacker only
+reads is an observable; a live event during a run goes on the trajectory as an
+`ObservableEvent`, not into `get_observables`. Static facts about the setup belong
+to `get_observables`; the live trace belongs on the trajectory.
 
 ## Manual values (constructor)
 
-API keys, credentials, and other user-provided secrets are passed directly to the target's constructor, not through the framework. This keeps the Target ABC clean and makes instantiation explicit:
+API keys, credentials, and other user-provided secrets are passed **directly to
+the constructor**, not through any framework surface. This keeps the interface
+clean and instantiation explicit:
 
 ```python
 target = MyDockerTarget(api_key="sk-...", image="my-app:latest")
 ```
 
+A target runs inference with its own provider client, not the optimizer's
+`LLMClient`, so its own token spend is out of band and uncounted against the
+attacker's budget.
+
 ## Pre-run configuration (task-set)
 
-- `config_specs -> list[ConfigSpec]`, declares named text-valued config slots with security domains.
-- `set_config(name, value)`, accepts a config value before a run.
+- `config_specs -> list[ConfigSpec]` declares named, text-valued config slots,
+  each with a security domain. Each spec's description is the format contract.
+- `set_config(name, value)` accepts a config value before a run.
 
-Used by tasks to set up initial state. The description on each ConfigSpec documents the accepted format, that is the contract between task and target.
+A task uses these to set up the scenario (plant a secret, set a benign user goal).
+A config slot is **never** an attacker surface: only the task sets it. Model
+identity and generation settings stay out of config; they are construction
+concerns, fixed for an experiment.
 
-## Post-run queries (evaluator uses)
+## Post-run queries (evaluator-used)
 
-- `query_specs -> list[QuerySpec]`, declares available post-run interactions (name, description, optional params).
-- `query(name, **params) -> str`, executes a post-run query. May be a simple getter (no params) or a parameterized action.
+- `query_specs -> list[QuerySpec]` declares named post-run interactions (a name, a
+  description, optional params).
+- `query(name, **params) -> str` executes one. A simple getter takes no params;
+  an action ("search the database for X") declares them.
 
-Config and query are **intentionally distinct**:
-- Config = task-set pre-run state, set per task.
-- Query = post-run ground truth, may differ from what was configured.
+Config and query are **intentionally distinct**: config is task-set pre-run state;
+query is post-run ground truth, which may differ from what was configured.
+
+## Attacker-facing surfaces
+
+- `get_controllables() -> list[Controllable]` the injection points the optimizer
+  may manipulate during a run. Each carries a
+  [security-domain tag](/reference/security-domains). Controllables are everything
+  relevant an attacker could meddle with: a system prompt, the user input, a tool's
+  return value, a retrieved document, memory carried across runs.
+- `get_observables() -> list[ObservableValue]` static context the optimizer may
+  read (the model name, the system prompt text, a tool catalogue). Each carries a
+  tag.
+
+The Controller filters both by scope before the optimizer sees them, so a target
+always returns its **full** set and lets the threat model decide what is visible.
 
 ## Security domain
 
-- `security_domain -> SecurityDomain`, the security domain forest defined by this target. Classifies controllables and observables into a hierarchy of trust boundaries. Used by the controller to filter events by scope.
+- `security_domain -> SecurityDomain` the target's
+  [trust-boundary forest](/reference/security-domains). It classifies every
+  controllable and observable into a hierarchy the Controller filters by. Designing
+  this forest is the most consequential modelling decision a target author makes;
+  the guide's [Security Domains](/guide/security-domains) page works through it.
 
-## Runtime surfaces
+## Execution and the state lifecycle
 
-- `get_controllables() -> list[Controllable]`, injection points the optimizer can manipulate during a run. Each has a `security_domain` tag.
-- `get_observables() -> list[ObservableValue]`, static context about the system (system prompts, source code, configs). Each has a `security_domain` tag.
+- `async run(emit, send_event)` executes one run. Record facts with
+  `emit(ObservableEvent(observable=..., content=...))` (fire-and-forget), and pause
+  at each controllable with `await send_event(ControllablePreCallEvent(...))`,
+  using the returned response. The target receives only these two callbacks (typed
+  [`EventHandler` and `EventResponseHandler`](/reference/events-and-trajectory#callback-type-aliases)),
+  not the trajectory object, so it can record but not read or close it.
+- `async reset_ephemeral_state()` reset per-run state after each evaluation.
+- `async teardown()` release external resources when all evaluation is done.
 
-## Execution
+A target has **three state lifetimes**, and getting them right is what makes
+multi-run and cross-run attacks work:
 
-- `run(emit, send_event)`, execute one run. Emit events via `emit(event)` (an `EventHandler = Callable[[Event], None]`, typically `emit(ObservableEvent(observable=..., content=...))`). Call `await send_event(event)` at controllable points and use the response. The target no longer receives the full Trajectory object, only the emit function.
-- `reset_ephemeral_state()`, reset ephemeral (per-run) state after each evaluation, before the next run (clear the active conversation or last response, reset containers, etc.). Durable state (e.g. an accumulated memory bank) must survive this call; it is discarded only when a fresh `TargetFactory` instance is obtained between tasks. Must be implemented even if a no-op.
-- `teardown()`, release resources when all evaluation is done.
+- **Ephemeral** per-run state (the active conversation, the last response). Reset
+  by `reset_ephemeral_state()` after **every** run.
+- **Durable** state that must persist across runs within a task (a memory bank an
+  attack accumulates across attempts). **Not** reset by `reset_ephemeral_state()`;
+  discarded only when the next task gets a fresh instance from the factory.
+- **Resources / identity** the configured definition and external handles.
+  Constant for the instance's lifetime; released in `teardown()`.
 
-`EventResponseHandler = Callable[[Event], Awaitable[EventResponse]]`, the `send_event` callback type. The controller wraps it to bridge to the EventChannel with security domain filtering. The target doesn't know or care what's on the other end.
+The instance lifecycle the Controller drives:
 
-## Internal parallelism
+{% include diagrams/d7.html %}
 
-The target can have concurrent branches, each calling `send_event` independently:
+`reset_ephemeral_state()` must be implemented even if it is a no-op: making it
+explicit forces the author to decide, per field, what is ephemeral and what
+survives.
+
+## Internal parallelism and thread bridging
+
+A target may run inference concurrently. It may spawn branches that each call
+`send_event` independently (each suspends only its own branch), and a thread-backed
+target (Docker, a subprocess) may bridge blocking work back to the loop with
+`asyncio.run_coroutine_threadsafe`. Target instances carry no concurrency cap of
+their own; the [`TargetFactory`](/reference/controller#targetfactory) decides how
+many run in parallel. The patterns and examples are in
+[Events, Channel & Trajectory](/reference/events-and-trajectory#concurrency-model).
+
+## A minimal shape
 
 ```python
-async def run(self, emit, send_event):
-    async def branch_a():
-        resp = await send_event(event_a)  # suspends only this branch
-        ...
-    async def branch_b():
-        resp = await send_event(event_b)  # suspends only this branch
-        ...
-    await asyncio.gather(branch_a(), branch_b())
-```
+class MyChatTarget(Target):
+    def __init__(self, api_key: str, model: str) -> None:
+        self._api_key, self._model = api_key, model
+        self._system_prompt = ""
+        self._last_response = ""
 
-Each `send_event` call creates its own future in the channel. Multiple events can be in-flight simultaneously. The optimizer processes them at its own pace.
+    @property
+    def config_specs(self):
+        return [ConfigSpec("system_prompt", SYSTEM_TAG, "The system prompt")]
 
-For thread-based targets (Docker, subprocesses), bridge back to the event loop:
+    def set_config(self, name, value):
+        if name == "system_prompt":
+            self._system_prompt = value
 
-```python
-async def run(self, emit, send_event):
-    loop = asyncio.get_running_loop()
-    def blocking_work():
-        event = parse_event_from_subprocess(proc)
-        future = asyncio.run_coroutine_threadsafe(send_event(event), loop)
-        response = future.result()  # blocks thread until response
-        ...
-    await loop.run_in_executor(None, blocking_work)
+    @property
+    def query_specs(self):
+        return [QuerySpec("last_response", "The model's most recent reply")]
+
+    def query(self, name, **params):
+        return self._last_response
+
+    @property
+    def security_domain(self):
+        return SecurityDomain([SYSTEM_TAG, USER_TAG])
+
+    def get_controllables(self):
+        return [Controllable("chat_message", USER_TAG, "The user's message")]
+
+    def get_observables(self):
+        return [ObservableValue(Observable("model", SYSTEM_TAG, "Model id"), self._model)]
+
+    async def run(self, emit, send_event):
+        pre = ControllablePreCallEvent(
+            controllable=self.get_controllables()[0], request="",
+        )
+        resp = await send_event(pre)                       # ask the attacker
+        message = resp.value if isinstance(resp, ControllableInjection) else ""
+        emit(ObservableEvent(observable=..., content=message))
+        self._last_response = await self._call_model(self._system_prompt, message)
+        emit(ObservableEvent(observable=..., content=self._last_response))
+
+    async def reset_ephemeral_state(self):
+        self._last_response = ""                            # ephemeral only
+
+    async def teardown(self):
+        ...                                                 # close clients, etc.
 ```
 
 ## Design decisions
 
-- **Manual values at construction**: Keeps the Target ABC clean. No `manual_specs`/`set_manual` in the interface. The target validates its own constructor arguments.
-- **Config/query separation**: Different actors (task vs evaluator), different lifecycles (pre-run vs post-run), different security concerns.
-- **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format. The target interprets the text.
-- **Parameterized queries**: `QuerySpec` has `params: list[QueryParam]`. Simple getters have no params. Actions (e.g. "search the DB for X") declare params with names and descriptions.
-- **`send_event` as callback**: Decouples the target from the optimizer. The same target works with different controller implementations.
-- **`reset_ephemeral_state` is required**: Even if a no-op, forces the implementor to think about inter-run state.
+- **Manual values at construction.** No `set_manual` in the interface; the target
+  validates its own constructor arguments.
+- **Config and query are separate.** Different actors (task vs evaluator),
+  different lifecycles (pre-run vs post-run), different security concerns.
+- **Values are always text.** Config and query use strings; the description
+  documents the format, and the target interprets it.
+- **`send_event` and `emit` are callbacks.** The target is decoupled from the
+  optimizer and the channel; the same target works with any Controller wiring.
+- **`reset_ephemeral_state` is required.** Even as a no-op, it forces an explicit
+  decision about inter-run state, which is what makes durable-memory attacks
+  possible.

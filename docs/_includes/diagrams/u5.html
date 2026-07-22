@@ -1,0 +1,88 @@
+<div class="dc-figure">
+<figure data-screen-label="U5 attacker vs judge" style="margin:0;box-sizing:border-box;max-width:960px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:22px 24px 18px;font-family:var(--font-serif);color:var(--ink);">
+
+  <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);margin-bottom:6px;">attacker LLM vs judge LLM &middot; two paths, two budgets</div>
+
+  <div style="position:relative;width:100%;aspect-ratio:1160 / 470;">
+
+    <svg viewBox="0 0 1160 470" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+      <defs>
+        <marker id="u5a" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+        <marker id="u5g" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#808080"></path></marker>
+      </defs>
+      <g fill="none" vector-effect="non-scaling-stroke">
+        <!-- top lane -->
+        <line x1="150" y1="108" x2="212" y2="108" stroke="#111111" stroke-width="1.5" marker-end="url(#u5a)"></line>
+        <line x1="370" y1="108" x2="432" y2="108" stroke="#111111" stroke-width="1.5" marker-end="url(#u5a)"></line>
+        <path d="M592,108 C 760,108 800,150 946,168" stroke="#111111" stroke-width="1.5" marker-end="url(#u5a)"></path>
+        <!-- bottom lane -->
+        <line x1="150" y1="360" x2="212" y2="360" stroke="#111111" stroke-width="1.5" marker-end="url(#u5a)"></line>
+        <line x1="370" y1="360" x2="432" y2="360" stroke="#111111" stroke-width="1.5" marker-end="url(#u5a)"></line>
+        <line x1="592" y1="360" x2="664" y2="360" stroke="#111111" stroke-width="1.5" marker-end="url(#u5a)"></line>
+        <!-- reads trajectory -->
+        <path d="M946,300 C 820,300 720,330 592,330" stroke="#808080" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#u5g)"></path>
+        <!-- divider -->
+        <line x1="10" y1="234" x2="900" y2="234" stroke="#d9d9d9" stroke-width="1" stroke-dasharray="4 5"></line>
+      </g>
+    </svg>
+
+    <!-- lane eyebrows -->
+    <div style="position:absolute;left:0;top:8%;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gray);">Attacker lane</div>
+    <div style="position:absolute;left:0;top:64.5%;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--gray);">Judge lane</div>
+
+    <!-- TOP LANE boxes -->
+    <div style="position:absolute;left:0.9%;top:16%;width:12%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;">
+      <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--ink);">llm_config</span>
+      <span style="font-size:9.5px;color:var(--gray);">on Controller</span>
+    </div>
+    <div style="position:absolute;left:18.1%;top:16%;width:13.8%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;">
+      <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--ink);">LLMClient</span>
+      <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--gray);">self.llm</span>
+    </div>
+    <div style="position:absolute;left:37.1%;top:16%;width:13.8%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;">Optimizer</div>
+
+    <!-- BOTTOM LANE boxes -->
+    <div style="position:absolute;left:0.9%;top:69.6%;width:12%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;">
+      <span style="font-family:var(--font-mono);font-size:9px;color:var(--ink);">judge_llm_config</span>
+      <span style="font-size:9.5px;color:var(--gray);">on the claim</span>
+    </div>
+    <div style="position:absolute;left:18.1%;top:69.6%;width:13.8%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;">
+      <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--ink);">judge client</span>
+      <span style="font-size:9.5px;color:var(--gray);">separate LLMClient</span>
+    </div>
+    <div style="position:absolute;left:37.1%;top:69.6%;width:13.8%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);display:flex;align-items:center;justify-content:center;text-align:center;font-family:var(--font-mono);font-size:10.5px;color:var(--ink);">task.evaluate()</div>
+    <div style="position:absolute;left:57.2%;top:69.6%;width:15.5%;height:14%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--code-bg);display:flex;align-items:center;justify-content:center;text-align:center;font-family:var(--font-mono);font-size:10.5px;color:var(--ink);">EvaluationResult</div>
+
+    <!-- Target / Trajectory (shared, right) -->
+    <div style="position:absolute;left:81.5%;top:20%;width:17.5%;height:60%;box-sizing:border-box;border:1px solid var(--ink);border-radius:8px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;">
+      <span style="font-size:16px;font-weight:500;line-height:1;">Target</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--gray-33);">+ Trajectory</span>
+      <span style="font-size:9.5px;color:var(--gray);font-style:italic;text-align:center;line-height:1.3;">the one place<br>both lanes meet</span>
+    </div>
+
+    <!-- lane annotations -->
+    <div style="position:absolute;left:56%;top:30%;transform:translate(-50%,-50%);font-size:10px;font-style:italic;color:var(--gray);white-space:nowrap;background:var(--paper);padding:0 4px;">injects into</div>
+    <div style="position:absolute;left:63%;top:60%;transform:translate(-50%,-50%);font-size:10px;font-style:italic;color:var(--gray);white-space:nowrap;background:var(--paper);padding:0 4px;">reads the trajectory</div>
+
+    <!-- budget tags -->
+    <div style="position:absolute;left:0.9%;top:34%;width:44%;display:flex;flex-direction:column;gap:3px;">
+      <span style="align-self:flex-start;font-family:var(--font-mono);font-size:9.5px;color:var(--ink);background:var(--code-bg);border:1px solid var(--line);border-radius:999px;padding:2px 9px;">&#9201; task_cost_cap_usd &middot; per task</span>
+      <span style="font-size:9.5px;color:var(--gray);">counted in <span style="font-family:var(--font-mono);">RunResult.llm_usage</span></span>
+    </div>
+    <div style="position:absolute;left:0.9%;top:87%;width:50%;display:flex;flex-direction:column;gap:3px;">
+      <span style="align-self:flex-start;font-family:var(--font-mono);font-size:9.5px;color:var(--gray-33);background:var(--paper);border:1px dashed var(--gray);border-radius:999px;padding:2px 9px;">no budget by default &middot; unlimited</span>
+      <span style="font-size:9.5px;color:var(--gray);"><span style="font-weight:500;">NOT</span> counted in <span style="font-family:var(--font-mono);">llm_usage</span></span>
+    </div>
+
+    <!-- never crosses marker -->
+    <div style="position:absolute;left:38%;top:49.8%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:7px;background:var(--paper);padding:2px 10px;border:1px solid var(--line);border-radius:999px;white-space:nowrap;">
+      <span style="font-size:11px;color:var(--gray-33);">&#10799;</span>
+      <span style="font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gray);">never crosses</span>
+    </div>
+
+  </div>
+
+  <div style="margin-top:12px;padding-top:14px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.5;color:var(--gray);text-wrap:pretty;">Different model, different credentials, different budget. The judge is out-of-band, never the attacker&rsquo;s LLM: an <span style="font-family:var(--font-mono);font-size:10.5px;">LLMConfig</span> carries no budget (unlimited unless you cap it via <span style="font-family:var(--font-mono);font-size:10.5px;">LLMClient(config, cost_cap_usd=&hellip;)</span>), and judge spend is never counted in <span style="font-family:var(--font-mono);font-size:10.5px;">llm_usage</span>. The two lanes meet only where <span style="font-family:var(--font-mono);font-size:10.5px;">task.evaluate()</span> reads the trajectory the attacker drove on the target.</div>
+
+</figure>
+</div>

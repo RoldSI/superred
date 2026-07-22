@@ -1,0 +1,91 @@
+<div class="dc-figure">
+<figure data-screen-label="D2 run sequence" style="margin:0;box-sizing:border-box;max-width:900px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:20px 22px 16px;font-family:var(--font-serif);color:var(--ink);">
+  <div style="position:relative;width:100%;aspect-ratio:900 / 640;">
+
+    <svg viewBox="0 0 900 640" preserveAspectRatio="xMidYMid meet" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+      <defs>
+        <marker id="d2a" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+        <marker id="d2g" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#808080"></path></marker>
+      </defs>
+
+      <!-- lifelines: Target(250) Controller(520) Optimizer(800) -->
+      <g stroke="#c9c9c9" stroke-width="1" stroke-dasharray="3 4">
+        <line x1="250" y1="58" x2="250" y2="616"></line>
+        <line x1="520" y1="58" x2="520" y2="616"></line>
+        <line x1="800" y1="58" x2="800" y2="616"></line>
+      </g>
+
+      <!-- trajectory rail -->
+      <rect x="62" y="58" width="16" height="558" rx="4" fill="var(--code-bg)" stroke="var(--line)"></rect>
+
+      <!-- controller activation -->
+      <rect x="515" y="250" width="10" height="137" rx="2" fill="#ffffff" stroke="#111111" stroke-width="1"></rect>
+
+      <!-- recorded stubs off the rail -->
+      <g stroke="#bdbdbd" stroke-width="1" stroke-dasharray="2 3">
+        <line x1="80" y1="250" x2="152" y2="250"></line>
+        <line x1="80" y1="340" x2="152" y2="340"></line>
+        <line x1="80" y1="495" x2="152" y2="495"></line>
+      </g>
+
+      <!-- messages -->
+      <line x1="526" y1="95" x2="796" y2="95" stroke="#111111" stroke-width="1.5" marker-end="url(#d2a)"></line>
+      <line x1="794" y1="140" x2="526" y2="140" stroke="#808080" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#d2g)"></line>
+      <line x1="244" y1="195" x2="82" y2="195" stroke="#111111" stroke-width="1.5" marker-end="url(#d2a)"></line>
+      <line x1="256" y1="250" x2="513" y2="250" stroke="#111111" stroke-width="1.5" marker-end="url(#d2a)"></line>
+      <line x1="526" y1="295" x2="796" y2="295" stroke="#111111" stroke-width="1.5" marker-end="url(#d2a)"></line>
+      <line x1="794" y1="340" x2="527" y2="340" stroke="#808080" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#d2g)"></line>
+      <line x1="513" y1="387" x2="256" y2="387" stroke="#111111" stroke-width="1.5" marker-end="url(#d2a)"></line>
+      <line x1="526" y1="495" x2="796" y2="495" stroke="#111111" stroke-width="1.5" marker-end="url(#d2a)"></line>
+      <line x1="794" y1="540" x2="526" y2="540" stroke="#808080" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#d2g)"></line>
+
+      <!-- recorded dots on rail -->
+      <g fill="#111111">
+        <circle cx="70" cy="195" r="3.6"></circle>
+        <circle cx="70" cy="250" r="3.6"></circle>
+        <circle cx="70" cy="340" r="3.6"></circle>
+        <circle cx="70" cy="495" r="3.6"></circle>
+      </g>
+    </svg>
+
+    <!-- rail header -->
+    <div style="position:absolute;left:7.78%;top:4%;transform:translate(-50%,-50%);font-family:var(--font-mono);font-size:11px;color:var(--gray);">trajectory</div>
+
+    <!-- lane headers -->
+    <div style="position:absolute;left:27.78%;top:5.3%;transform:translate(-50%,-50%);box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:8px 14px;font-size:14px;font-weight:500;">Target</div>
+    <div style="position:absolute;left:57.78%;top:5.3%;transform:translate(-50%,-50%);box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--paper);padding:6px 12px;text-align:center;">
+      <div style="font-size:14px;font-weight:500;line-height:1;">Controller</div>
+      <div style="font-size:9.5px;color:var(--gray);line-height:1.2;">+ middleware</div>
+    </div>
+    <div style="position:absolute;left:88.89%;top:5.3%;transform:translate(-50%,-50%);box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:8px 14px;font-size:14px;font-weight:500;">Optimizer</div>
+
+    <!-- message labels -->
+    <div style="position:absolute;left:73.3%;top:12.2%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;"><span style="font-family:var(--font-mono);font-size:11px;">RunStartEvent</span> <span style="font-size:10px;font-style:italic;color:var(--gray);">not recorded</span></div>
+    <div style="position:absolute;left:73.3%;top:19.2%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;color:var(--gray);">EventResponse</div>
+    <div style="position:absolute;left:17.8%;top:27.8%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;">emit(ObservableEvent)</div>
+    <div style="position:absolute;left:42.8%;top:36.4%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;">send_event(ControllablePreCallEvent)</div>
+    <div style="position:absolute;left:73.3%;top:43.4%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;">ControllablePreCallEvent</div>
+    <div style="position:absolute;left:73.3%;top:50.5%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;color:var(--gray);">ControllableInjection</div>
+    <div style="position:absolute;left:42.8%;top:57.8%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;">resume target with value</div>
+    <div style="position:absolute;left:73.3%;top:74.7%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;">RunEndEvent(evaluation)</div>
+    <div style="position:absolute;left:73.3%;top:81.7%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:0 6px;font-family:var(--font-mono);font-size:11px;color:var(--gray);">RunEndResponse(done)</div>
+
+    <!-- filter + record note -->
+    <div style="position:absolute;left:51%;top:40.5%;transform:translate(-50%,-50%);white-space:nowrap;font-size:10.5px;font-style:italic;color:var(--gray);background:var(--paper);padding:0 4px;">filter + record</div>
+
+    <!-- controller internal + closing notes -->
+    <div style="position:absolute;left:57.78%;top:68.75%;transform:translate(-50%,-50%);box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--code-bg);padding:7px 12px;text-align:center;white-space:nowrap;">
+      <span style="font-family:var(--font-mono);font-size:10.5px;">task.evaluate()</span> <span style="font-size:11px;color:var(--gray);">&rarr;</span> <span style="font-family:var(--font-mono);font-size:10.5px;">EvaluationResult</span>
+    </div>
+    <div style="position:absolute;left:57.78%;top:92.2%;transform:translate(-50%,-50%);box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:7px 12px;text-align:center;white-space:nowrap;font-size:11px;color:var(--gray-33);">close trajectory &middot; reset target &middot; loop or stop</div>
+
+  </div>
+
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:22px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--gray-33);">
+    <span style="display:inline-flex;align-items:center;gap:8px;"><span style="width:9px;height:9px;border-radius:999px;background:var(--ink);"></span>recorded on the trajectory</span>
+    <span style="display:inline-flex;align-items:center;gap:8px;"><span style="width:22px;height:0;border-top:1.5px dashed var(--gray);"></span>reply (event response)</span>
+    <span style="color:var(--gray);">Observable events, controllable events &amp; their responses, and <span style="font-family:var(--font-mono);font-size:10.5px;">RunEndEvent</span> are recorded; <span style="font-family:var(--font-mono);font-size:10.5px;">RunStartEvent</span> is not.</span>
+  </div>
+
+</figure>
+</div>

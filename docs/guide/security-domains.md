@@ -46,11 +46,11 @@ user     = SecurityDomainTag("user", parent=external)
 api      = SecurityDomainTag("api", parent=external)
 domain   = SecurityDomain([system, external, user, api])   # validates the forest
 
-system.includes(user)     # True  - ancestor includes descendant
+system.includes(user)     # True: ancestor includes descendant
 external.includes(api)    # True
-external.includes(system) # False - descendant does not include ancestor
+external.includes(system) # False: descendant does not include ancestor
 external.includes(user)   # True
-user.includes(user)       # True  - a tag includes itself
+user.includes(user)       # True: a tag includes itself
 ```
 
 `scope_includes(scope, tag)` is `True` when **any** tag in the scope includes
@@ -108,10 +108,10 @@ emergent reading of a *scope*, not a tag.
 
 **2. Make a child mean "a strictly weaker capability."** Parent-includes-child
 should encode capability subsumption: if holding A automatically gives you B,
-make B a child of A. In AgentDojo, `tool_catalogue` (full edit: replace,
-unregister, rewrite) includes `tool_catalogue_addable` (register-only, the
-weakest write). Granting the strong capability in a scope automatically grants
-the weak ones.
+make B a child of A. In AgentDojo, `tool_catalogue` is the parent write
+capability, and holding it automatically grants its three children
+`tool_catalogue_add`, `tool_catalogue_edit`, and `tool_catalogue_remove`.
+Granting the parent in a scope grants the weaker capabilities under it.
 
 **3. Read-only is a scope decision, not a tag.** Being able to change something
 implies being able to see it, so don't model "see only" as extra tags: declare
@@ -137,13 +137,16 @@ The user-input channel and the system-side capabilities are independent, so
 `user` is its own root, separate from `system`. You combine them by putting both
 in a scope frozenset, never by making one a child of the other.
 
-**6. When the system ingests many data sources, classify them by provenance.**
-A tool-using agent reads content from many places with very different trust.
-AgentDojo's `tools` tree is a 2x2 grid: *who authored the content* (first party
-vs third party) crossed with *who stores it* (first-party vs third-party
-storage). This lets a realistic threat model grant only "third-party content in
-third-party storage" (the natural prompt-injection surface, e.g. an external
-email or a web page) while keeping the user's own first-party data off-limits.
+**6. When the system ingests many data sources, give each store its own leaf.**
+A tool-using agent reads from and writes to many stores of very different trust.
+Model the tool surface as a forest that mirrors the real systems: a grouping
+`tools` root, a node per service (AgentDojo has `banking`, `workspace`, `slack`,
+`travel`), and under each one leaf per separately-compromisable data store
+(`workspace_inbox`, `banking_bank_account`, and so on). Reading from a store and
+the agent action that mutates it share that store's leaf, so granting a service
+covers both. A realistic threat model can then grant just the store an external
+source actually reaches (say `workspace_inbox` for a poisoned email) while the
+rest stays off-limits.
 
 **7. A scope is an antichain.** Never put both a tag and one of its ancestors in
 the same `scope`: the ancestor already covers the descendant. The framework's
@@ -152,84 +155,103 @@ Access level is orthogonal: `scope` and `read_only` can each be an antichain, an
 `scope={descendant}, read_only={ancestor}` is the sanctioned way to make only the
 descendant's subtree injectable while the rest stays visible.
 
-## Worked example 1: the chatbot target (two trees)
+## Worked example 1: a chatbot (two trees)
 
-A chatbot has a system side (prompt, model, response) and a user side. The
-forest:
+A chatbot has a system side (prompt, model, response) and a user side. Modelled
+the way principle 3 recommends, one tag per surface with read-only expressed
+through `read_only` rather than separate readable tags:
 
 ```
 Tree 1: system
-          ├── system_prompt            (controllable: override the prompt)
-          │     └── system_prompt_readable   (observable: read the prompt)
-          ├── model                    (controllable: rewrite the response)
-          │     └── response_readable  (observable: read the response)
-          └── model_identity           (observable: which model is in use)
-Tree 2: user                           (controllable: send the user message)
+          ├── system_prompt     (override the system prompt, or read only)
+          ├── model             (rewrite the model's responses, or read only)
+          └── model_identity    (which model is in use: observe only)
+Tree 2: user                    (send the user message)
 ```
 
 ```python
-SYSTEM_TAG               = SecurityDomainTag("system")
-SYSTEM_PROMPT_TAG        = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
-SYSTEM_PROMPT_READABLE_TAG = SecurityDomainTag("system_prompt_readable", parent=SYSTEM_PROMPT_TAG)
-MODEL_TAG                = SecurityDomainTag("model", parent=SYSTEM_TAG)
-RESPONSE_READABLE_TAG    = SecurityDomainTag("response_readable", parent=MODEL_TAG)
-MODEL_IDENTITY_TAG       = SecurityDomainTag("model_identity", parent=SYSTEM_TAG)
-USER_TAG                 = SecurityDomainTag("user")   # independent root
+SYSTEM_TAG         = SecurityDomainTag("system")
+SYSTEM_PROMPT_TAG  = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
+MODEL_TAG          = SecurityDomainTag("model", parent=SYSTEM_TAG)
+MODEL_IDENTITY_TAG = SecurityDomainTag("model_identity", parent=SYSTEM_TAG)
+USER_TAG           = SecurityDomainTag("user")   # independent root
 ```
 
-The scopes this enables read like a catalogue of attackers:
+Seeing a surface versus changing it is a `read_only` decision, so there are no
+separate readable tags. The scopes read like a catalogue of attackers:
 
-- `{user}` - a blind user: can send messages and see responses, nothing else.
-- `{user, response_readable}` - a user who can also read responses out of band.
-- `{user, model_identity}` - a user who knows which model they are attacking.
-- `{system_prompt_readable, user}` - can see the system prompt but not change it.
-- `{system_prompt, user}` - can override the prompt and send messages.
-- `{model, user}` - can rewrite the model's responses (a compromised-output
+- `scope={user}`: a blind user who can send messages and see the reply, nothing
+  else.
+- `scope={user, model_identity}`: also knows which model it is attacking.
+- `scope={user}`, `read_only={system_prompt}`: can see the system prompt but not
+  change it.
+- `scope={user, system_prompt}`: can override the system prompt and send messages.
+- `scope={user}`, `read_only={model}`: can read the model's responses out of band,
+  but not rewrite them.
+- `scope={user, model}`: can rewrite the model's responses (a compromised-output
   threat) and send messages.
 
-Each is a precise, separately-runnable threat model, and they exist *because* the
-forest separated read from write, knowledge from control, and user from system.
+{% include diagrams/u6.html %}
+
+Each is a precise, separately-runnable threat model, and they exist because the
+forest separates the surfaces (knowledge from control, user from system) while
+`read_only` separates seeing a surface from changing it. The shipped `chatbot`
+module predates `read_only` and still ships dedicated `*_readable` subtags for
+these read-only variants (principle 3); the design above is how it would be
+modelled today.
 
 ## Worked example 2: the AgentDojo target (three trees)
 
 A tool-calling agent is richer. Three independent roots:
 
 ```
-Tree 1: system                       (agent-side capabilities the attacker may hold)
-          ├── prompt                  (override system prompt)
-          ├── tool_catalogue          (full edit of the tool catalogue)
-          │     └── tool_catalogue_addable   (register-only: weakest write)
+Tree 1: system
+          ├── system_prompt
+          ├── tool_catalogue                 (add / edit / remove below)
+          │     ├── tool_catalogue_add
+          │     ├── tool_catalogue_edit
+          │     └── tool_catalogue_remove
           ├── model_identity
-          └── agent_trace             (read the agent's runtime trace)
-                ├── agent_trace_messages
-                ├── agent_trace_tool_calls
-                └── agent_trace_tool_responses
-Tree 2: user                         (override the benign user prompt)
-Tree 3: tools                        (inject into tool return values)
-          ├── content_1p_data_1p     (1st-party content, 1st-party storage)
-          ├── content_1p_data_3p     (1st-party content, 3rd-party storage)
-          ├── content_3p_data_1p     (3rd-party content, 1st-party storage)
-          └── content_3p_data_3p     (3rd-party content, 3rd-party storage)
+          ├── detailed_system_specification  (a leaked spec of the system)
+          └── agent_trace
+                └── agent_trace_messages
+Tree 2: user
+Tree 3: tools
+          ├── banking
+          │     ├── banking_bank_account
+          │     ├── banking_filesystem
+          │     └── banking_user_account
+          ├── workspace
+          │     ├── workspace_inbox
+          │     ├── workspace_calendar
+          │     └── workspace_cloud_drive
+          ├── slack
+          │     ├── slack_slack
+          │     └── slack_web
+          └── travel                         (hotels, flights, inbox, +5 more stores)
 ```
 
 Notice the principles at work:
 
 - **Capability subsumption** in the `tool_catalogue` subtree: scoping to
-  `tool_catalogue` grants the weaker register-only capability automatically.
-- **Read-only access lives in the scope, not in a tag**: "can see the prompt but
-  not change it" is `prompt` under `read_only` rather than `scope`. The
-  `agent_trace` tree stays, it is pure observation with no write counterpart,
-  a genuine surface of its own.
-- **Knowledge isolated** as `model_identity`.
-- **A provenance grid** under `tools`. The most realistic prompt-injection
-  experiment scopes to `{content_3p_data_3p}` (the attacker controls only the
-  content of genuinely external sources, like a received email or a fetched web
-  page), which is far weaker, and far more meaningful, than "controls every tool
-  output" (`{tools}`).
+  `tool_catalogue` grants the weaker add, edit, and remove capabilities
+  automatically.
+- **Read-only lives in the scope, not in a tag**: "list the tool catalogue but
+  not change it" is `tool_catalogue` under `read_only`, and "see the system
+  prompt but not override it" is `system_prompt` under `read_only`.
+- **Knowledge isolated** as read-only surfaces of their own: `model_identity`,
+  and `detailed_system_specification` for an attacker who has obtained a design
+  leak of the system.
+- **One leaf per data store** under `tools`, grouped by service. The most
+  realistic prompt-injection experiment scopes to a single store an external
+  source can reach, like `{workspace_inbox}` (a poisoned email) or `{slack_web}`
+  (a fetched web page), far weaker, and far more meaningful, than "controls
+  every tool output" (`{tools}`). Reading a store and the agent action that
+  mutates it share the store's leaf, so granting a service covers both.
 
 The full forest is documented in
-`superred-modules/targets/agentdojo/src/agentdojo_target/security_tags.py`; its
-module docstring is a good template for writing down your own reasoning.
+[`agentdojo_target/security_tags.py`](https://github.com/RoldSI/superred-modules/blob/main/targets/agentdojo/src/agentdojo_target/security_tags.py);
+its module docstring is a good template for writing down your own reasoning.
 
 ## Choosing the scope
 
@@ -237,7 +259,7 @@ Scope determines the attacker's power, narrow to broad:
 
 - **Narrow** (`{user}`): the most realistic, most common surface. "What can an
   attacker do controlling only the user input?"
-- **Medium** (`{content_3p_data_3p}`, `{system_prompt, user}`): a more capable
+- **Medium** (`{workspace_inbox}`, `{system_prompt, user}`): a more capable
   or differently-positioned attacker.
 - **Read-mostly** (`scope={user}, read_only={system}`): full visibility into
   the system side, but injection only through the user channel.
@@ -279,8 +301,9 @@ Two things to get right:
 
 - **`scope_label` is required** whenever `scope` or `read_only` is a resolver (a
   non-empty string) and forbidden when both are fixed scopes. There is no single
-  scope to name the run by, so the label names it instead: it becomes the
-  persisted filename stem and `ThreatModelResult.scope_label`. Each
+  scope to name the run by, so the label names it instead: it feeds the
+  persisted experiment's measurement identity (its `{hash8}` folder suffix and
+  recorded parameters) and `ThreatModelResult.scope_label`. Each
   `TaskResult.scope` then records the scope that task actually ran under.
 - **Return the target's exported tag singletons**, not freshly built tags.
   Scope matching is by object identity, so import the tags from the target
@@ -345,22 +368,24 @@ Scoped to `{user}`, the optimizer sees `primary_score` and `user_attack`, but no
 hand-listing scopes:
 
 ```python
+from superred.core.controller import run_all
+
 domain = target.security_domain
-for scope in domain.distinct_combinations():
-    if not scope:                       # skip the empty scope (Controller requires non-empty)
-        continue
-    controller = Controller(
+controllers = [
+    Controller(
         optimizer_factory=lambda: MyOptimizer(),
         target_factory=target_factory,
         security_claim=claim,
         scope=scope,                    # a frozenset, passed straight through
         llm_config=attacker_cfg,
-        results_dir=f"results/{'_'.join(sorted(t.name for t in scope))}",
+        results_dir="results",          # one shared folder; a subfolder per scope
     )
-    await controller.run()
+    for scope in domain.distinct_combinations()
+    if scope                            # skip the empty scope (Controller requires non-empty)
+]
+results = await run_all(controllers, concurrency=4)   # one shared live dashboard
 ```
 
-Each `scope` is already the `frozenset` the Controller wants. Building one
-Controller per scope is the intended pattern; see
-[Running Evaluations](/guide/running-evaluations#sweeping-multiple-threat-models)
-for the in-script-loop and one-process-per-cell styles people actually use.
+Each `scope` is already the `frozenset` the Controller wants, and `run_all` drives
+the whole sweep on one shared live dashboard, returning the results in input
+order. See [Running Evaluations](/guide/running-evaluations#sweeping-multiple-threat-models).

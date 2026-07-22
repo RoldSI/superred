@@ -1,0 +1,102 @@
+<div class="dc-figure">
+<figure data-screen-label="U1 assemble a run" style="margin:0;box-sizing:border-box;max-width:940px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:22px 24px 18px;font-family:var(--font-serif);color:var(--ink);">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px;">
+    <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);">you provide &rarr; controller &rarr; you get back</div>
+    <div style="display:flex;gap:16px;font-size:11px;color:var(--gray);">
+      <span style="display:inline-flex;align-items:center;gap:7px;"><span style="width:20px;height:13px;border:1px solid var(--line);border-radius:3px;background:var(--paper);"></span>required</span>
+      <span style="display:inline-flex;align-items:center;gap:7px;"><span style="width:20px;height:13px;border:1px dashed var(--gray);border-radius:3px;background:var(--paper);"></span>optional</span>
+    </div>
+  </div>
+
+  <div style="position:relative;width:100%;aspect-ratio:1200 / 640;">
+
+    <svg viewBox="0 0 1200 640" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+      <defs>
+        <marker id="u1a" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+      </defs>
+      <!-- fan-in -->
+      <g stroke="#111111" stroke-width="1.4" fill="none" vector-effect="non-scaling-stroke">
+        <path d="M276,48 C 400,48 380,246 476,246" marker-end="url(#u1a)"></path>
+        <path d="M276,146 C 400,146 400,274 476,274" marker-end="url(#u1a)"></path>
+        <path d="M276,244 L 476,298" marker-end="url(#u1a)"></path>
+        <path d="M276,368 C 400,368 400,322 476,322" marker-end="url(#u1a)"></path>
+        <path d="M276,490 C 400,490 390,348 476,348" marker-end="url(#u1a)"></path>
+        <path d="M276,573 C 400,573 380,372 476,372" marker-end="url(#u1a)"></path>
+      </g>
+      <!-- controller trunk + fan-out -->
+      <g stroke="#111111" fill="none" vector-effect="non-scaling-stroke">
+        <line x1="708" y1="306" x2="852" y2="306" stroke-width="2"></line>
+        <path d="M852,306 C 890,306 890,150 912,150" stroke-width="1.4" marker-end="url(#u1a)"></path>
+        <path d="M852,306 L 912,306" stroke-width="1.4" marker-end="url(#u1a)"></path>
+        <path d="M852,306 C 890,306 890,470 912,470" stroke-width="1.4" marker-end="url(#u1a)"></path>
+      </g>
+    </svg>
+
+    <!-- INPUT TILES -->
+    <div style="position:absolute;left:0.5%;top:1%;width:22%;height:13%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:8px 11px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-size:14px;font-weight:500;color:var(--ink);">Target</span>
+      <span style="font-size:11px;line-height:1.25;color:var(--gray-33);">builds a fresh target per task; concurrency</span>
+    </div>
+    <div style="position:absolute;left:0.5%;top:16.3%;width:22%;height:13%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:8px 11px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-size:14px;font-weight:500;color:var(--ink);">Security Claim</span>
+      <span style="font-size:11px;line-height:1.25;color:var(--gray-33);">the tasks + how success is judged</span>
+    </div>
+    <div style="position:absolute;left:0.5%;top:31.6%;width:22%;height:13%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:8px 11px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-size:14px;font-weight:500;color:var(--ink);">Optimizer</span>
+      <span style="font-size:11px;line-height:1.25;color:var(--gray-33);">builds a fresh attacker per task</span>
+    </div>
+
+    <!-- Scope (read_only shown as a subset) -->
+    <div style="position:absolute;left:0.5%;top:47%;width:22%;height:21%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:9px 11px;display:flex;flex-direction:column;justify-content:flex-start;gap:7px;">
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <span style="font-size:14px;font-weight:500;color:var(--ink);">Scope</span>
+        <span style="font-size:10.5px;line-height:1.2;color:var(--gray-33);">frozenset of tags: what the attacker controls</span>
+      </div>
+      <div style="box-sizing:border-box;border:1px dashed var(--gray);border-radius:5px;background:var(--paper);padding:5px 9px;display:flex;flex-direction:column;gap:1px;">
+        <span style="font-size:10.5px;color:var(--gray-33);"><span style="font-family:var(--font-mono);">read_only</span> <span style="font-style:italic;color:var(--gray);">&middot; separate set</span></span>
+        <span style="font-size:10px;line-height:1.2;color:var(--gray);">visible, not injectable</span>
+      </div>
+    </div>
+
+    <!-- LLM Config -->
+    <div style="position:absolute;left:0.5%;top:71%;width:22%;height:11%;box-sizing:border-box;border:1px dashed var(--gray);border-radius:6px;background:var(--paper);padding:8px 11px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-size:14px;font-weight:500;color:var(--gray-33);">LLM Config <span style="font-size:10px;font-weight:400;font-style:italic;color:var(--gray);">&middot; optional</span></span>
+      <span style="font-size:10.5px;line-height:1.2;color:var(--gray);">attacker model + credentials</span>
+    </div>
+
+    <!-- Cost Cap (a Controller option, not part of LLMConfig) -->
+    <div style="position:absolute;left:0.5%;top:84%;width:22%;height:11%;box-sizing:border-box;border:1px dashed var(--gray);border-radius:6px;background:var(--paper);padding:8px 11px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-size:14px;font-weight:500;color:var(--gray-33);">Cost Cap <span style="font-size:10px;font-weight:400;font-style:italic;color:var(--gray);">&middot; Controller option</span></span>
+      <span style="font-size:10.5px;line-height:1.2;color:var(--gray);"><span style="font-family:var(--font-mono);font-size:10px;">task_cost_cap_usd</span> &middot; per-task spend cap</span>
+    </div>
+
+    <!-- CONTROLLER -->
+    <div style="position:absolute;left:40%;top:35%;width:19%;height:30%;box-sizing:border-box;border:1px solid var(--ink);border-radius:6px;background:var(--paper);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;">
+      <span style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--gray);">framework</span>
+      <span style="font-size:22px;font-weight:500;line-height:1;">Controller</span>
+    </div>
+
+    <!-- run() label -->
+    <div style="position:absolute;left:65%;top:41%;transform:translate(-50%,-50%);white-space:nowrap;background:var(--paper);padding:1px 7px;font-family:var(--font-mono);font-size:11.5px;color:var(--ink);">await controller.run()</div>
+
+    <!-- OUTPUT TILES -->
+    <div style="position:absolute;left:76%;top:15.5%;width:23.5%;height:15%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:8px 12px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink);">ThreatModelResult</span>
+      <span style="font-size:11px;line-height:1.25;color:var(--gray-33);">returned in memory: per-task scores, runs, usage</span>
+    </div>
+    <div style="position:absolute;left:76%;top:42.5%;width:23.5%;height:15%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--code-bg);padding:8px 12px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--ink);">./superred-results/</span>
+      <span style="font-size:11px;line-height:1.25;color:var(--gray-33);">results tree written to disk by default</span>
+    </div>
+    <div style="position:absolute;left:76%;top:69.5%;width:23.5%;height:15%;box-sizing:border-box;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:8px 12px;display:flex;flex-direction:column;justify-content:center;gap:2px;">
+      <span style="font-size:13px;font-weight:500;color:var(--ink);">viewing</span>
+      <span style="font-size:11px;line-height:1.25;color:var(--gray-33);">live dashboard while running; <span style="font-family:var(--font-mono);font-size:10.5px;">superred serve</span> web report after</span>
+    </div>
+
+  </div>
+
+  <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.5;color:var(--gray);text-wrap:pretty;">Every SuperRed program has this shape: you assemble the pieces on the left into one <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--gray-33);">Controller</span>, call <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--gray-33);">run()</span>, and get one result in memory, on disk, and in a live report.</div>
+
+</figure>
+</div>

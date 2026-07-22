@@ -53,6 +53,8 @@ A target may fan out into concurrent branches, each calling `send_event`
 independently. Each call suspends only its own branch and resumes when the
 attacker responds.
 
+{% include diagrams/u8.html %}
+
 ```python
 import asyncio
 
@@ -111,59 +113,24 @@ for tr in result.task_results:
 ## Testing several scopes
 
 Run the same claim under different scopes to chart the attack surface. Build a
-fresh Controller per scope (see [Running Evaluations](/guide/running-evaluations#sweeping-multiple-threat-models)):
+Controller per scope and drive them through `run_all`, so the whole sweep shares
+one live dashboard and one results folder (see [Running
+Evaluations](/guide/running-evaluations#sweeping-multiple-threat-models)):
 
 ```python
+from superred.core.controller import run_all
+
 scopes = {"user": frozenset({USER_TAG}),
           "user+system": frozenset({USER_TAG, SYSTEM_PROMPT_TAG})}
 
-for name, scope in scopes.items():
-    controller = Controller(optimizer_factory=lambda: MyOptimizer(),
-                            target_factory=target_factory, security_claim=claim,
-                            scope=scope, llm_config=attacker_cfg, results_dir=f"results/{name}")
-    result = await controller.run()
+controllers = [
+    Controller(optimizer_factory=lambda: MyOptimizer(), target_factory=target_factory,
+               security_claim=claim, scope=scope, llm_config=attacker_cfg,
+               results_dir="results")
+    for scope in scopes.values()
+]
+results = await run_all(controllers, concurrency=2)   # one shared dashboard; input order
+for name, result in zip(scopes, results):
     succ = sum(1 for tr in result.task_results if tr.success)
     print(f"{name}: {succ}/{len(result.task_results)}")
 ```
-
-## Packaging a module
-
-Each target, optimizer, and claim is its own pip-installable package. The layout
-is uniform across the repo:
-
-```
-my_optimizer/
-  pyproject.toml
-  src/my_optimizer/
-    __init__.py        # public exports
-    optimizer.py       # implementation
-  tests/
-```
-
-```toml
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[project]
-name = "my-optimizer"          # pip name: dashes
-version = "0.1.0"
-dependencies = ["superred"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/my_optimizer"]   # import name: underscores
-```
-
-```bash
-pip install -e ./my_optimizer
-```
-
-```python
-from my_optimizer import MyOptimizer   # import by the underscore name
-```
-
-The pip name uses dashes (`my-optimizer`) and the import name uses underscores
-(`my_optimizer`); the folder under `superred-modules/` may differ again (the
-`test_*` fixtures are a deliberate example). Export your public surface from
-`__init__.py`, including any security-domain tag constants callers need to build
-scopes (the targets export their `*_TAG` constants for exactly this).
