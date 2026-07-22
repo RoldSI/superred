@@ -84,10 +84,8 @@ permalink: /modules
              data-href="{{ href }}"
              data-paper="{{ m.paper }}"
              data-hf="{{ m.hf }}"
+             data-emoji="{{ m.emoji }}"
              data-search="{{ m.name | downcase }} {{ m.blurb | downcase }} {{ m.pip }}">
-            <div class="mod-card-top">
-              <span class="mod-glyph mod-glyph-{{ primary }}" aria-hidden="true">{{ m.emoji }}</span>
-            </div>
             <div class="mod-card-name">{{ m.name }}</div>
             <div class="mod-card-blurb">{{ m.blurb }}</div>
           </button>
@@ -236,11 +234,10 @@ permalink: /modules
 
   function open(card) {
     var d = card.dataset;
-    var glyphSvg = card.querySelector(".mod-glyph").innerHTML;
     var primary = d.suit.split(" ")[0];
 
     mGlyph.className = "mod-glyph mod-glyph-" + primary;
-    mGlyph.innerHTML = glyphSvg;
+    mGlyph.textContent = d.emoji;
     mKind.textContent = d.kind;
     mTitle.textContent = d.name;
     mBlurb.textContent = d.blurb;

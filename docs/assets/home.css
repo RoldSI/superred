@@ -230,11 +230,7 @@ a { color: var(--ink); }
   border-color: #d9d9d9;
 }
 .mod-card[hidden] { display: none; }
-.mod-card-top {
-  display: flex;
-  align-items: flex-start;
-}
-/* emoji glyph badge, on a soft tile tinted by the module's primary suit */
+/* emoji glyph badge, on a soft tile tinted by the module's primary suit (modal only) */
 .mod-glyph {
   display: inline-flex;
   align-items: center;
