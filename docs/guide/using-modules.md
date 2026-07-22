@@ -8,8 +8,10 @@ permalink: /guide/using-modules
 
 Provided modules are ordinary Python packages. To use one: `pip install` it,
 import its class or factory, and pass it to the [Controller](/reference/controller).
-The pattern is the same
-for all three kinds, shown below.
+The pattern is the same for all three kinds, shown below. Note that the install
+name and the import name differ: you install `superred-optimizer-pair` and import
+`pair_optimizer`. Each module's guide, linked from the [catalogue](/modules),
+states its import name.
 
 ## Using an optimizer
 
@@ -17,7 +19,7 @@ An optimizer is the attacker. Install it, import the class, and give the
 controller a factory that builds a fresh one per task:
 
 ```bash
-pip install pair-optimizer
+pip install superred-optimizer-pair
 ```
 
 ```python
@@ -48,7 +50,7 @@ A target is the system under test. Install it, import it, and wrap it in a
 `TargetFactory`:
 
 ```bash
-pip install chatbot-target
+pip install superred-target-chatbot
 ```
 
 ```python
@@ -68,11 +70,11 @@ A security claim defines what to test and what counts as a break. Install it,
 import its factory, and pass the result to the controller:
 
 ```bash
-pip install secclaim-harmbench
+pip install superred-claim-harmbench
 ```
 
 ```python
-from secclaim_harmbench import harmbench_claim
+from harmbench_claim import harmbench_claim
 
 controller = Controller(
     security_claim=harmbench_claim(),
