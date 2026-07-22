@@ -230,21 +230,6 @@ a { color: var(--ink); }
   border-color: #d9d9d9;
 }
 .mod-card[hidden] { display: none; }
-/* emoji glyph badge, on a soft tile tinted by the module's primary suit (modal only) */
-.mod-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.6rem;
-  height: 2.6rem;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  font-size: 1.4rem;
-  line-height: 1;
-}
-.mod-glyph-chatbot   { background: #eef0f2; border-color: #dfe3e7; }
-.mod-glyph-agentic   { background: #f3eefb; border-color: #e2d6f4; }
-.mod-glyph-assistant { background: #fbf1e3; border-color: #eeddc4; }
 .mod-card-name {
   font-size: 1.08rem;
   font-weight: 500;

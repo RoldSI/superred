@@ -84,7 +84,6 @@ permalink: /modules
              data-href="{{ href }}"
              data-paper="{{ m.paper }}"
              data-hf="{{ m.hf }}"
-             data-emoji="{{ m.emoji }}"
              data-search="{{ m.name | downcase }} {{ m.blurb | downcase }} {{ m.pip }}">
             <div class="mod-card-name">{{ m.name }}</div>
             <div class="mod-card-blurb">{{ m.blurb }}</div>
@@ -111,7 +110,6 @@ permalink: /modules
       <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="5" y1="5" x2="15" y2="15"/><line x1="15" y1="5" x2="5" y2="15"/></svg>
     </button>
     <div class="mod-modal-head">
-      <span class="mod-glyph" id="mod-modal-glyph" aria-hidden="true"></span>
       <div>
         <p class="mod-modal-kind" id="mod-modal-kind"></p>
         <h3 class="mod-modal-title" id="mod-modal-title"></h3>
@@ -188,7 +186,6 @@ permalink: /modules
 
   /* ------------------------------ modal ------------------------------ */
   var modal = document.getElementById("mod-modal");
-  var mGlyph = document.getElementById("mod-modal-glyph");
   var mKind = document.getElementById("mod-modal-kind");
   var mTitle = document.getElementById("mod-modal-title");
   var mBlurb = document.getElementById("mod-modal-blurb");
@@ -234,10 +231,7 @@ permalink: /modules
 
   function open(card) {
     var d = card.dataset;
-    var primary = d.suit.split(" ")[0];
 
-    mGlyph.className = "mod-glyph mod-glyph-" + primary;
-    mGlyph.textContent = d.emoji;
     mKind.textContent = d.kind;
     mTitle.textContent = d.name;
     mBlurb.textContent = d.blurb;
