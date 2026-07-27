@@ -50,7 +50,7 @@ All runs for one task.
 - `best_evaluation: EvaluationResult` the evaluation that produced `best_score`.
 - `success: bool` whether any run achieved the goal.
 - `llm_usage: LLMUsage` total optimizer usage for the task.
-- `stop_reason: Literal["done", "max_runs", "budget_exhausted", "error"]` why the
+- `stop_reason: Literal["done", "max_runs", "budget_exhausted", "error", "timeout"]` why the
   loop ended (see below).
 - `scope: Scope` (default `frozenset()`) the read & write scope enforced for
   **this** task. In static mode it equals the Controller's `scope`; with a
@@ -123,7 +123,7 @@ readable data.)
 - **`result.json`** (written last, the completion marker): `schema_version`, an
   `experiment` block (identity plus display parameters), `timing`, and a
   `summary`. The summary carries `asr`, `n_tasks`, `n_success`, `n_completed`,
-  `n_failed`, `n_error`, `n_budget_exhausted`, `n_skipped`, `max_primary_score`,
+  `n_failed`, `n_error`, `n_budget_exhausted`, `n_timeout`, `n_skipped`, `max_primary_score`,
   `mean_primary_score`, and `total_llm_usage`. Here `n_completed = done +
   max_runs + budget_exhausted` and `asr = n_success / n_completed`, so errored
   and skipped tasks are excluded from the denominator.

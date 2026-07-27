@@ -48,6 +48,7 @@ controller = Controller(
     ),
     task_cost_cap_usd=5.00,                     # per-task attacker budget (USD); None = unlimited
     max_runs_per_task=100,                      # safety cap; None (the default) means 100
+    task_time_cap_s=None,                       # per-task wall clock (s); None (default) = unbounded
     include_feedback=True,                      # attach evaluation to RunEndEvent; default True
     # --- output ---
     persist=True,                               # write a results tree (default True; False = nothing)
@@ -68,6 +69,7 @@ result = await controller.run()                 # -> ThreatModelResult
 | `llm_config` | the attacker's model and API access, or omit for non-LLM attackers |
 | `task_cost_cap_usd` | per-task attacker spend cap in USD; `None` (default) means unlimited |
 | `max_runs_per_task` | per-task run cap (>= 1); `None` (default) means 100 |
+| `task_time_cap_s` | per-task **wall-clock** cap in seconds; `None` (default) means unbounded. The two caps above bound the *work* a task may do; only this bounds the *time*, so it is what stops a task whose provider call blocks and never returns. A task that hits it is cancelled and recorded `stop_reason="timeout"`, which is not a kept status, so a re-run recomputes it |
 | `include_feedback` | whether the optimizer sees evaluation results; default `True` |
 | `persist` | write a results tree; default `True`, pass `False` to write nothing |
 | `results_dir` | the results folder; omit for `SUPERRED_RESULTS_DIR` or `./superred-results/` |
