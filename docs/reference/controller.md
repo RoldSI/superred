@@ -46,6 +46,7 @@ controller = Controller(
     ),
     task_cost_cap_usd=5.00,                    # per-task attacker budget (USD); None = unlimited
     max_runs_per_task=100,                     # safety cap; None resolves to 100
+    task_time_cap_s=None,                      # per-task wall clock (s); None = unbounded
     include_feedback=True,                     # populate RunEndEvent.evaluation (default True)
     # --- output (see Results & Persistence) ---
     persist=True,                              # write a results tree (default True)
@@ -73,6 +74,7 @@ The full constructor parameters, with types and defaults:
 | `llm_config` | `LLMConfig \| None` | `None` | the attacker's model; `None` = non-LLM |
 | `task_cost_cap_usd` | `float \| None` | `None` | per-task attacker cost cap; `None` = unlimited |
 | `max_runs_per_task` | `int \| None` | `None` (→ 100) | per-task run cap; validated `>= 1` |
+| `task_time_cap_s` | `float \| None` | `None` | per-task wall-clock cap in seconds; validated `> 0` |
 | `include_feedback` | `bool` | `True` | whether `RunEndEvent` carries the evaluation |
 | `results_dir` | `str \| Path \| None` | `None` | results **root** (see [persistence](/reference/results#persistence)) |
 | `scope_label` | `str \| None` | `None` | names a dynamic-scope run; required in that mode |

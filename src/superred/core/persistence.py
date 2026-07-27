@@ -321,6 +321,11 @@ def _serialize_trajectory(trajectory: Trajectory) -> list[dict[str, Any]]:
 def _status_of(success: bool, stop_reason: str) -> str:
     if stop_reason == "error":
         return "error"
+    # A task cancelled at the wall-clock cap produced no measurement. Kept
+    # distinct from "error" so timeouts are countable, and deliberately absent
+    # from _KEPT_STATUSES so a resume recomputes it.
+    if stop_reason == "timeout":
+        return "timeout"
     if success:
         return "success"
     if stop_reason == "budget_exhausted":
@@ -412,6 +417,9 @@ def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
     n_completed = sum(1 for v in views if v.stop_reason in completed_reasons)
     n_budget = sum(1 for v in views if v.stop_reason == "budget_exhausted")
     n_error = sum(1 for v in views if v.stop_reason == "error")
+    # Not in completed_reasons above: a timed-out task is not a measurement, so
+    # it must not enter the ASR denominator.
+    n_timeout = sum(1 for v in views if v.stop_reason == "timeout")
     scores = [v.best_score for v in views]
     return {
         "asr": (n_success / n_completed) if n_completed else None,
@@ -421,6 +429,7 @@ def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
         "n_failed": n_completed - n_success,
         "n_error": n_error,
         "n_budget_exhausted": n_budget,
+        "n_timeout": n_timeout,
         "n_skipped": n_skipped,
         "max_primary_score": max(scores) if scores else None,
         "mean_primary_score": (sum(scores) / len(scores)) if scores else None,

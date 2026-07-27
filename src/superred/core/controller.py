@@ -91,7 +91,7 @@ OptimizerFactory = Callable[[], Optimizer]
 ScopeResolver = Callable[[Task[Target]], Scope]
 
 # Reason a task's run loop ended.
-StopReason = Literal["done", "max_runs", "budget_exhausted", "error"]
+StopReason = Literal["done", "max_runs", "budget_exhausted", "error", "timeout"]
 
 
 @dataclass(frozen=True)
@@ -518,6 +518,23 @@ class Controller:
         llm_config: LLM access configuration for the optimizer, or
             ``None`` for non-LLM optimizers (in which case the optimizer
             receives a noop client that raises on any call).
+        task_time_cap_s: Optional per-task WALL-CLOCK cap in seconds. ``None``
+            (default) means unbounded. Where ``task_cost_cap_usd`` and
+            ``max_runs_per_task`` bound the WORK a task may do, this bounds the
+            TIME it may take, which is the only thing that stops a task whose
+            provider call blocks without ever returning or timing out. On
+            expiry the task is cancelled and recorded with
+            ``stop_reason="timeout"``.
+
+            Deliberately NOT part of the experiment identity (it does not
+            appear in ``ExperimentMeta.identity_hash``), unlike the cost and run
+            caps. Those are machine-independent properties of the measurement;
+            a wall-clock cap is a property of the HOST, so folding it into the
+            identity would re-key every result whenever the experiment moved to
+            a faster or slower machine. This is sound because a timed-out task
+            is never a kept measurement: it is recorded as ``"timeout"``, which
+            is not a resumable-kept status, so the cap can never influence a
+            result that survives into the dataset.
         task_cost_cap_usd: Per-task cost cap in USD for the attacker's
             optimizer LLM. A fresh client is built per task, so this bounds
             the attacker's cumulative spend *per task* and resets each task
@@ -553,6 +570,7 @@ class Controller:
         read_only: Scope | ScopeResolver = frozenset(),
         llm_config: LLMConfig | None = None,
         task_cost_cap_usd: float | None = None,
+        task_time_cap_s: float | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
         results_dir: str | Path | None = None,
@@ -614,11 +632,14 @@ class Controller:
             raise ValueError("max_runs_per_task must be at least 1")
         if task_cost_cap_usd is not None and task_cost_cap_usd < 0:
             raise ValueError("task_cost_cap_usd must be non-negative")
+        if task_time_cap_s is not None and task_time_cap_s <= 0:
+            raise ValueError("task_time_cap_s must be positive")
         self._optimizer_factory = optimizer_factory
         self._target_factory = target_factory
         self._security_claim = security_claim
         self._llm_config: LLMConfig | None = llm_config
         self._task_cost_cap_usd: float | None = task_cost_cap_usd
+        self._task_time_cap_s: float | None = task_time_cap_s
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
@@ -980,7 +1001,34 @@ class Controller:
             )
         try:
             try:
-                return await self._run_task(task, target, task_scope, reporter, index)
+                if self._task_time_cap_s is None:
+                    return await self._run_task(task, target, task_scope, reporter, index)
+                # Wall-clock bound. The work bounds (task_cost_cap_usd,
+                # max_runs_per_task) cannot stop a task whose provider call
+                # blocks forever: no spend accrues and no run completes, so the
+                # task hangs indefinitely. wait_for cancels the whole task
+                # coroutine; the caller's finally still tears the target down.
+                try:
+                    return await asyncio.wait_for(
+                        self._run_task(task, target, task_scope, reporter, index),
+                        timeout=self._task_time_cap_s,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "Task %r: exceeded task_time_cap_s=%s, cancelled",
+                        task.goal.description,
+                        self._task_time_cap_s,
+                    )
+                    return _synthesize_empty_task_result(
+                        task,
+                        stop_reason="timeout",
+                        rationale=(
+                            f"Task exceeded task_time_cap_s="
+                            f"{self._task_time_cap_s}s and was cancelled."
+                        ),
+                        scope=task_scope.write,
+                        read_only=task_scope.read_only,
+                    )
             except NotApplicable:
                 logger.info("Task %r not applicable, skipping", task.goal.description)
                 return task
