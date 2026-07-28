@@ -54,6 +54,7 @@ from __future__ import annotations
 import hashlib
 import importlib.resources
 import json
+import logging
 import os
 import re
 import shutil
@@ -88,6 +89,8 @@ try:  # POSIX advisory locking; absent on Windows (lock becomes a no-op there).
 except ImportError:  # pragma: no cover - platform-specific
     fcntl = None  # type: ignore[assignment]
 
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 4
 
@@ -601,11 +604,23 @@ def iter_task_dirs(experiment_dir: str | Path) -> list[Path]:
 
 
 def iter_tasks(experiment_dir: str | Path) -> list[TaskView]:
-    """Scalar views of all current tasks under an experiment, ordered by index."""
-    views = [
-        _task_view_from_json(load_task(d), f"tasks/{d.name}")
-        for d in iter_task_dirs(experiment_dir)
-    ]
+    """Scalar views of all current tasks under an experiment, ordered by index.
+
+    A task record that cannot be read is SKIPPED, which is what
+    :func:`_scan_prior_tasks` already does when it plans the resume: the index is
+    simply absent, so that task counts as outstanding and is recomputed.  Raising
+    instead would make one damaged file fatal to the entire experiment, forever:
+    ``ExperimentSession.open`` calls this before any task runs, so the experiment
+    could never start again to repair itself.
+    """
+    views = []
+    for d in iter_task_dirs(experiment_dir):
+        try:
+            views.append(_task_view_from_json(load_task(d), f"tasks/{d.name}"))
+        except Exception:
+            logger.warning(
+                "superred: unreadable task record at %s, treating that task as outstanding", d
+            )
     return sorted(views, key=lambda v: v.index)
 
 
@@ -1093,7 +1108,11 @@ def reconstruct_kept_task_result(experiment_dir: Path, index: int, task: Task[An
     from superred.core.controller import TaskResult as _TaskResult
 
     for d in iter_task_dirs(experiment_dir):
-        data = load_task(d)
+        try:
+            data = load_task(d)
+        except Exception:
+            # A damaged neighbouring record must not hide the one we want.
+            continue
         if int(data.get("index", -1)) != index:
             continue
         score = data.get("best_score", {}) or {}
