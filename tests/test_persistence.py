@@ -674,3 +674,41 @@ def test_resolve_results_root_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # Reference imports so unused-tag lint stays quiet and tags are exercised.
 _TAGS = (EXTERNAL_TAG, INTERNAL_TAG, ROOT_TAG)
+
+
+def test_unreadable_task_record_is_skipped_not_fatal(tmp_path: Path) -> None:
+    """A damaged task.json must not make the whole experiment unopenable.
+
+    ``_scan_prior_tasks`` already tolerates one (the task just counts as
+    outstanding), but ``iter_tasks`` used to raise, and ``ExperimentSession.open``
+    calls it before any task runs -- so a single truncated write, from a crash or
+    a full disk, permanently blocked that experiment: it could never start again
+    to repair itself.
+    """
+    root = tmp_path / "results"
+    task_results = [
+        _make_task_result("goal one", score=0.8, success=True, stop_reason="done"),
+        _make_task_result("goal two", score=0.0, success=False, stop_reason="done"),
+    ]
+    exp_dir = _write_tree(root, BASE_META, task_results)
+    goals = [tr.task.goal.description for tr in task_results]
+
+    # Truncate the first task's record the way an interrupted write would.
+    damaged = iter_task_dirs(exp_dir)[0] / "task.json"
+    raw = damaged.read_text(encoding="utf-8")
+    damaged.write_text(raw[: len(raw) // 2], encoding="utf-8")
+
+    views = iter_tasks(exp_dir)
+    assert [v.index for v in views] == [2], "the readable task must still be reported"
+
+    plan = plan_resume(exp_dir, goals, overwrite=False)
+    assert plan.rerun == frozenset({1}), "the damaged task must be recomputed"
+    assert plan.keep == frozenset({2}), "its neighbour must still be kept"
+
+    # The real consequence: the experiment can be opened again, so the next run
+    # repairs it instead of dying on it.
+    session = ExperimentSession.open(root, BASE_META, goals)
+    try:
+        assert session.plan.rerun == frozenset({1})
+    finally:
+        session.abort()
