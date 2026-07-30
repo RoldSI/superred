@@ -492,6 +492,7 @@ def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
         if v.status == "timeout_empty":
             return False
         return v.stop_reason in completed_reasons
+
     # Count a success only among completed tasks: a task can be success=True yet
     # stop_reason="error" (goal met, then reset_ephemeral_state failed), which
     # would otherwise make the numerator exceed the denominator (ASR > 100%).

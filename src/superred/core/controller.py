@@ -363,15 +363,30 @@ class _TaskProgress:
     """
 
     runs: list[RunResult] = field(default_factory=list)
-    best_score: Score | None = None
-    best_evaluation: EvaluationResult | None = None
-    success: bool = False
     llm_client: LLMClient | None = None
 
     @property
     def usage(self) -> LLMUsage:
         """Attacker spend so far -- real money, even when the task is cancelled."""
         return self.llm_client.usage if self.llm_client is not None else LLMUsage()
+
+    # Derived, not tracked: the runs already determine both, and maintaining
+    # them alongside would be a second copy to keep in step. Only JUDGED runs
+    # count -- an errored run carries a synthesized evaluation, never a verdict.
+
+    @property
+    def best(self) -> tuple[Score, EvaluationResult] | None:
+        """Score and verdict of the highest-scoring judged run, if any."""
+        judged = [r for r in self.runs if r.evaluated]
+        if not judged:
+            return None
+        b = max(judged, key=lambda r: r.evaluation.primary_score.value)
+        return b.evaluation.primary_score, b.evaluation
+
+    @property
+    def success(self) -> bool:
+        """Whether any judged run met the goal."""
+        return any(r.evaluation.success for r in self.runs if r.evaluated)
 
 
 def _truncated_task_result(
@@ -392,16 +407,16 @@ def _truncated_task_result(
     persistence records it under a status a resume will recompute.
     """
     zero = Score(value=0.0, name="primary")
-    best_evaluation = progress.best_evaluation or EvaluationResult(
-        success=False,
-        primary_score=zero,
-        sub_scores={},
-        rationale=rationale,
+    best = progress.best
+    best_evaluation = (
+        best[1]
+        if best is not None
+        else EvaluationResult(success=False, primary_score=zero, sub_scores={}, rationale=rationale)
     )
     return TaskResult(
         task=task,
         runs=list(progress.runs),
-        best_score=progress.best_score or zero,
+        best_score=best[0] if best is not None else zero,
         best_evaluation=best_evaluation,
         success=progress.success,
         llm_usage=progress.usage,
@@ -1237,9 +1252,6 @@ class Controller:
         # Aliased onto the caller-owned holder: appends are visible to the
         # caller even if this coroutine is cancelled and never returns.
         runs: list[RunResult] = progress.runs
-        best_score: Score | None = None
-        best_evaluation: EvaluationResult | None = None
-        success = False
         # Default reason: if the for-loop exits without an explicit break,
         # the safety cap was reached.
         stop_reason: StopReason = "max_runs"
@@ -1325,14 +1337,6 @@ class Controller:
                 reporter.on_run_complete(
                     _run_complete_event(index, task.goal.description, run_number, run_result)
                 )
-                if best_score is None or evaluation.primary_score.value > best_score.value:
-                    best_score = evaluation.primary_score
-                    best_evaluation = evaluation
-                    progress.best_score = best_score
-                    progress.best_evaluation = best_evaluation
-                if evaluation.success:
-                    success = True
-                    progress.success = True
 
                 # Reset ephemeral target state for next run within this task.  If
                 # reset_ephemeral_state raises, the successful run we just appended stays
@@ -1379,7 +1383,8 @@ class Controller:
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still
         # appears in results.
-        if best_score is None:
+        best = progress.best
+        if best is None:
             best_score = Score(value=0.0, name="primary")
             if stop_reason == "error":
                 rationale = "Unexpected error before first run completed."
@@ -1391,7 +1396,8 @@ class Controller:
                 sub_scores={},
                 rationale=rationale,
             )
-        assert best_evaluation is not None
+        else:
+            best_score, best_evaluation = best
 
         task_usage = llm_client.usage if llm_client else LLMUsage()
         return TaskResult(
@@ -1399,7 +1405,7 @@ class Controller:
             runs=runs,
             best_score=best_score,
             best_evaluation=best_evaluation,
-            success=success,
+            success=progress.success,
             llm_usage=task_usage,
             stop_reason=stop_reason,
             scope=task_scope.write,
