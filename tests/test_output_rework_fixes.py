@@ -84,7 +84,7 @@ def test_get_default_dashboard_rearms_after_shutdown() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _controller(tmp_path: object, reporter: object, **kw: object) -> Controller:
+def _controller(tmp_path: object, **kw: object) -> Controller:
     return Controller(
         optimizer_factory=lambda: CountingOptimizer(stop_after=1),
         target_factory=TargetFactory(create=lambda: StubTarget()),
@@ -94,7 +94,6 @@ def _controller(tmp_path: object, reporter: object, **kw: object) -> Controller:
         max_runs_per_task=1,
         persist=True,
         results_dir=str(tmp_path),
-        reporter=reporter,  # type: ignore[arg-type]
         attacker_label="pair",
         target_label="ad",
         claim_label="hb",
@@ -113,7 +112,7 @@ async def test_run_aborts_cleanly_and_releases_lock(
 
     monkeypatch.setattr(Controller, "_iterate_tasks", boom)
     with pytest.raises(RuntimeError, match="iterate boom"):
-        await _controller(tmp_path, rec).run()
+        await _controller(tmp_path).run(reporter=rec)
 
     # The reporter lane was started AND ended (frees a shared live canvas).
     assert rec.starts == 1
@@ -122,7 +121,7 @@ async def test_run_aborts_cleanly_and_releases_lock(
     # The .lock was released on the abort path: a second run of the same
     # experiment identity succeeds instead of raising "locked".
     monkeypatch.undo()
-    result = await _controller(tmp_path, NullReporter()).run()
+    result = await _controller(tmp_path).run(reporter=NullReporter())
     assert len(result.task_results) == 1
 
 
@@ -141,10 +140,9 @@ async def test_run_one_contains_orchestration_error(tmp_path: object) -> None:
         llm_config=STUB_LLM_CONFIG,
         max_runs_per_task=1,
         persist=False,
-        reporter=_RaisingStartReporter(),
     )
     # A reporter callback raising must NOT abort the whole threat model.
-    result = await controller.run()
+    result = await controller.run(reporter=_RaisingStartReporter())
     assert len(result.task_results) == 2
     assert all(tr.stop_reason == "error" for tr in result.task_results)
 

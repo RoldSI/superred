@@ -206,7 +206,7 @@ gitignored.
 ## Live progress reporting
 
 The Controller prints nothing itself. It narrates a run through a **reporter**, an
-observer it calls at each lifecycle point. Two constructor arguments choose one:
+observer it calls at each lifecycle point. One constructor argument chooses one:
 
 - **`report: bool | Literal["auto"] = "auto"`.** `True` / `"auto"` show progress;
   `False` is silent. What "show" means degrades to the environment automatically:
@@ -222,8 +222,12 @@ observer it calls at each lifecycle point. Two constructor arguments choose one:
     `TERM=dumb`, when `TERM=dumb` **and** `NO_COLOR` are set together, or when
     `SUPERRED_NO_DASHBOARD` is set. (`NO_COLOR` on its own only strips color; it
     does not by itself force plain output.)
-- **`reporter: ProgressReporter | None = None`.** Inject your own observer (a
-  custom sink, a metrics pipe, a test double). It wins over `report`.
+
+To supply your own observer (a custom sink, a metrics pipe, a test double), pass
+it per call: `await controller.run(reporter=...)`. That argument wins over what
+`report` would resolve to, and is the seam
+[`run_all`](/reference/controller#sweeping-multiple-threat-models) uses to hand
+every Controller a lane of one shared dashboard.
 
 ### The `ProgressReporter` protocol
 

@@ -53,7 +53,6 @@ controller = Controller(
     results_dir=None,                          # results ROOT; None = env or ./superred-results/
     overwrite=False,                           # re-run a resumable experiment from scratch
     report="auto",                             # live dashboard on a TTY, plain otherwise; False = silent
-    reporter=None,                             # inject a custom ProgressReporter (wins over report)
     attacker_label="my-optimizer",             # short names for the experiment folder + dashboard
     target_label="my-target",
     claim_label="my-claim",
@@ -80,7 +79,6 @@ The full constructor parameters, with types and defaults:
 | `scope_label` | `str \| None` | `None` | names a dynamic-scope run; required in that mode |
 | `persist` | `bool` | `True` | write a results tree |
 | `overwrite` | `bool` | `False` | force a full recompute of a resumable run |
-| `reporter` | `ProgressReporter \| None` | `None` | custom progress observer; wins over `report` |
 | `report` | `bool \| Literal["auto"]` | `"auto"` | live progress; `False` = silent |
 | `attacker_label` / `target_label` / `claim_label` | `str \| None` | `None` | short display names |
 
@@ -138,11 +136,11 @@ The resolved scope gates **all** optimizer-facing surfaces for that task (see
 ## The run lifecycle
 
 `await controller.run(*, reporter=None) -> ThreatModelResult` runs every task in
-the claim against the configured threat model. (The keyword-only `reporter`
-overrides the constructor's for this call; `run_all` uses it to inject a shared
-dashboard lane.) Tasks run concurrently, bounded by `target_factory.concurrency`
-(an `asyncio.Semaphore` plus `asyncio.gather`), and results are collected in claim
-order.
+the claim against the configured threat model. (The keyword-only `reporter` is
+the one seam for injecting a custom observer; it overrides what `report` would
+resolve to, and `run_all` uses it to inject a shared dashboard lane.) Tasks run
+concurrently, bounded by `target_factory.concurrency` (an `asyncio.Semaphore`
+plus `asyncio.gather`), and results are collected in claim order.
 
 For each task:
 

@@ -632,10 +632,6 @@ def test_get_default_dashboard_is_singleton() -> None:
 def test_resolve_reporter_all_branches(monkeypatch: Any) -> None:
     reporting._reset_for_tests()
 
-    # An explicit reporter always wins.
-    explicit = NullReporter()
-    assert reporting.resolve_reporter("l", reporter=explicit) is explicit
-
     # report=False disables reporting.
     assert isinstance(reporting.resolve_reporter("l", report=False), NullReporter)
 
