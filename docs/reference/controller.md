@@ -139,9 +139,8 @@ The resolved scope gates **all** optimizer-facing surfaces for that task (see
 the claim against the configured threat model. (The keyword-only `reporter` is
 the one seam for injecting a custom observer; it overrides what `report` would
 resolve to, and `run_all` uses it to inject a shared dashboard lane.) Tasks run
-concurrently, bounded by `target_factory.concurrency`
-(an `asyncio.Semaphore` plus `asyncio.gather`), and results are collected in claim
-order.
+concurrently, bounded by `target_factory.concurrency` (an `asyncio.Semaphore`
+plus `asyncio.gather`), and results are collected in claim order.
 
 For each task:
 
