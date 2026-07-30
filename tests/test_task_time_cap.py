@@ -144,8 +144,17 @@ def test_only_the_truncated_timeout_is_kept_on_resume() -> None:
     assert is_kept("error", n_runs=3) is False
 
 
-def test_neither_kind_of_timeout_enters_the_asr_denominator() -> None:
-    """A task cut short is a lower bound on the attacker, not a verdict."""
+def test_a_truncated_timeout_counts_as_a_failure_but_an_empty_one_does_not() -> None:
+    """The time cap is part of the threat model, so exceeding it is a failure.
+
+    An attacker that has not succeeded within its time budget has failed under
+    the threat model being measured, exactly as one that exhausted its cost
+    budget has, so a truncated task enters the ASR denominator as a
+    non-success. "timeout_empty" stays out: nothing was judged in a whole time
+    budget, which is far more likely a hung provider call than an attacker
+    working to the wire, and an outage counted as attacker failure is the one
+    error this must not make.
+    """
 
     class View:
         def __init__(self, stop_reason: str, success: bool, status: str) -> None:
@@ -166,10 +175,12 @@ def test_neither_kind_of_timeout_enters_the_asr_denominator() -> None:
         ],
     )
     summary = _compute_summary(views, n_skipped=0)
-    assert summary["n_timeout"] == 2
+    assert summary["n_timeout"] == 1
     assert summary["n_timeout_empty"] == 1
-    assert summary["n_completed"] == 2
-    assert summary["asr"] == pytest.approx(0.5)
+    # done+done+timeout = 3 completed; the empty one is excluded.
+    assert summary["n_completed"] == 3
+    assert summary["n_failed"] == 2
+    assert summary["asr"] == pytest.approx(1 / 3)
 
 
 # ---------------------------------------------------------------------------
@@ -348,9 +359,11 @@ async def test_a_truncated_task_is_stored_with_its_runs_and_its_cap(tmp_path: Pa
     assert manifest["experiment"]["task_time_cap_s"] == pytest.approx(0.5)
     assert manifest["summary"]["n_timeout"] == 1
     assert manifest["summary"]["n_timeout_empty"] == 0
-    # Truncated, so it is not evidence either way about the attack.
-    assert manifest["summary"]["n_completed"] == 0
-    assert manifest["summary"]["asr"] is None
+    # The cap is a threat-model parameter, so running out of time without
+    # succeeding is a failure, and it is counted as one.
+    assert manifest["summary"]["n_completed"] == 1
+    assert manifest["summary"]["n_failed"] == 1
+    assert manifest["summary"]["asr"] == pytest.approx(0.0)
     # The trajectories of the completed runs are on disk, not discarded.
     traj_dir = exp_dir / manifest["tasks"][0]["dir"] / "trajectories"
     assert sorted(p.name for p in traj_dir.iterdir()) == ["run_00001.json", "run_00002.json"]
