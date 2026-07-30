@@ -54,6 +54,7 @@ from __future__ import annotations
 import hashlib
 import importlib.resources
 import json
+import logging
 import os
 import re
 import shutil
@@ -88,6 +89,8 @@ try:  # POSIX advisory locking; absent on Windows (lock becomes a no-op there).
 except ImportError:  # pragma: no cover - platform-specific
     fcntl = None  # type: ignore[assignment]
 
+
+logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 4
 
@@ -321,6 +324,11 @@ def _serialize_trajectory(trajectory: Trajectory) -> list[dict[str, Any]]:
 def _status_of(success: bool, stop_reason: str) -> str:
     if stop_reason == "error":
         return "error"
+    # A task cancelled at the wall-clock cap produced no measurement. Kept
+    # distinct from "error" so timeouts are countable, and deliberately absent
+    # from _KEPT_STATUSES so a resume recomputes it.
+    if stop_reason == "timeout":
+        return "timeout"
     if success:
         return "success"
     if stop_reason == "budget_exhausted":
@@ -412,6 +420,9 @@ def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
     n_completed = sum(1 for v in views if v.stop_reason in completed_reasons)
     n_budget = sum(1 for v in views if v.stop_reason == "budget_exhausted")
     n_error = sum(1 for v in views if v.stop_reason == "error")
+    # Not in completed_reasons above: a timed-out task is not a measurement, so
+    # it must not enter the ASR denominator.
+    n_timeout = sum(1 for v in views if v.stop_reason == "timeout")
     scores = [v.best_score for v in views]
     return {
         "asr": (n_success / n_completed) if n_completed else None,
@@ -421,6 +432,7 @@ def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
         "n_failed": n_completed - n_success,
         "n_error": n_error,
         "n_budget_exhausted": n_budget,
+        "n_timeout": n_timeout,
         "n_skipped": n_skipped,
         "max_primary_score": max(scores) if scores else None,
         "mean_primary_score": (sum(scores) / len(scores)) if scores else None,
@@ -592,11 +604,23 @@ def iter_task_dirs(experiment_dir: str | Path) -> list[Path]:
 
 
 def iter_tasks(experiment_dir: str | Path) -> list[TaskView]:
-    """Scalar views of all current tasks under an experiment, ordered by index."""
-    views = [
-        _task_view_from_json(load_task(d), f"tasks/{d.name}")
-        for d in iter_task_dirs(experiment_dir)
-    ]
+    """Scalar views of all current tasks under an experiment, ordered by index.
+
+    A task record that cannot be read is SKIPPED, which is what
+    :func:`_scan_prior_tasks` already does when it plans the resume: the index is
+    simply absent, so that task counts as outstanding and is recomputed.  Raising
+    instead would make one damaged file fatal to the entire experiment, forever:
+    ``ExperimentSession.open`` calls this before any task runs, so the experiment
+    could never start again to repair itself.
+    """
+    views = []
+    for d in iter_task_dirs(experiment_dir):
+        try:
+            views.append(_task_view_from_json(load_task(d), f"tasks/{d.name}"))
+        except Exception:
+            logger.warning(
+                "superred: unreadable task record at %s, treating that task as outstanding", d
+            )
     return sorted(views, key=lambda v: v.index)
 
 
@@ -1084,7 +1108,11 @@ def reconstruct_kept_task_result(experiment_dir: Path, index: int, task: Task[An
     from superred.core.controller import TaskResult as _TaskResult
 
     for d in iter_task_dirs(experiment_dir):
-        data = load_task(d)
+        try:
+            data = load_task(d)
+        except Exception:
+            # A damaged neighbouring record must not hide the one we want.
+            continue
         if int(data.get("index", -1)) != index:
             continue
         score = data.get("best_score", {}) or {}

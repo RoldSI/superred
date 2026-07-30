@@ -1,82 +1,139 @@
 ---
 layout: doc
-title: "Optimizer Interface"
+title: "Optimizer"
 permalink: /reference/optimizer
 ---
 
-# Optimizer Interface
+# Optimizer
 
-The optimizer is the attacker agent in superred. It runs as a concurrent actor, receiving events through an `EventChannel` and deciding what to inject at controllable points.
+The **optimizer** is the attacker. It is the only actively adversarial component:
+it drives the target toward violating a security property, using only the access
+the current threat model grants it. It acts **only** through
+[controllables](/reference/types#controllable-controllablepy) and observes **only**
+through [observables](/reference/types#observable-observablepy) and the
+[trajectory](/reference/events-and-trajectory#trajectory); it never touches the
+target directly.
+
+An optimizer is an **actor**: the Controller launches its `run(channel)` as a
+concurrent `asyncio.Task`, and the optimizer pulls
+[events](/reference/events-and-trajectory#events-and-responses) off the channel at
+its own pace and answers each one. You implement one by subclassing `Optimizer`.
 
 ## Lifecycle
 
 ```
-1. Instantiate with configuration
-2. initialize(goal, controllables, observables, llm_client), base class stores the LLM client
-3. run(channel), launched as asyncio.Task by the controller
-   For each run (until optimizer signals done):
-     - Receives RunStartEvent(trajectory) → sets current_trajectory
-     - Receives ControllablePreCallEvent / ControllablePostCallEvent [0..N]
-     - (controller evaluates)
-     - Receives RunEndEvent(evaluation) → archives trajectory
-       evaluation is on the event and RunEndEvent is persisted to the trajectory.
-       Respond with RunEndResponse(done=True) to stop, done=False to continue
-   Channel closes → run() returns
-4. teardown()
+1. Instantiate (no required construction arguments; see below).
+2. initialize(goal, controllables, observables, llm_client)
+      - the base class stores the LLM client (self.llm).
+3. run(channel) - launched as an asyncio.Task by the Controller.
+      Per run (until the optimizer signals done):
+        RunStartEvent            → current_trajectory is set
+        Controllable events ×N   → inject or decline
+        RunEndEvent(evaluation)  → read feedback; answer RunEndResponse(done=…)
+      The channel closes → run() returns.
+4. teardown() - release resources.
 ```
 
-The optimizer stays alive across all runs for a task. One channel, one `run()` task. Multiple RunStart/RunEnd cycles flow through the same channel.
+The optimizer stays alive across **all** runs of a task: one channel, one `run()`
+task, many run cycles.
+
+**No construction configuration.** An `OptimizerFactory` is a plain
+`Callable[[], Optimizer]` and the Controller builds fresh instances with no
+arguments, so an optimizer must infer everything it needs at `initialize()` from
+the goal, the controllables and observables it is handed, and (optionally) an LLM
+call. This is what lets one optimizer attack any target under any scope.
 
 ## What to implement
 
 Subclass `Optimizer` and override:
 
-**Required:**
-- `initialize(goal, controllables, observables, llm_client)`, setup before first run. Call `super().initialize(...)` to store the LLM client (accessible via `self.llm` after that).
-- `on_event(event) -> EventResponse`, respond to a single event. Use `isinstance` dispatch.
+**Required**
 
-**Optional:**
-- `run(channel)`, override for custom consumption model. Default: sequential via `_dispatch`.
-- `teardown()`, release resources. Default: no-op.
+- `async initialize(goal, controllables, observables, llm_client)` setup before
+  the first run. Call `await super().initialize(...)` so the base class stores the
+  client and `self.llm` works. The `controllables` are exactly the surfaces this
+  threat model lets you inject into (already scope-filtered); a read-only surface
+  is not here, it appears among `observables` instead.
+- `async on_event(event) -> EventResponse` handle one event. Dispatch on type
+  with `isinstance`.
 
-## LLM access
+**Optional**
 
-The controller passes a constrained `LLMClient` to `initialize()`. The base class stores it; after calling `super().initialize(...)`, the optimizer accesses it via:
+- `async run(channel)` override for a non-sequential
+  [consumption model](#consumption-models). Default: sequential via `_dispatch`.
+- `async teardown()` release resources. Default: no-op.
 
-- **`self.llm`** property, returns the `LLMClient`. Available after `super().initialize()` is called.
+## Responding to events
 
-The `LLMClient` locks the model, API base, and API key, the optimizer cannot change them. A cost cap (`cost_cap_usd` in USD, set by the caller; for the attacker it is the controller's `task_cost_cap_usd`) is enforced by the client via pre-call checks that raise `BudgetExhaustedError`. Cost is computed per call via `litellm.completion_cost()`.
+`on_event` returns one response per event. Each event class declares its valid
+responses (its `response_types`), and the channel **validates** your reply against
+them, so returning the wrong response type raises `TypeError` rather than passing
+silently. The contract:
+
+| Event | Return |
+|-------|--------|
+| `RunStartEvent` | any `EventResponse` (typically `EventResponse(event=event)`) |
+| `ControllablePreCallEvent` | `ControllableInjection(event=event, controllable=event.controllable, value=...)` to act, or `ControllableNoInjection(event=event, controllable=event.controllable)` to decline |
+| `ControllablePostCallEvent` | same two options (a chance to observe the effect and, if wanted, inject again) |
+| `RunEndEvent` | `RunEndResponse(event=event, done=...)`, `done=True` to stop, `False` to try another run |
 
 ```python
 async def on_event(self, event):
     if isinstance(event, ControllablePreCallEvent):
-        response = await self.llm.complete([
-            {"role": "system", "content": "You are a red-teaming assistant."},
-            {"role": "user", "content": f"Generate an attack for: {event.request}"},
-        ])
-        attack = response.choices[0].message.content
-        return ControllableInjection(event=event, controllable=event.controllable, value=attack)
-    ...
-```
-
-## Consumption models
-
-The optimizer chooses how to process events by overriding `run()`:
-
-**Sequential (default)**, inherit `run()`, just override `on_event`:
-```python
-async def on_event(self, event):
-    if isinstance(event, ControllablePreCallEvent):
-        return ControllableInjection(event=event, controllable=event.controllable, value="...")
+        return ControllableInjection(
+            event=event, controllable=event.controllable, value="…attack…",
+        )
     elif isinstance(event, RunStartEvent):
         return EventResponse(event=event)
     elif isinstance(event, RunEndEvent):
-        done = self._budget_exhausted()
+        done = self._satisfied(event.evaluation)   # decide from feedback
         return RunEndResponse(event=event, done=done)
     return EventResponse(event=event)
 ```
 
-**Parallel**, override `run()`, spawn tasks per event:
+The optimizer is never asked about surfaces outside its scope: the Controller
+answers those with `ControllableNoInjection` itself. Success is decided by the
+[Task](/reference/task), not the optimizer; `event.evaluation` is for **steering**
+the next attempt, not for self-certifying a win. An optimizer that always declines
+is the passthrough baseline: it changes nothing and reproduces the target's
+unattacked behavior.
+
+## LLM access
+
+The Controller passes a constrained [`LLMClient`](/reference/types#llmclient-corellmpy)
+to `initialize()`; the base class stores it, and after `super().initialize(...)`
+you reach it as **`self.llm`**. The client locks the model and credentials and
+enforces the per-task cost cap: a call raises `BudgetExhaustedError` once the cap
+is reached.
+
+```python
+response = await self.llm.complete([
+    {"role": "system", "content": "You are a red-teaming assistant."},
+    {"role": "user", "content": f"Craft an attack for: {event.request}"},
+])
+attack = response.choices[0].message.content
+```
+
+The model and the budget are fixed by the experiment, not the optimizer. An
+optimizer designed for a fixed number of iterations should keep going until it
+hits `BudgetExhaustedError`, rather than imposing its own iteration cap.
+
+## Consumption models
+
+The default `run()` consumes events one at a time. Override `run()` to change how,
+but keep calling `self._dispatch(envelope)` so trajectory bookkeeping (below) still
+happens.
+
+**Sequential (default)** inherit `run()`, override only `on_event`:
+
+```python
+async def run(self, channel):
+    async for envelope in channel:
+        await self._dispatch(envelope)
+```
+
+**Parallel** spawn a task per envelope:
+
 ```python
 async def run(self, channel):
     tasks = set()
@@ -88,7 +145,9 @@ async def run(self, channel):
         await asyncio.gather(*tasks)
 ```
 
-**Continuous with events**, override `run()`, do background work + pull events:
+**Continuous** run background work alongside event handling (for example an
+evolutionary optimizer evolving a population between injections):
+
 ```python
 async def run(self, channel):
     self._done = False
@@ -101,52 +160,66 @@ async def run(self, channel):
     await asyncio.gather(event_loop(), background())
 ```
 
-## `_dispatch(envelope)`, trajectory tracking wrapper
+If `run()` may call `on_event` concurrently, `on_event` must handle its own
+synchronization (for example an `asyncio.Lock`).
 
-The base class provides `_dispatch()` which:
-1. Sets `_current_trajectory` on `RunStartEvent`
-2. Calls `on_event(event)` to get the response
-3. Archives trajectory to `_past_trajectories` on `RunEndEvent`, clears `_current_trajectory`
-4. Calls `envelope.respond(response)` to deliver the response back through the channel
+## `_dispatch(envelope)`: trajectory bookkeeping
 
-**Exception safety**: If `on_event()` raises, `_dispatch` archives the trajectory only when the failing event is a `RunEndEvent`, rejects the envelope (propagating the exception to the sender), and re-raises.
+The base class provides `_dispatch`, which wraps `on_event`:
 
-Use `_dispatch` from custom `run()` implementations to retain automatic trajectory tracking. Advanced optimizers can handle envelopes directly if they want full control.
+1. On a `RunStartEvent`, set `_current_trajectory` from the event.
+2. Call `on_event(event)` to get the response.
+3. On a `RunEndEvent`, archive the current trajectory into `_past_trajectories`
+   and clear `_current_trajectory`.
+4. Deliver the response with `envelope.respond(response)`.
 
-## Exception handling
+**Exception safety.** If `on_event` raises, `_dispatch` still runs the post-event
+lifecycle (archiving on a `RunEndEvent`), then calls `envelope.reject(exc)` so the
+sender (the target's `await send_event`) receives the exception instead of
+deadlocking, and re-raises. The exception exits `run()`, the Controller detects the
+failure, and it then [poisons the channel](/reference/events-and-trajectory#eventchannel)
+with `set_error()` so no other in-flight `send` hangs.
 
-The default `run()` iterates the channel via `async for envelope in channel: await self._dispatch(envelope)`.
+Use `_dispatch` from any custom `run()`. Advanced optimizers may handle envelopes
+directly, but then they own trajectory bookkeeping and the reject-on-error
+contract themselves.
 
-If `on_event()` raises, `_dispatch` rejects the envelope (propagating the exception to the sender) and re-raises. The exception exits `run()` and the controller detects the failure. The controller then poisons the channel via `channel.set_error()`, ensuring no other `channel.send()` call deadlocks.
+## Trajectory access
 
-## Lifecycle events
+The base class tracks trajectory history for you:
 
-Instead of hook methods, the optimizer receives lifecycle events through the channel:
+- `current_trajectory -> ReadableTrajectory | None` the trajectory for the active
+  run (a [`FilteredTrajectory`](/reference/events-and-trajectory#trajectory)
+  scoped to what the optimizer may see). Set on `RunStartEvent`, cleared on
+  `RunEndEvent`, `None` between runs.
+- `past_trajectories -> list[ReadableTrajectory]` all completed run trajectories,
+  oldest first.
 
-- `RunStartEvent(trajectory)`, new run starting. The trajectory for this run is available via `self.current_trajectory` after `_dispatch` processes this event. Respond with `EventResponse(event=event)`.
-- `RunEndEvent(evaluation)`, run completed. Sent after evaluation. The optimizer reads feedback directly from `event.evaluation`, or from past trajectories (since `RunEndEvent` is persisted to the trajectory). Respond with `RunEndResponse(event=event, done=False)` to continue with more runs, or `RunEndResponse(event=event, done=True)` to signal the optimizer is finished (goal achieved, budget exhausted).
-
-These flow through the channel like any other event. No special methods to override.
-
-## History tracking
-
-- `current_trajectory -> ReadableTrajectory | None`, trajectory for the currently active run. When provided by the controller, this is a `FilteredTrajectory` that only exposes entries within the security domain scope. Set by `_dispatch` on `RunStartEvent`, cleared on `RunEndEvent`. `None` between runs.
-- `past_trajectories -> list[ReadableTrajectory]`, all completed run trajectories, oldest first. Archived by `_dispatch` on `RunEndEvent`.
-
-Both managed automatically by `_dispatch()`. If you override `run()` and don't use `_dispatch`, you manage trajectory state yourself.
+Both are maintained by `_dispatch`. Read feedback either from `event.evaluation`
+on the `RunEndEvent` or from these trajectories (the `RunEndEvent` is persisted, so
+past runs' feedback is on their trajectories).
 
 ## Thread safety
 
-- `on_event` may be called concurrently if `run()` is overridden for parallel consumption. The implementation must handle its own synchronization (e.g. `asyncio.Lock`).
-- `envelope.respond()` is thread-safe, can be called from any thread via `call_soon_threadsafe`.
-- `EventChannel` is thread-safe, supports cross-thread communication.
+- `envelope.respond()` / `envelope.reject()` are thread-safe (they resolve the
+  waiting future via `call_soon_threadsafe`).
+- The `EventChannel` and the `Trajectory` are thread-safe, so an optimizer may do
+  cross-thread work.
+- `on_event` may be called concurrently only if you opt into a parallel `run()`;
+  then its own synchronization is your responsibility.
 
 ## Design decisions
 
-- **Actor model**: The optimizer runs as its own concurrent `asyncio.Task`. It is not called synchronously by the controller.
-- **Channel-based**: Events flow through `EventChannel`, not direct method calls. This decouples the optimizer from the target's execution.
-- **Optimizer chooses consumption**: Sequential, parallel, or continuous, the optimizer controls how it processes events by overriding `run()`.
-- **Lifecycle events over hooks**: `RunStartEvent`/`RunEndEvent` flow through the same channel as controllable events. Uniform interface, no special methods to override.
-- **`_dispatch` for convenience**: Handles trajectory bookkeeping and envelope response. Optional, advanced optimizers can handle envelopes directly.
-- **Base class tracks trajectories**: `_current_trajectory` and `_past_trajectories` are managed by the base class via `_dispatch`. This is the common case, most optimizers want trajectory history without boilerplate.
-- **Exception-safe by default**: `_dispatch` rejects the envelope on `on_event` failure (propagating the exception to the sender) and re-raises, exiting `run()` on the first error. The controller poisons the channel via `set_error()` to prevent deadlock.
+- **Actor model.** The optimizer is its own concurrent task, not called
+  synchronously, so it, not the Controller, owns its consumption strategy.
+- **Channel, not method calls.** Events flow over the
+  [`EventChannel`](/reference/events-and-trajectory#eventchannel-and-eventenvelope),
+  decoupling the optimizer from the target's execution.
+- **Lifecycle events, not hooks.** `RunStartEvent` and `RunEndEvent` are ordinary
+  events on the same channel, so there are no special methods to override.
+- **The base class tracks trajectories.** Most optimizers want run history without
+  boilerplate; `_dispatch` provides it, and remains optional for those who want
+  full control.
+- **No construction config.** All per-run adaptation happens at `initialize()`, so
+  arbitrarily many instances can be created identically and adapt themselves to
+  the scope they are handed.

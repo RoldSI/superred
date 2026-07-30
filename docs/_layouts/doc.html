@@ -45,9 +45,11 @@
     </aside>
 
     <main class="content">
-      {% include pager.html cls="pager-top" %}
+      {%- comment -%} Only pages that live in the nav get a prev/next pager;
+      off-nav pages (e.g. the per-version migration subpages) get none. {%- endcomment -%}
+      {% if found %}{% include pager.html cls="pager-top" %}{% endif %}
       {{ content }}
-      {% include pager.html cls="pager-bottom" %}
+      {% if found %}{% include pager.html cls="pager-bottom" %}{% endif %}
     </main>
   </div>
   {% include site-footer.html %}

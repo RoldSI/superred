@@ -51,6 +51,11 @@
     </div>
   </section>
 
+  <!-- ===== INTRO: centered pull-quote opening the page ===== -->
+  <section class="section intro-quote" id="intro">
+    <p class="intro-lede">SuperRed is an open-source framework for <strong>red-teaming AI systems</strong> (chatbots, agents, assistants): deliberately attacking them to see which <strong>security properties</strong> can be violated. It keeps the attacker, the system under test, and the benchmark that scores the outcome as separate, <strong>interchangeable modules</strong>.<br>The framework allows red-teamers to implement <strong>powerful, reusable strategies</strong>, system builders to easily <strong>test systems</strong>, and evaluators to <strong>measure any combination of attack and target</strong>. Each run is governed by a <strong>fine-grained threat model</strong>: the attacker's model and per-task budget, the scope of trust boundaries it may observe and control, and whether it receives the benchmark's feedback. The framework provides ready-to-use <strong>metrics and result dashboards</strong>.</p>
+  </section>
+
   <!-- ===== WHY: the gap it closes ===== -->
   <section class="section" id="why">
     <div class="section-head">
@@ -177,7 +182,7 @@
     <div class="section-body">
     <p>Attack, system, and benchmark are the same kind of thing here: interchangeable modules. Hold any one fixed to evaluate it; every contribution strengthens a shared toolbox.</p>
     <div class="audience">
-      <article class="aud-card">
+      <a class="aud-card" href="/guide/writing-an-optimizer">
         <h3 class="aud-title">For red-teamers</h3>
         <p class="aud-lead">An interactive environment for developing attacks, so you can build and score novel strategies on real environments as you go.</p>
         <div class="aud-rule"></div>
@@ -185,8 +190,9 @@
           <li>Powerful attackers of every kind: deterministic to agentic, fixed strategies to RL.</li>
           <li>Iterate against many targets as you build, and evaluate on standard benchmarks in a few lines.</li>
         </ul>
-      </article>
-      <article class="aud-card">
+        <span class="go">Write an optimizer &rarr;</span>
+      </a>
+      <a class="aud-card" href="/guide/writing-a-target">
         <h3 class="aud-title">For system builders</h3>
         <p class="aud-lead">Declare your system's trust boundaries once, then see exactly which attacks succeed at each level of access.</p>
         <div class="aud-rule"></div>
@@ -194,8 +200,9 @@
           <li>Test any kind of target: fixed-response fixtures, simulated environments, sandboxes, or live deployments.</li>
           <li>Wrap an existing system as a target; porting is straightforward.</li>
         </ul>
-      </article>
-      <article class="aud-card">
+        <span class="go">Write a target &rarr;</span>
+      </a>
+      <a class="aud-card" href="/guide/writing-tasks">
         <h3 class="aud-title">For evaluators</h3>
         <p class="aud-lead">Package a benchmark once as a security claim, then score any attacker against any target, or reuse the ones already ported.</p>
         <div class="aud-rule"></div>
@@ -203,7 +210,8 @@
           <li>Benchmark under many threat models for fine-grained, <em>comparable</em> insight, not assumptions that vary from benchmark to benchmark.</li>
           <li>Score deterministically or agentically, whichever the benchmark calls for.</li>
         </ul>
-      </article>
+        <span class="go">Write a task &rarr;</span>
+      </a>
     </div>
     </div>
   </section>

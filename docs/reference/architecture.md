@@ -6,202 +6,213 @@ permalink: /reference/
 
 # Architecture Overview
 
-superred is a modular framework for red-teaming AI systems. It models the interaction between an **optimizer** (the attacker), a **target** (the AI system under test), and **tasks** (adversarial objectives), orchestrated by a **controller** through an event-driven, channel-based architecture.
+superred is a framework for **red-teaming AI systems**: pointing an automated
+attacker at an AI system and measuring, under a precisely defined level of
+access, whether the attacker can make the system misbehave.
 
-## High-Level Flow
+This page is the map. It defines the pieces once, shows how they fit together,
+and points to the page that specifies each one in full. Every reference page is
+written to be read on its own, so you can also jump straight to the component you
+care about.
 
-```
-  SecurityClaim
-    |  iterates tasks
-    v
-  Task[T_Target]
-    |  configure_target(target)     (pre-run config)
-    |  evaluate(trajectory, target) (post-run queries)
-    v
-  +---------------------------+
-  |    Controller              |
-  |  (security domain filter)  |
-  +---------------------------+
-    send_event ↕  EventChannel  ↕ channel
-  +-------------+           +------------------+
-  |   Target    |           |    Optimizer      |
-  | (async run) |           | (actor, run loop) |
-  +-------------+           +------------------+
-```
+## The five roles
 
-## Concurrency Model
+An evaluation is built from five kinds of object. Three are things you write and
+ship as separate packages; two are framework machinery you configure but do not
+subclass.
 
-The controller bridges the target and optimizer through an `EventChannel`. The target and optimizer run as independent concurrent asyncio tasks on a single event loop. Communication is cooperative, coroutines yield at `await` points, and the event loop scheduler interleaves them.
+| Role | What it is | You |
+|------|-----------|-----|
+| **[Target](/reference/target)** | The AI system under test (a chatbot, a tool-using agent) | implement |
+| **[Optimizer](/reference/optimizer)** | The attacker: an automated strategy that tries to break the target | implement |
+| **[Task](/reference/task)** | One adversarial objective: set the target up, then judge the outcome | implement |
+| **[SecurityClaim](/reference/security-claim)** | A re-iterable collection of tasks (a test suite) | implement |
+| **[Controller](/reference/controller)** | The orchestrator: runs one claim under one threat model | configure |
 
-```
-Target (asyncio.Task / threads)     Controller          Optimizer (asyncio.Task)
-  |                                    |                    |
-  | branch_a: await send_event(e1) →   | filter → channel  →  |
-  | branch_b: await send_event(e2) →   | filter → channel  →  |
-  |                                    |                    |
-  | (branches suspended on futures)    |    run(): async for envelope in channel:
-  |                                    |      on_event(e1) → respond(r1)
-  |                                    |      on_event(e2) → respond(r2)
-  |                                    |                    |
-  | branch_a: ← r1 (resumes)          |                    |
-  | branch_b: ← r2 (resumes)          |                    |
-```
+The Target is a **passive** attack surface and the Task **judges** the outcome.
+The Optimizer is the only actively adversarial component. It never touches the
+target directly; it acts and observes only through the events the Controller
+routes between them.
 
-**Target internal parallelism**: The target can spawn concurrent branches (via `asyncio.gather` or `asyncio.create_task`), each calling `send_event` independently. Each call creates its own future and suspends only that branch. Other branches continue independently. For thread-based targets (Docker, subprocesses), use `asyncio.run_coroutine_threadsafe` to bridge back to the event loop.
+## The central idea: one Controller is one threat model
 
-**Optimizer consumption choice**: The default `run()` processes events sequentially. Override for parallel (spawn tasks per envelope), continuous (background work + event processing), or any custom model. The optimizer controls its own concurrency.
+A **threat model** is the answer to "what can the attacker do?". superred pins it
+down with two settings, both fixed when you construct the Controller:
 
-## Initialization and Run Loop
+- a **[security-domain scope](/reference/security-domains)**: which trust
+  boundaries of the target the attacker controls and can observe;
+- an **`llm_config`** (and cost cap): which model the attacker may call, and how
+  much it may spend.
 
-```
-0. User builds a TargetFactory wrapping the target constructor:
-   target_factory = TargetFactory(
-       create=lambda: MyTarget(api_key="sk-..."),
-       concurrency=8,   # how many tasks may run in parallel
-   )
+One `Controller` evaluates one `SecurityClaim` under one `(scope, llm_config)`
+combination and returns one
+[`ThreatModelResult`](/reference/results#threatmodelresult). Comparing several
+threat models (a weak attacker against a strong one, with feedback against
+without) is the caller's job: build several Controllers and run them, optionally
+sharing one live dashboard through
+[`run_all`](/reference/controller#sweeping-multiple-threat-models). This keeps
+each measurement a single, self-contained, reproducible unit.
 
-1. Controller constructed with optimizer_factory, target_factory,
-   security_claim, scope (required), llm_config (optional),
-   max_runs_per_task (optional); output knobs report / persist /
-   results_dir / overwrite / reporter (all optional; persist on by default)
+## The event-driven loop
 
-2. await controller.run():
+The Target and the Optimizer never call each other. They run as two independent
+concurrent tasks and communicate only through typed **events** that pass through
+the Controller. The Controller sits in the middle: it filters events to the
+scope, records everything onto a **trajectory**, and bridges the two sides.
 
-   For each task in security_claim, bounded by target_factory.concurrency
-   (asyncio.Semaphore + asyncio.gather; results in input order):
-     a. target = target_factory.create()
-        task.configure_target(target)
-        → sets pre-run config via target.set_config()
-        → raises NotApplicable if incompatible (task skipped)
+{% include diagrams/d1.html %}
 
-     b. Create LLMClient from llm_config, fresh per task (budget is per-task)
-        Create fresh optimizer via optimizer_factory()
-        Filter controllables and observables by scope
-        optimizer.initialize(goal, filtered_controllables, filtered_observables, llm_client)
+One **run** is one full pass of the target plus its evaluation, and it unfolds
+like this:
 
-     c. channel = EventChannel()
-        optimizer_task = asyncio.create_task(optimizer.run(channel))
+1. The Controller sends a `RunStartEvent` to the optimizer.
+2. `target.run()` executes. The target **emits** one-way `ObservableEvent`s to
+   record what it does, and **pauses** at each injection point by sending a
+   `ControllablePreCallEvent` (and optionally a `ControllablePostCallEvent`)
+   through the channel. The optimizer answers each one with a value to inject
+   (`ControllableInjection`) or a decline (`ControllableNoInjection`).
+3. The Controller runs `task.evaluate()` to score the run.
+4. The Controller sends a `RunEndEvent` carrying that evaluation. The optimizer
+   answers with `RunEndResponse(done=...)` to stop or to try again.
 
-     d. For each run (until optimizer signals done or max_runs):
-        Create Trajectory (full) and FilteredTrajectory (optimizer's view)
-        channel.send(RunStartEvent(filtered_trajectory))
-        target.run(emit, send_event)
-          → target emits ObservableEvent instances via emit(event)
-          → send_event bridges to channel with filtering
-          → trajectory_recorder middleware records events/responses to trajectory
-        task.evaluate(trajectory, target) → EvaluationResult
-          → controller filters sub_scores by scope
-        channel.send(RunEndEvent(evaluation=filtered_eval, security_domain=scope_tag))
-          → RunEndEvent is persisted to the trajectory
-          → optimizer responds with RunEndResponse(done=True/False)
-        Close the trajectory
-        target.reset_ephemeral_state(), resets ephemeral target state for next run within this task
-        If done=True, break
-        On exception: preserve partial trajectory + zero-score evaluation;
-                      capture exception traceback on TaskResult.error; break
+A task can take many runs: the attacker keeps trying until it declares itself
+done, exhausts its budget, or hits the Controller's `max_runs_per_task` cap. The
+full mechanism, the channel, the trajectory, and the exact event contract, is
+specified in
+[Events, Channel & Trajectory](/reference/events-and-trajectory).
 
-     e. channel.close() → optimizer.run() exits
-        await optimizer_task, optimizer.teardown()
-        target.reset_ephemeral_state() (final) and target.teardown(), instance is discarded
+## Scope: the same events, filtered to a boundary
 
-   Live progress is streamed to a reporter throughout (a shared rich
-   dashboard on a TTY, plain lines otherwise; report=False silences it).
+The Target exposes every attack surface it has, always. The **threat model** is
+imposed entirely by the Controller, by filtering. When you scope a Controller to
+a set of security-domain tags, the Controller constrains **every** channel
+between the optimizer and the target to that boundary:
 
-   3. Each task's directory was published to disk as it finished (unless
-      persist=False), resuming any prior run of the same experiment.  Write
-      result.json now as the completion marker.
-   4. Render the final results view
-   5. Return ThreatModelResult
+- only in-scope **controllables** are offered as injection points;
+- only in-scope **observables** are shown;
+- the optimizer's **trajectory view** contains only in-scope entries;
+- out-of-scope **controllable events** are auto-declined without asking;
+- out-of-scope evaluation **sub-scores** are hidden.
 
-Sweeping multiple (scope, llm_config) combinations is the caller's job:
-construct one Controller per combination and run them via run_all() (one shared
-live dashboard) or a bare asyncio.gather() (persists correctly; no shared canvas).
-```
+This is what lets a single target answer many precise questions ("what can an
+attacker do controlling only the user message?") without rewriting it. Access
+level is a property of the scope, not of the tag: a tag can be **read & write**
+(in `scope`) or **read-only** (in the separate `read_only` set). The exact
+semantics live in [Security Domains](/reference/security-domains).
 
-## asyncio Runtime
+## What comes out
 
-There is one event loop on one thread. The caller provides it:
+`controller.run()` returns a `ThreatModelResult` and, by default, writes a
+structured, resumable **results tree** to disk. A run streams live progress to a
+terminal dashboard while it is in flight, and the bundled `superred serve`
+command opens a web report over the results afterward. The result objects, the
+on-disk layout, the resume behavior, the reader API, and the reporting are all
+specified in [Results & Persistence](/reference/results).
+
+## Map of this reference
+
+**Interfaces you implement or drive:**
+
+- **[Controller](/reference/controller)** the orchestrator: construction, the run
+  loop, scope filtering, budget enforcement, sweeping.
+- **[Optimizer](/reference/optimizer)** the attacker interface: the actor model,
+  `on_event`, consumption models, trajectory access.
+- **[Target](/reference/target)** the system-under-test interface: config and
+  query surfaces, controllables and observables, the run method, the state
+  lifecycle.
+- **[Task](/reference/task)** one adversarial objective: generics, statelessness,
+  configure and evaluate.
+- **[SecurityClaim](/reference/security-claim)** composable, re-iterable
+  collections of tasks.
+
+**The mechanisms that connect them:**
+
+- **[Events, Channel & Trajectory](/reference/events-and-trajectory)** the
+  communication substrate: the event hierarchy, the bidirectional channel, the
+  trajectory and its filtered view, and the middleware that enforces scope.
+- **[Security Domains](/reference/security-domains)** the trust-boundary model:
+  tags, the forest, scopes, read-only access, and per-task resolvers.
+
+**The data:**
+
+- **[Core Types](/reference/types)** the plain value objects: goals, config and
+  query specs, controllables, observables, scores, and LLM types.
+- **[Results & Persistence](/reference/results)** what a run produces: result
+  objects, the on-disk tree, resume, the reader API, live reporting, and the
+  `superred serve` web report.
+
+**Change history:**
+
+- **[Migration](/reference/migration)** per-version migration notes.
+
+## Design commitments
+
+A few decisions recur throughout the framework. They are stated here once and
+justified on the relevant pages.
+
+- **Event-driven, not call-driven.** Target and optimizer are decoupled by an
+  `EventChannel`; each is a concurrent task with its own pace. Lifecycle points
+  (`RunStartEvent`, `RunEndEvent`) are ordinary events, not special hooks.
+- **The trajectory is the single event log.** There is no separate log. Every
+  event and response is recorded onto the trajectory as it happens, and the
+  optimizer reads a scope-filtered view of it.
+- **Scope is enforced by the Controller, invisibly to the modules.** A target
+  always exposes its full surface; an optimizer always makes strongest use of
+  whatever it is given. Neither knows what the current threat model hides.
+- **Fresh instances per task.** Each task gets a new target and a new optimizer,
+  so concurrent tasks never share mutable state.
+- **Immutable value types.** Events, specs, scores, tags, and configs are frozen
+  dataclasses. Security-domain tags are runtime-defined objects, not an enum, so
+  each target declares its own.
+- **Thread-safe at every boundary.** The trajectory, the channel, the envelope,
+  and the LLM client are all safe to touch from multiple threads, so a target
+  may bridge blocking work (Docker, subprocesses) back to the event loop.
+
+## The asyncio runtime
+
+There is one event loop, on one thread, and the **caller** provides it:
 
 ```python
 result = asyncio.run(controller.run())
 ```
 
-The controller does not create its own event loop. This allows embedding in larger async applications (web servers, notebooks, pipelines). Tests use pytest-asyncio which provides the loop.
+The Controller never creates its own loop, so it embeds cleanly in larger async
+applications (web servers, notebooks, pipelines). The target and optimizer run
+as two `asyncio.Task`s on that loop; a target with internal parallelism may spawn
+more. The concurrency model is detailed in
+[Events, Channel & Trajectory](/reference/events-and-trajectory#concurrency-model).
 
-## Key Design Decisions
-
-1. **Channel-based communication**: `EventChannel` decouples target and optimizer. The target puts events via `send_event` callback (bridged to `channel.send`). The optimizer pulls from the channel at its own pace. Thread-safe: `respond()` and `close()` use `call_soon_threadsafe`.
-
-2. **Optimizer as actor**: The optimizer runs as its own `asyncio.Task`, not called synchronously. It chooses its consumption model (sequential, parallel, continuous).
-
-3. **Lifecycle events replace hooks**: `RunStartEvent`/`RunEndEvent` flow through the channel like any other event. No special method calls. The base Optimizer's `_dispatch()` wrapper handles trajectory tracking automatically.
-
-4. **Target internal parallelism**: Multiple concurrent branches each calling `send_event` independently. Each gets its own response via the channel's future-based mechanism. Supports asyncio tasks and thread bridging.
-
-5. **Composable middleware**: `Middleware = Callable[[EventResponseHandler], EventResponseHandler]`. Wraps the event-response handler with zero overhead (function composition, no extra tasks or channels). `compose(a, b)(handler)` applies `a` outermost, `b` inner. Built-in: `security_domain_filter`, `trajectory_recorder`. Users can add logging, tracing, budget enforcement etc. as additional middleware.
-
-6. **Manual values are constructor concerns**: API keys, credentials, etc. are passed to the target's constructor. Not part of the framework interface.
-
-7. **Config and query are distinct target surfaces**: `ConfigSpec`/`set_config` for task-set pre-run state. `QuerySpec`/`query` for post-run evaluation queries. Different actors, different lifecycles.
-
-8. **Tasks are stateless**: `configure_target` sets config, returns nothing. `evaluate` receives the target for on-demand queries. No internal target reference. Safe to re-iterate from SecurityClaims.
-
-9. **Tasks are type-bound via generics**: `Task[MyRAGTarget]` gets type-safe access to the concrete target. `Task[Target]` discovers capabilities at runtime via `config_specs`/`query_specs`.
-
-10. **Thread-safe at every boundary**: Trajectory (`threading.Lock`), EventChannel (`asyncio.Queue` + `call_soon_threadsafe`), EventEnvelope.respond (`Lock` + `call_soon_threadsafe`), LLMClient (`threading.Lock` on usage counters).
-
-11. **Process-safe interface**: The EventChannel interface (send/receive/respond/close) is designed so a future process-safe implementation (multiprocessing, sockets) can be swapped in with the same contract.
-
-12. **SecurityClaim composes**: From tasks (`from_tasks`) or from other claims (`from_claims`). Lazy chaining for claims-of-claims. Re-iterable since tasks are stateless.
-
-13. **Runtime-defined types**: SecurityDomainTag is a frozen dataclass, not an enum. Target systems define their own instances at runtime.
-
-14. **Values are always text**: ConfigSpec and QuerySpec use strings. The description documents the format contract. The target interprets the text.
-
-15. **LLM access is part of the threat model**: The controller controls which model the optimizer can use and tracks budget (calls, USD cost). The `LLMConfig` (model, API base, API key) is set at the experiment level; the attacker's per-task cost cap is the controller's `task_cost_cap_usd`. Budget enforcement is cost-based: `litellm.completion_cost()` computes USD per call from model pricing; pre-call checks raise `BudgetExhaustedError` when cumulative cost reaches the cap. The optimizer receives a constrained `LLMClient` that locks the model and credentials, it cannot choose a different model. Budget is per-task (fresh `LLMClient` per task, so the cap resets each task). Uses litellm internally for OpenAI-compatible chat completions.
-
-## File Map
+## Where things live in the source
 
 ```
-src/superred/core/
-  channel.py           -- EventEnvelope, EventChannel (thread-safe)
-  controller.py        -- Controller, TargetFactory, RunResult, TaskResult,
-                          ThreatModelResult, OptimizerFactory
-  llm.py               -- LLMClient (constrained LLM proxy for optimizers)
-  middleware.py         -- Middleware type, compose(), security_domain_filter(),
-                          trajectory_recorder()
-  persistence.py       -- v4 result tree writers + resume engine, plus a public
-                          reader API (load_result, iter_tasks, ...); on by default
-  reporting.py         -- ProgressReporter seam + shared rich live dashboard /
-                          plain-line fallback (live progress output)
-  interfaces/
-    optimizer.py       -- Optimizer ABC (actor model: run, on_event, _dispatch)
-    target.py          -- Target ABC, EventHandler type alias
-    task.py            -- Task[T_Target] ABC, NotApplicable exception
-    security_claim.py  -- SecurityClaim (composable task iterator)
-  types/
-    goal.py            -- Goal
-    llm.py             -- LLMConfig, LLMUsage, BudgetExhaustedError
-    state.py           -- ConfigSpec, QuerySpec, QueryParam
-    controllable.py    -- Controllable
-    observable.py      -- Observable, ObservableValue
-    event.py           -- Event, EventResponse base classes,
-                          EventHandler / EventResponseHandler aliases
-    events.py          -- ControllablePreCallEvent, ControllablePostCallEvent,
-                          ControllableInjection, ControllableNoInjection,
-                          ObservableEvent, RunStartEvent, RunEndEvent,
-                          RunEndResponse
-    trajectory.py      -- Trajectory, FilteredTrajectory, ReadableTrajectory,
-                          TrajectoryItem, get_domain
-    evaluation.py      -- Score, EvaluationResult
-    security_domain.py -- SecurityDomainTag, SecurityDomain, Scope, scope_includes
+src/superred/
+  cli.py                 -- the `superred` command (serve a results dir)
+  core/
+    controller.py        -- Controller, TargetFactory, run_all, result types
+    channel.py           -- EventChannel, EventEnvelope
+    middleware.py        -- Middleware, compose, security_domain_filter,
+                            trajectory_recorder
+    llm.py               -- LLMClient (the constrained LLM proxy)
+    persistence.py       -- results-tree writers, resume engine, reader API
+    reporting.py         -- ProgressReporter, the live dashboard, plain output
+    interfaces/
+      optimizer.py       -- Optimizer ABC
+      target.py          -- Target ABC
+      task.py            -- Task[T_Target] ABC, NotApplicable
+      security_claim.py  -- SecurityClaim
+    types/
+      goal.py            -- Goal
+      state.py           -- ConfigSpec, QuerySpec, QueryParam
+      controllable.py    -- Controllable
+      observable.py      -- Observable, ObservableValue
+      event.py           -- Event, EventResponse, callback aliases
+      events.py          -- the concrete events and responses
+      trajectory.py      -- Trajectory, FilteredTrajectory, get_domain
+      evaluation.py      -- Score, EvaluationResult
+      security_domain.py -- SecurityDomainTag, SecurityDomain, Scope
+      llm.py             -- LLMConfig, LLMUsage, BudgetExhaustedError
 ```
 
-## Detailed Component Documentation
-
-- [Controller](/reference/controller) -- the orchestrator: event bridging, filtering, evaluation
-- [Optimizer](/reference/optimizer) -- the optimizer interface: actor model, consumption choices
-- [Target](/reference/target) -- target interface, config/query separation
-- [Task](/reference/task) -- task generics, stateless design
-- [SecurityClaim](/reference/security-claim) -- composable task collections
-- [Types Reference](/reference/types) -- all core types, design decisions, relationships
+Everything public is re-exported from `superred.core` (and the value types from
+`superred.core.types`), so `from superred.core import Controller, Scope, ...`
+is the intended import path.

@@ -1,0 +1,38 @@
+<script>
+/* Click a figure image to open it full-screen in a lightbox; click the darkened
+   backdrop or press Escape to close. No-op on pages without such figures. */
+(function () {
+  var figs = document.querySelectorAll('.doc-figure img, .results-shot img');
+  if (!figs.length) return;
+  var box = null;
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  function close() {
+    if (!box) return;
+    var b = box; box = null;
+    b.classList.remove('open');
+    document.removeEventListener('keydown', onKey);
+    document.body.style.overflow = '';
+    setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 200);
+  }
+  function open(src, alt) {
+    box = document.createElement('div');
+    box.className = 'lightbox';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', alt || 'Enlarged image');
+    var big = new Image();
+    big.src = src;
+    big.alt = alt || '';
+    box.appendChild(big);
+    box.addEventListener('click', function (e) { if (e.target === box) close(); });
+    document.body.appendChild(box);
+    document.body.style.overflow = 'hidden';
+    void box.offsetWidth;              /* reflow so the fade-in transition runs */
+    box.classList.add('open');
+    document.addEventListener('keydown', onKey);
+  }
+  figs.forEach(function (img) {
+    img.style.cursor = 'zoom-in';
+    img.addEventListener('click', function () { open(img.currentSrc || img.src, img.alt); });
+  });
+})();
+</script>

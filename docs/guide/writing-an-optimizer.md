@@ -16,12 +16,12 @@ that one attack strategy can be measured across many systems.
 You subclass `superred.core.interfaces.optimizer.Optimizer` and implement two
 methods:
 
-- **`initialize(goal, controllables, observables, llm_client)`** - called once
+- **`initialize(goal, controllables, observables, llm_client)`**: called once
   before the first run. You are told the goal, the injection points and
   observables you are allowed to use (already scope-filtered), and an LLM
   client. **Call `await super().initialize(...)`** so the base class stores the
   client and `self.llm` works.
-- **`on_event(event) -> EventResponse`** - called for each event. This is a
+- **`on_event(event) -> EventResponse`**: called for each event. This is a
   small state machine: branch on the event type and return the matching
   response.
 
@@ -110,6 +110,8 @@ Think of `on_event` as a state machine driven by this sequence. Most optimizers
 keep counters and buffers as instance attributes and advance them as events
 arrive.
 
+{% include diagrams/u4.html %}
+
 ## Using what `initialize` gives you
 
 ```python
@@ -125,6 +127,19 @@ async def initialize(self, goal, controllables, observables, llm_client):
         print(o.observable.name, o.content)
 ```
 
+For example, an optimizer attacking a chatbot to leak a planted secret might be
+handed:
+
+- **`goal`**: something like *make the model reveal the secret in its system
+  prompt*.
+- **`controllables`**: the `user_message` it can set, and, when the scope includes
+  it, the `system_prompt`.
+- **`observables`**: black-box facts such as the model's name and its last
+  response. When white-box information is in scope, observables can carry much
+  more: the target's architecture specification, its configuration, even
+  source-code snippets of the system under test.
+- **`llm_client`**: the attacker's own model, used to generate or refine payloads.
+
 `controllables` and `observables` are **already filtered to your scope**. You
 only ever see what the threat model grants you. This is also why your optimizer
 should *adapt* to what it is given rather than assume a fixed surface (see the
@@ -132,44 +147,48 @@ next section).
 
 ## Choosing which controllable to inject
 
-A robust optimizer is given a list of controllables and must decide which one a
-given `ControllablePreCallEvent` is about. The convention used across the
-shipped optimizers is **dispatch by name, with a single-controllable fallback**:
+An optimizer is initialized with the list of controllables it may drive, and each
+`ControllablePreCallEvent` hands it the specific `controllable` the target has
+just reached, with its name, description, security domain, and value type. There
+are two clean ways to decide what to inject there.
 
-```python
-async def on_event(self, event):
-    if isinstance(event, ControllablePreCallEvent):
-        name = event.controllable.name
+**Agentic optimizers** stay target-agnostic. They put the available controllables,
+each with its description, into the attacker model's context, and let the model
+choose at every injection point what to inject there (or whether to decline).
+Because the model works from the controllables' descriptions rather than any
+hard-coded knowledge of the target, the same optimizer attacks any target it is
+pointed at.
 
-        # Known, "reserved" names that several targets share:
-        if name == "system_prompt":
-            return ControllableInjection(event=event, controllable=event.controllable,
-                                         value=self._system_prompt_payload)
-        if name == "user_message":
-            return ControllableInjection(event=event, controllable=event.controllable,
-                                         value=self._user_payload)
+**Target-specific optimizers** are written for one target and already know exactly
+which controllables it exposes, so they drive those directly. This is the simplest
+choice when you are attacking a known target and want tight control over which
+surface you hit. It is the least general option, though: an attack written this
+way is bound to a single target. When you want attacks that stay general and
+travel to new targets, prefer the agentic style, or the hybrid below.
 
-        # Fallback for simple targets with a single, differently-named
-        # controllable: lock onto the first one we see, decline the rest.
-        if self._primary is None:
-            self._primary = event.controllable
-        if event.controllable == self._primary:
-            return ControllableInjection(event=event, controllable=event.controllable,
-                                         value=self._payload)
-        return ControllableNoInjection(event=event, controllable=event.controllable)
-```
+**A hybrid** sits between the two: an otherwise static optimizer can call the
+model just for the matching step. An optimizer with a fixed library of payloads,
+for example, can hand the controllables and their descriptions to the model once
+at initialization and ask which one is the user input, which is the system prompt,
+and which is a tool result, then inject its canned payloads into those slots
+deterministically for the rest of the run. The model does the one-time semantic
+routing, so a static attack stays portable across targets without hard-coding any
+names.
 
-This lets the same optimizer attack a rich target (which splits `system_prompt`,
-`user_message`, and `response` into separate controllables) and a minimal target
-(which has one unnamed-by-convention input), without special-casing each.
-Returning `ControllableNoInjection` for points you do not want to drive is
-always safe.
+Whatever the style, return `ControllableInjection` at the points you want to drive
+and `ControllableNoInjection` at the rest; declining is always safe.
 
 ## Reading what happened: prefer the trajectory
 
-After (or during) a run you often need the model's actual response, to judge
-your own progress or craft the next turn. Read it from the **trajectory**, not
-only from a post-call `answer`:
+Throughout a run the target emits **observables**: one-way facts about what
+happened (the prompt it sent, the model's response, each tool call and its result,
+and anything else it chooses to expose, up to full white-box detail when that is
+in scope). You never respond to these, so they live *only* on the **trajectory**,
+not on the controllable events you handle in `on_event`, which makes the trajectory
+far richer than the injection points you drive.
+
+So when you need the model's actual response, to judge your progress or craft the
+next turn, read it from the trajectory rather than from a post-call `answer`:
 
 ```python
 def _latest_response(self) -> str | None:
@@ -243,7 +262,7 @@ records why: `"done"` (you signalled it), `"max_runs"` (the cap), or
 
 ## Using the LLM
 
-If the experiment granted an LLM, call it through `self.llm`:
+Call the attacker's model through `self.llm`:
 
 ```python
 response = await self.llm.complete(

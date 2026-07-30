@@ -1,0 +1,68 @@
+<div class="dc-figure">
+<figure data-screen-label="D7 target lifecycle" style="margin:0;box-sizing:border-box;max-width:940px;width:100%;background:var(--paper);border:1px solid var(--line);border-radius:6px;padding:22px 24px 18px;font-family:var(--font-serif);color:var(--ink);">
+  <div style="position:relative;width:100%;aspect-ratio:1000 / 320;">
+   <div style="position:absolute;inset:0;transform:scale(1.05);transform-origin:center;">
+
+    <svg viewBox="0 0 1000 320" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
+      <defs>
+        <marker id="d7a" markerWidth="9" markerHeight="9" refX="7" refY="4.3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4.3 L0,8.6 Z" fill="#111111"></path></marker>
+      </defs>
+      <!-- band-edge guides -->
+      <g stroke="#dcdcdc" stroke-width="1" stroke-dasharray="3 4" vector-effect="non-scaling-stroke">
+        <line x1="70" y1="102" x2="70" y2="300"></line>
+        <line x1="225" y1="102" x2="225" y2="300"></line>
+        <line x1="855" y1="102" x2="855" y2="300"></line>
+        <line x1="950" y1="102" x2="950" y2="300"></line>
+      </g>
+      <!-- axis: two segments that stop at the loop box -->
+      <line x1="70" y1="95" x2="326" y2="95" stroke="#111111" stroke-width="1.3" vector-effect="non-scaling-stroke"></line>
+      <line x1="604" y1="95" x2="946" y2="95" stroke="#111111" stroke-width="1.3" vector-effect="non-scaling-stroke" marker-end="url(#d7a)"></line>
+      <!-- milestone ticks -->
+      <g stroke="#111111" stroke-width="1.3" vector-effect="non-scaling-stroke">
+        <line x1="70" y1="89" x2="70" y2="101"></line>
+        <line x1="225" y1="89" x2="225" y2="101"></line>
+        <line x1="725" y1="89" x2="725" y2="101"></line>
+        <line x1="855" y1="89" x2="855" y2="101"></line>
+        <line x1="950" y1="89" x2="950" y2="101"></line>
+      </g>
+    </svg>
+
+    <!-- milestone labels -->
+    <div style="position:absolute;left:7%;top:8%;transform:translate(-50%,-50%);max-width:130px;text-align:center;font-family:var(--font-mono);font-size:9px;line-height:1.25;color:var(--ink);">construct</div>
+    <div style="position:absolute;left:22.5%;top:8%;transform:translate(-50%,-50%);max-width:130px;text-align:center;font-family:var(--font-mono);font-size:9px;line-height:1.25;color:var(--ink);">configure_target()</div>
+    <div style="position:absolute;left:72.5%;top:8%;transform:translate(-50%,-50%);max-width:150px;text-align:center;font-family:var(--font-mono);font-size:9px;line-height:1.25;color:var(--ink);">reset_ephemeral_state()</div>
+    <div style="position:absolute;left:85.5%;top:8%;transform:translate(-50%,-50%);max-width:120px;text-align:center;font-family:var(--font-mono);font-size:9px;line-height:1.25;color:var(--ink);">teardown()</div>
+    <div style="position:absolute;left:95%;top:8%;transform:translate(-50%,-50%);max-width:90px;text-align:center;font-size:9px;line-height:1.25;color:var(--gray);">discarded</div>
+
+    <!-- loop box on the timeline -->
+    <div style="position:absolute;left:33%;top:22%;width:27%;height:15%;box-sizing:border-box;border:1px dashed var(--gray);border-radius:8px;background:var(--paper);display:flex;align-items:center;justify-content:center;padding:6px 8px;">
+      <span style="position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:var(--paper);padding:0 6px;font-size:9.5px;font-style:italic;color:var(--gray);white-space:nowrap;">&times;N runs</span>
+      <span style="font-family:var(--font-mono);font-size:10px;line-height:1.35;color:var(--ink);text-align:center;">run() &rarr; evaluate() &rarr; reset_ephemeral_state()</span>
+    </div>
+
+    <!-- Ephemeral: filled bar with per-run reset ticks -->
+    <div style="position:absolute;left:33.5%;top:47%;width:26%;height:13%;box-sizing:border-box;background:#dadada;border:1px solid #bdbdbd;border-radius:4px;overflow:hidden;">
+      <div style="position:absolute;left:33.33%;top:0;bottom:0;width:3px;background:var(--paper);"></div>
+      <div style="position:absolute;left:66.66%;top:0;bottom:0;width:3px;background:var(--paper);"></div>
+    </div>
+    <div style="position:absolute;left:33.5%;top:42%;transform:translateY(-50%);font-size:11px;color:var(--gray-33);white-space:nowrap;"><span style="font-weight:500;color:var(--ink);">Ephemeral</span> &middot; reset every run</div>
+
+    <!-- Durable -->
+    <div style="position:absolute;left:22.5%;top:64%;width:72.5%;height:13%;box-sizing:border-box;background:#e9e9e9;border:1px solid var(--line);border-radius:4px;display:flex;align-items:center;padding:0 12px;gap:8px;">
+      <span style="font-size:12px;font-weight:500;">Durable</span>
+      <span style="font-size:10.5px;color:var(--gray-33);">survives resets &middot; gone when the next task gets a fresh instance</span>
+    </div>
+
+    <!-- Resources / identity -->
+    <div style="position:absolute;left:7%;top:81%;width:78.5%;height:13%;box-sizing:border-box;background:var(--code-bg);border:1px solid var(--line);border-radius:4px;display:flex;align-items:center;padding:0 12px;gap:8px;">
+      <span style="font-size:12px;font-weight:500;">Resources / identity</span>
+      <span style="font-size:10.5px;color:var(--gray-33);">clients &amp; external handles &middot; released in teardown()</span>
+    </div>
+
+   </div>
+  </div>
+
+  <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;line-height:1.5;color:var(--gray);text-wrap:pretty;">The reset ticks in <span style="color:var(--gray-33);">Ephemeral</span> are the per-run resets. <span style="color:var(--gray-33);">Durable</span> runs unbroken through them: it survives every <span style="font-family:var(--font-mono);font-size:10.5px;">reset_ephemeral_state()</span>, and is discarded only when the next task gets a fresh instance.</div>
+
+</figure>
+</div>
