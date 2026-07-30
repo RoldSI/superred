@@ -104,10 +104,31 @@ _GOAL_HASH_LEN = 16
 _RESERVED = {"", ".", ".."} | {"con", "prn", "aux", "nul"}
 _RESERVED |= {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
 
-# Task statuses that are valid measurements and kept (not rerun) on resume.
-_KEPT_STATUSES = frozenset({"success", "failed", "budget_exhausted"})
+# Task statuses whose record holds a measurement and is therefore kept (not
+# rerun) on resume.  ``"timeout"`` appears here only in its truncated form: see
+# :func:`_status_of`, which splits a wall-clock cancellation into ``"timeout"``
+# (at least one run completed and was judged, so the record holds a real, if
+# truncated, measurement) and ``"timeout_empty"`` (nothing was measured, so the
+# task must be recomputed).
+_KEPT_STATUSES = frozenset({"success", "failed", "budget_exhausted", "timeout"})
 
 DEFAULT_RESULTS_ROOT = "superred-results"
+
+
+def is_kept(status: str, n_runs: int) -> bool:
+    """Whether a persisted task is kept (not recomputed) by a resume.
+
+    The single authority on the resume rule, for the framework and for any
+    experiment driver that needs to predict what a resume will do.
+
+    *n_runs* is the task record's run count.  It only ever matters for
+    ``"timeout"``, and only to reject records written before a timed-out task
+    preserved the runs it had completed: those always carry ``n_runs == 0``,
+    and a zero-run record holds no measurement whatever its status says.
+    """
+    if status not in _KEPT_STATUSES:
+        return False
+    return status != "timeout" or n_runs >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +176,11 @@ class ExperimentMeta:
     read_only: tuple[str, ...] = ()
     scope_label: str | None = None
     task_cost_cap_usd: float | None = None
+    # Recorded in the output but NOT in identity_hash(): the wall-clock cap is a
+    # property of the host, not of the measurement.  A truncated ("timeout")
+    # task IS kept, so the reader needs to know which cap truncated it -- hence
+    # it lands in experiment_block() and in every task record.
+    task_time_cap_s: float | None = None
     max_runs_per_task: int = 0
     include_feedback: bool = True
     concurrency: int = 1
@@ -165,7 +191,13 @@ class ExperimentMeta:
         return "__".join(_slug_segment(s) for s in (self.attacker, self.target, self.claim, model))
 
     def identity_hash(self) -> str:
-        """8 hex chars over the measurement identity (schema version excluded)."""
+        """8 hex chars over the measurement identity (schema version excluded).
+
+        ``task_time_cap_s`` is deliberately absent: it is a host property, and
+        folding it in would re-key every result when the sweep moves machine.
+        It is recorded in ``experiment_block()`` and in each task instead, so a
+        truncated task still says which cap truncated it.
+        """
         identity = {
             "attacker": self.attacker,
             "target": self.target,
@@ -196,6 +228,7 @@ class ExperimentMeta:
             "read_only": sorted(self.read_only),
             "scope_label": self.scope_label,
             "task_cost_cap_usd": self.task_cost_cap_usd,
+            "task_time_cap_s": self.task_time_cap_s,
             "max_runs_per_task": self.max_runs_per_task,
             "include_feedback": self.include_feedback,
             "concurrency": self.concurrency,
@@ -321,14 +354,28 @@ def _serialize_trajectory(trajectory: Trajectory) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _status_of(success: bool, stop_reason: str) -> str:
+def _status_of(success: bool, stop_reason: str, n_measured_runs: int) -> str:
+    """Classify a finished task for the record, and thereby for resume.
+
+    *n_measured_runs* is the number of runs that completed AND were judged.
+    It splits the wall-clock cancellation in two, because the two halves are
+    different kinds of thing:
+
+    - ``"timeout"``: the cap cut the task short after it had already produced
+      at least one judged run.  That is a real measurement, truncated -- the
+      same shape as ``"budget_exhausted"``, a resource bound reached with the
+      completed work retained -- so it is kept on resume.
+    - ``"timeout_empty"``: the cap cut the task short with nothing judged.  The
+      record holds no measurement, so it is never kept: a resume recomputes it.
+
+    Both are held out of the ASR numerator and denominator (see
+    ``_compute_summary``): a truncated task is a lower bound on what the
+    attacker would have achieved, not a verdict.
+    """
     if stop_reason == "error":
         return "error"
-    # A task cancelled at the wall-clock cap produced no measurement. Kept
-    # distinct from "error" so timeouts are countable, and deliberately absent
-    # from _KEPT_STATUSES so a resume recomputes it.
     if stop_reason == "timeout":
-        return "timeout"
+        return "timeout" if n_measured_runs >= 1 else "timeout_empty"
     if success:
         return "success"
     if stop_reason == "budget_exhausted":
@@ -343,6 +390,11 @@ def _model_llm_config(meta: ExperimentMeta) -> LLMConfig | None:
     return LLMConfig(model=meta.model, api_base="", api_key="")
 
 
+def _n_measured_runs(tr: TaskResult) -> int:
+    """Runs that completed AND were judged (an errored partial run is neither)."""
+    return sum(1 for r in tr.runs if r.evaluated)
+
+
 def _build_task_json(tr: TaskResult, index: int, meta: ExperimentMeta) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -353,12 +405,14 @@ def _build_task_json(tr: TaskResult, index: int, meta: ExperimentMeta) -> dict[s
         "read_only": _sorted_names(tr.read_only),
         "llm_config": _serialize_llm_config(_model_llm_config(meta)),
         "task_cost_cap_usd": meta.task_cost_cap_usd,
-        "status": _status_of(tr.success, tr.stop_reason),
+        "task_time_cap_s": meta.task_time_cap_s,
+        "status": _status_of(tr.success, tr.stop_reason, _n_measured_runs(tr)),
         "success": tr.success,
         "stop_reason": tr.stop_reason,
         "best_score": _serialize_score(tr.best_score),
         "best_evaluation": _serialize_evaluation(tr.best_evaluation),
         "n_runs": len(tr.runs),
+        "n_measured_runs": _n_measured_runs(tr),
         "llm_usage": _serialize_llm_usage(tr.llm_usage),
         "timing": {
             "started_at": _iso(tr.started_at),
@@ -420,9 +474,12 @@ def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
     n_completed = sum(1 for v in views if v.stop_reason in completed_reasons)
     n_budget = sum(1 for v in views if v.stop_reason == "budget_exhausted")
     n_error = sum(1 for v in views if v.stop_reason == "error")
-    # Not in completed_reasons above: a timed-out task is not a measurement, so
-    # it must not enter the ASR denominator.
+    # Not in completed_reasons above: a truncated task is a lower bound on what
+    # the attacker would have achieved, not a verdict, so it enters neither the
+    # ASR numerator nor its denominator.  n_timeout_empty is the subset that a
+    # resume will recompute (nothing was judged before the cap).
     n_timeout = sum(1 for v in views if v.stop_reason == "timeout")
+    n_timeout_empty = sum(1 for v in views if v.status == "timeout_empty")
     scores = [v.best_score for v in views]
     return {
         "asr": (n_success / n_completed) if n_completed else None,
@@ -433,6 +490,7 @@ def _compute_summary(views: list[TaskView], n_skipped: int) -> dict[str, Any]:
         "n_error": n_error,
         "n_budget_exhausted": n_budget,
         "n_timeout": n_timeout,
+        "n_timeout_empty": n_timeout_empty,
         "n_skipped": n_skipped,
         "max_primary_score": max(scores) if scores else None,
         "mean_primary_score": (sum(scores) / len(scores)) if scores else None,
@@ -651,13 +709,17 @@ class ResumePlan:
     is_fresh: bool
 
 
-def _scan_prior_tasks(experiment_dir: Path) -> dict[int, tuple[str, str]]:
-    """Map index -> (goal_hash, status) for prior current task dirs."""
-    prior: dict[int, tuple[str, str]] = {}
+def _scan_prior_tasks(experiment_dir: Path) -> dict[int, tuple[str, str, int]]:
+    """Map index -> (goal_hash, status, n_runs) for prior current task dirs."""
+    prior: dict[int, tuple[str, str, int]] = {}
     for d in iter_task_dirs(experiment_dir):
         try:
             data = load_task(d)
-            prior[int(data["index"])] = (data.get("goal_hash", ""), data.get("status", "error"))
+            prior[int(data["index"])] = (
+                data.get("goal_hash", ""),
+                data.get("status", "error"),
+                int(data.get("n_runs", 0) or 0),
+            )
         except Exception:
             continue
     return prior
@@ -667,11 +729,14 @@ def plan_resume(experiment_dir: Path, goals: list[str], overwrite: bool) -> Resu
     """Decide keep vs rerun for the live claim against the on-disk experiment.
 
     A live task at position ``i`` (1-based) is KEPT iff a prior current task at
-    the same index has a matching ``goal_hash`` and a kept status
-    (success / failed / budget_exhausted).  Everything else reruns.  Under
-    ``overwrite`` every task reruns.  Appending tasks to a claim resumes (the
-    new tasks are missing -> rerun); reordering existing tasks reruns them
-    (index no longer matches) but never reuses a wrong result.
+    the same index has a matching ``goal_hash`` and a record that holds a
+    measurement (see :func:`is_kept`: success / failed / budget_exhausted, plus
+    a ``timeout`` that retained at least one run).  Everything else reruns --
+    including ``timeout_empty``, a task the wall-clock cap cancelled before
+    anything was judged.  Under ``overwrite`` every task reruns.  Appending
+    tasks to a claim resumes (the new tasks are missing -> rerun); reordering
+    existing tasks reruns them (index no longer matches) but never reuses a
+    wrong result.
     """
     indices = list(range(1, len(goals) + 1))
     fresh = (
@@ -683,7 +748,7 @@ def plan_resume(experiment_dir: Path, goals: list[str], overwrite: bool) -> Resu
     keep: set[int] = set()
     for i, g in zip(indices, goals, strict=True):
         entry = prior.get(i)
-        if entry is not None and entry[0] == goal_hash(g) and entry[1] in _KEPT_STATUSES:
+        if entry is not None and entry[0] == goal_hash(g) and is_kept(entry[1], entry[2]):
             keep.add(i)
     rerun = frozenset(i for i in indices if i not in keep)
     return ResumePlan(keep=frozenset(keep), rerun=rerun, is_fresh=False)

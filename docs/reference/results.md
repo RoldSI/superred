@@ -67,11 +67,16 @@ All runs for one task.
   **resumed** task, whose `runs` list is intentionally empty (its trajectories
   stay on disk, unread); `None` means "use `len(runs)`".
 
-The four **stop reasons**: `"done"` (the optimizer returned
+The five **stop reasons**: `"done"` (the optimizer returned
 `RunEndResponse(done=True)`), `"max_runs"` (hit `max_runs_per_task`),
-`"budget_exhausted"` (a `BudgetExhaustedError` ended the loop), and `"error"` (an
+`"budget_exhausted"` (a `BudgetExhaustedError` ended the loop), `"error"` (an
 unexpected exception escaped the optimizer, target, or evaluator and the task was
-abandoned with its partial trajectory preserved).
+abandoned with its partial trajectory preserved), and `"timeout"` (the per-task
+wall-clock cap `task_time_cap_s` expired and the task was cancelled).
+
+A timed-out task **keeps the runs it had already completed and had judged**,
+with their evaluations, their trajectories, and the attacker spend they cost.
+`runs` is empty only when the cap fired before any run finished.
 
 ### `ThreatModelResult`
 
@@ -118,22 +123,30 @@ readable data.)
   read_only, budget, max_runs, feedback), so two distinct threat models never
   collide and an identical re-run resolves to the same folder (and resumes). The
   schema version is deliberately **excluded** from the identity, so a framework
-  upgrade still resumes a prior run. When `llm_config` is `None`, the model
+  upgrade still resumes a prior run. `task_time_cap_s` is excluded too -- a
+  wall-clock cap is a property of the host, not of the measurement -- but it
+  **is** recorded in the `experiment` block and in every `task.json`, so a
+  truncated task always says which cap truncated it. When `llm_config` is `None`, the model
   segment is `no-llm`.
 - **`result.json`** (written last, the completion marker): `schema_version`, an
   `experiment` block (identity plus display parameters), `timing`, and a
   `summary`. The summary carries `asr`, `n_tasks`, `n_success`, `n_completed`,
-  `n_failed`, `n_error`, `n_budget_exhausted`, `n_timeout`, `n_skipped`, `max_primary_score`,
-  `mean_primary_score`, and `total_llm_usage`. Here `n_completed = done +
-  max_runs + budget_exhausted` and `asr = n_success / n_completed`, so errored
-  and skipped tasks are excluded from the denominator.
+  `n_failed`, `n_error`, `n_budget_exhausted`, `n_timeout`, `n_timeout_empty`,
+  `n_skipped`, `max_primary_score`, `mean_primary_score`, and `total_llm_usage`.
+  Here `n_completed = done + max_runs + budget_exhausted` and
+  `asr = n_success / n_completed`, so errored, timed-out and skipped tasks are
+  excluded from the denominator. A truncated task is a lower bound on what the
+  attacker would have achieved, not a verdict, so it enters neither the
+  numerator nor the denominator.
 - **`manifest.json`**: the same `experiment` and `summary` blocks, a `status`
   (`in_progress` / `complete`), and a scalar `tasks[]` index. It is rewritten as
   tasks land, so it is always current.
 - **`tasks/{NNNNN}__{goalslug}/task.json`**: the per-task result, repeating
   `schema_version`, `index`, `goal`, `goal_hash`, that task's resolved
-  `scope`/`read_only`, `llm_config` (model only), `task_cost_cap_usd`, plus
-  `status`, `success`, `stop_reason`, `best_score`, `best_evaluation`, `n_runs`,
+  `scope`/`read_only`, `llm_config` (model only), `task_cost_cap_usd`,
+  `task_time_cap_s`, plus `status`, `success`, `stop_reason`, `best_score`,
+  `best_evaluation`, `n_runs`, `n_measured_runs` (runs that completed *and* were
+  judged -- what separates a truncated `timeout` from a `timeout_empty`),
   `llm_usage`, `timing`, and `error`. Published the moment the task finishes, so
   an interrupted run leaves every completed task on disk.
 - **`iterations.json`**: the per-run progression, one entry per run with
@@ -154,9 +167,14 @@ run is recognizable by its still-`in_progress` manifest.
 Because the folder name **is** the measurement identity, re-running the same
 Controller resolves to the same folder and **resumes** rather than colliding:
 
-- A task whose prior result was a valid measurement (`success`, `failed`, or
-  `budget_exhausted`) is **kept** and not re-run. Only `error`, interrupted, or
-  missing tasks recompute.
+- A task whose prior result holds a measurement is **kept** and not re-run:
+  `success`, `failed`, `budget_exhausted`, and `timeout` (a task the wall-clock
+  cap truncated **after** at least one run had been judged). Everything else
+  recomputes: `error`, `timeout_empty` (cancelled with nothing judged, so the
+  record holds no measurement at all), interrupted, or missing.
+- The rule lives in one place, `superred.core.persistence.is_kept(status,
+  n_runs)`; call it rather than re-listing the statuses, so a driver's view of
+  what a resume will do cannot drift from the framework's.
 - A task is matched to its prior result by (same 1-based index + same goal content
   hash), so appending tasks to a claim resumes the existing ones and computes only
   the new.

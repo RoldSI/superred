@@ -187,10 +187,10 @@ def test_serialize_response_unhandled_type_is_base_only() -> None:
 
 
 def test_status_of_error_and_budget_and_failed() -> None:
-    assert _status_of(False, "error") == "error"
-    assert _status_of(False, "budget_exhausted") == "budget_exhausted"
-    assert _status_of(True, "done") == "success"
-    assert _status_of(False, "max_runs") == "failed"
+    assert _status_of(False, "error", 0) == "error"
+    assert _status_of(False, "budget_exhausted", 2) == "budget_exhausted"
+    assert _status_of(True, "done", 1) == "success"
+    assert _status_of(False, "max_runs", 5) == "failed"
 
 
 def test_model_llm_config_none_when_no_model() -> None:

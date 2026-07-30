@@ -290,6 +290,11 @@ correctly, but does not coordinate the live display. If they share one
   the rest of the run, and every later threat model, still runs and is persisted.
   `BudgetExhaustedError` is preserved distinctly as `"budget_exhausted"`, and
   `NotApplicable` as a skip.
+- **Per-task wall-clock containment.** `task_time_cap_s` cancels a task that
+  exceeds it, ending it with `stop_reason="timeout"`. Cancellation does not
+  destroy work: the runs the task had completed and had judged, their
+  trajectories, and the attacker spend they cost are all carried out of the
+  cancelled coroutine and into the result.
 - **Exception-safe shutdown.** If a run raises, the `finally` closes the channel
   and awaits the optimizer task, so no `channel.send` deadlocks; teardown of both
   optimizer and target is wrapped in `finally`.
