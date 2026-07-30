@@ -300,6 +300,11 @@ need to catch it: the Controller catches it, ends the task cleanly with
 `stop_reason="budget_exhausted"`, and preserves the runs you completed. Only
 catch it yourself if you want to do something specific before stopping.
 
+The wall-clock cap `task_time_cap_s` behaves the same way from your side: your
+task is cancelled, but the runs you had already completed and that had been
+judged are kept, with `stop_reason="timeout"`. Neither bound throws your work
+away.
+
 If the experiment did not grant an LLM (no `llm_config`), `self.llm` is a noop
 client that raises `BudgetExhaustedError` on the first call. Non-LLM optimizers
 (like a fixed prompt list) simply never call it.

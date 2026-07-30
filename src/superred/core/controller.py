@@ -218,7 +218,11 @@ class TaskResult:
             ``"budget_exhausted"`` means a :class:`BudgetExhaustedError`
             was raised by the LLM client.  ``"error"`` means an unexpected
             exception escaped the optimizer, target, or evaluator and the
-            task was abandoned.
+            task was abandoned.  ``"timeout"`` means the per-task wall-clock
+            cap ``task_time_cap_s`` expired and the task was cancelled;
+            ``runs`` then holds every run that had completed before the cap
+            (possibly none), and ``best_evaluation`` is the judge's own
+            verdict on the best of them.
         scope: The read & write scope actually enforced for this task.  In
             static-scope mode it equals the controller's ``scope``; with a
             per-task resolver it is the scope resolved for this task (the
@@ -347,6 +351,81 @@ def _synthesize_empty_task_result(
     )
 
 
+@dataclass
+class _TaskProgress:
+    """Runs a task has completed so far, readable from outside its coroutine.
+
+    ``_run_task`` accumulates into this instead of into locals, so a
+    cancellation (the wall-clock cap) does not destroy work that was already
+    finished and judged.  Without it, everything a timed-out task achieved dies
+    with the frame and the record cannot distinguish a task that measured
+    nothing from one that measured plenty and was cut off at the end.
+    """
+
+    runs: list[RunResult] = field(default_factory=list)
+    llm_client: LLMClient | None = None
+
+    @property
+    def usage(self) -> LLMUsage:
+        """Attacker spend so far -- real money, even when the task is cancelled."""
+        return self.llm_client.usage if self.llm_client is not None else LLMUsage()
+
+    # Derived, not tracked: the runs already determine both, and maintaining
+    # them alongside would be a second copy to keep in step. Only JUDGED runs
+    # count -- an errored run carries a synthesized evaluation, never a verdict.
+
+    @property
+    def best(self) -> tuple[Score, EvaluationResult] | None:
+        """Score and verdict of the highest-scoring judged run, if any."""
+        judged = [r for r in self.runs if r.evaluated]
+        if not judged:
+            return None
+        b = max(judged, key=lambda r: r.evaluation.primary_score.value)
+        return b.evaluation.primary_score, b.evaluation
+
+    @property
+    def success(self) -> bool:
+        """Whether any judged run met the goal."""
+        return any(r.evaluation.success for r in self.runs if r.evaluated)
+
+
+def _truncated_task_result(
+    task: Task[Target],
+    progress: _TaskProgress,
+    *,
+    rationale: str,
+    scope: Scope = frozenset(),
+    read_only: Scope = frozenset(),
+) -> TaskResult:
+    """Build the TaskResult for a task cancelled at the wall-clock cap.
+
+    Carries every run the task had completed, with their judged evaluations and
+    trajectories, and the attacker spend they cost.  ``best_evaluation`` stays
+    the judge's own verdict on the best run -- the cap is reported through
+    ``stop_reason``, never by overwriting a real evaluation.  When nothing
+    completed, the result is a zero-run one whose *rationale* names the cap, and
+    persistence records it under a status a resume will recompute.
+    """
+    zero = Score(value=0.0, name="primary")
+    best = progress.best
+    best_evaluation = (
+        best[1]
+        if best is not None
+        else EvaluationResult(success=False, primary_score=zero, sub_scores={}, rationale=rationale)
+    )
+    return TaskResult(
+        task=task,
+        runs=list(progress.runs),
+        best_score=best[0] if best is not None else zero,
+        best_evaluation=best_evaluation,
+        success=progress.success,
+        llm_usage=progress.usage,
+        stop_reason="timeout",
+        scope=scope,
+        read_only=read_only,
+    )
+
+
 async def _swallow(coro: Awaitable[None], description: str) -> None:
     """Await *coro*, logging and swallowing any Exception.
 
@@ -415,6 +494,7 @@ def _threat_model_end_event(
     n_completed = sum(1 for t in trs if t.stop_reason in completed_reasons)
     n_error = sum(1 for t in trs if t.stop_reason == "error")
     n_budget = sum(1 for t in trs if t.stop_reason == "budget_exhausted")
+    n_timeout = sum(1 for t in trs if t.stop_reason == "timeout")
     scores = [t.best_score.value for t in trs]
     return ThreatModelEndEvent(
         context=ctx,
@@ -423,6 +503,7 @@ def _threat_model_end_event(
         n_completed=n_completed,
         n_error=n_error,
         n_budget_exhausted=n_budget,
+        n_timeout=n_timeout,
         n_skipped=len(result.skipped_tasks),
         asr=(n_success / n_completed) if n_completed else None,
         max_primary_score=max(scores) if scores else None,
@@ -524,17 +605,26 @@ class Controller:
             TIME it may take, which is the only thing that stops a task whose
             provider call blocks without ever returning or timing out. On
             expiry the task is cancelled and recorded with
-            ``stop_reason="timeout"``.
+            ``stop_reason="timeout"``, KEEPING every run it had already
+            completed and had judged, together with their trajectories and the
+            attacker spend they cost. Truncation is not data loss.
+
+            The record then splits by what survived. With at least one judged
+            run the persisted status is ``"timeout"``: a real measurement,
+            truncated, kept by a resume exactly as ``"budget_exhausted"`` is.
+            With nothing judged the status is ``"timeout_empty"``: no
+            measurement at all, so a resume recomputes it. Either way the task
+            is excluded from the ASR numerator and denominator -- a truncated
+            task is a lower bound on the attacker, not a verdict.
 
             Deliberately NOT part of the experiment identity (it does not
             appear in ``ExperimentMeta.identity_hash``), unlike the cost and run
             caps. Those are machine-independent properties of the measurement;
             a wall-clock cap is a property of the HOST, so folding it into the
             identity would re-key every result whenever the experiment moved to
-            a faster or slower machine. This is sound because a timed-out task
-            is never a kept measurement: it is recorded as ``"timeout"``, which
-            is not a resumable-kept status, so the cap can never influence a
-            result that survives into the dataset.
+            a faster or slower machine. Since a truncated task IS kept, the cap
+            is instead recorded in the manifest, in ``result.json`` and in every
+            task record, so a reader can always tell which cap truncated what.
         task_cost_cap_usd: Per-task cost cap in USD for the attacker's
             optimizer LLM. A fresh client is built per task, so this bounds
             the attacker's cumulative spend *per task* and resets each task
@@ -821,6 +911,7 @@ class Controller:
             read_only=tuple(sorted(t.name for t in self._naming_read_only)),
             scope_label=self._scope_label,
             task_cost_cap_usd=self._task_cost_cap_usd,
+            task_time_cap_s=self._task_time_cap_s,
             max_runs_per_task=self._max_runs_per_task,
             include_feedback=self._include_feedback,
             concurrency=self._target_factory.concurrency,
@@ -999,27 +1090,31 @@ class Controller:
             )
         try:
             try:
+                progress = _TaskProgress()
                 if self._task_time_cap_s is None:
-                    return await self._run_task(task, target, task_scope, reporter, index)
+                    return await self._run_task(task, target, task_scope, reporter, index, progress)
                 # Wall-clock bound. The work bounds (task_cost_cap_usd,
                 # max_runs_per_task) cannot stop a task whose provider call
                 # blocks forever: no spend accrues and no run completes, so the
                 # task hangs indefinitely. wait_for cancels the whole task
                 # coroutine; the caller's finally still tears the target down.
+                # The runs it had already completed survive in ``progress``,
+                # which the loop writes to as it goes.
                 try:
                     return await asyncio.wait_for(
-                        self._run_task(task, target, task_scope, reporter, index),
+                        self._run_task(task, target, task_scope, reporter, index, progress),
                         timeout=self._task_time_cap_s,
                     )
                 except TimeoutError:
                     logger.warning(
-                        "Task %r: exceeded task_time_cap_s=%s, cancelled",
+                        "Task %r: exceeded task_time_cap_s=%s, cancelled after %d run(s)",
                         task.goal.description,
                         self._task_time_cap_s,
+                        len(progress.runs),
                     )
-                    return _synthesize_empty_task_result(
+                    return _truncated_task_result(
                         task,
-                        stop_reason="timeout",
+                        progress,
                         rationale=(
                             f"Task exceeded task_time_cap_s="
                             f"{self._task_time_cap_s}s and was cancelled."
@@ -1057,6 +1152,7 @@ class Controller:
         task_scope: _TaskScope,
         reporter: ProgressReporter,
         index: int,
+        progress: _TaskProgress,
     ) -> TaskResult:
         """Run the optimizer loop for a single task.
 
@@ -1065,6 +1161,11 @@ class Controller:
         teardown after this returns.  *task_scope* is the scope enforced for
         this task (resolved once by the caller); LLM config is read from
         ``self`` (constant for the threat model).
+
+        Completed runs, the best score so far and the attacker's spend are
+        accumulated into *progress*, which the caller owns.  That is what lets
+        the wall-clock cap cancel this coroutine without destroying the runs it
+        had already finished and had judged.
         """
         # Configure target (NotApplicable propagates to caller)
         await task.configure_target(target)
@@ -1076,6 +1177,9 @@ class Controller:
             if self._llm_config
             else None
         )
+        # Published immediately: spend made before the first run completes is
+        # still real money, and must survive a cancellation.
+        progress.llm_client = llm_client
 
         # Fresh optimizer for this task
         optimizer = self._optimizer_factory()
@@ -1143,10 +1247,9 @@ class Controller:
 
         optimizer_task = asyncio.create_task(_optimizer_with_error_propagation())
 
-        runs: list[RunResult] = []
-        best_score: Score | None = None
-        best_evaluation: EvaluationResult | None = None
-        success = False
+        # Aliased onto the caller-owned holder: appends are visible to the
+        # caller even if this coroutine is cancelled and never returns.
+        runs: list[RunResult] = progress.runs
         # Default reason: if the for-loop exits without an explicit break,
         # the safety cap was reached.
         stop_reason: StopReason = "max_runs"
@@ -1232,11 +1335,6 @@ class Controller:
                 reporter.on_run_complete(
                     _run_complete_event(index, task.goal.description, run_number, run_result)
                 )
-                if best_score is None or evaluation.primary_score.value > best_score.value:
-                    best_score = evaluation.primary_score
-                    best_evaluation = evaluation
-                if evaluation.success:
-                    success = True
 
                 # Reset ephemeral target state for next run within this task.  If
                 # reset_ephemeral_state raises, the successful run we just appended stays
@@ -1283,7 +1381,8 @@ class Controller:
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still
         # appears in results.
-        if best_score is None:
+        best = progress.best
+        if best is None:
             best_score = Score(value=0.0, name="primary")
             if stop_reason == "error":
                 rationale = "Unexpected error before first run completed."
@@ -1295,7 +1394,8 @@ class Controller:
                 sub_scores={},
                 rationale=rationale,
             )
-        assert best_evaluation is not None
+        else:
+            best_score, best_evaluation = best
 
         task_usage = llm_client.usage if llm_client else LLMUsage()
         return TaskResult(
@@ -1303,7 +1403,7 @@ class Controller:
             runs=runs,
             best_score=best_score,
             best_evaluation=best_evaluation,
-            success=success,
+            success=progress.success,
             llm_usage=task_usage,
             stop_reason=stop_reason,
             scope=task_scope.write,

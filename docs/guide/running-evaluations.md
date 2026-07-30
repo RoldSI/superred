@@ -69,7 +69,7 @@ result = await controller.run()                 # -> ThreatModelResult
 | `llm_config` | the attacker's model and API access, or omit for non-LLM attackers |
 | `task_cost_cap_usd` | per-task attacker spend cap in USD; `None` (default) means unlimited |
 | `max_runs_per_task` | per-task run cap (>= 1); `None` (default) means 100 |
-| `task_time_cap_s` | per-task **wall-clock** cap in seconds; `None` (default) means unbounded. The two caps above bound the *work* a task may do; only this bounds the *time*, so it is what stops a task whose provider call blocks and never returns. A task that hits it is cancelled and recorded `stop_reason="timeout"`, which is not a kept status, so a re-run recomputes it |
+| `task_time_cap_s` | per-task **wall-clock** cap in seconds; `None` (default) means unbounded. The two caps above bound the *work* a task may do; only this bounds the *time*, so it is what stops a task whose provider call blocks and never returns. A task that hits it is cancelled and recorded `stop_reason="timeout"`, **keeping every run it had already completed and had judged**. It is then stored as `timeout` (truncated, a real measurement, kept by a resume) or `timeout_empty` (nothing judged, so a resume recomputes it). Either way it is excluded from the ASR. The cap is recorded in the output but is deliberately **not** part of the experiment identity |
 | `include_feedback` | whether the optimizer sees evaluation results; default `True` |
 | `persist` | write a results tree; default `True`, pass `False` to write nothing |
 | `results_dir` | the results folder; omit for `SUPERRED_RESULTS_DIR` or `./superred-results/` |
@@ -158,7 +158,7 @@ tr.best_score       # highest primary Score across runs
 tr.best_evaluation  # the EvaluationResult that produced best_score
 tr.runs             # list[RunResult], one per run
 tr.llm_usage        # total attacker LLM usage for this task (calls, cost)
-tr.stop_reason      # "done" | "max_runs" | "budget_exhausted" | "error"
+tr.stop_reason      # "done" | "max_runs" | "budget_exhausted" | "error" | "timeout"
 tr.error            # formatted traceback string, or None
 ```
 
@@ -258,15 +258,17 @@ tree under the results folder:
   `result.json` is written last as the completion marker; a `manifest.json`
   without a `result.json` marks an interrupted run.
 - **Resume.** Re-running the same Controller resolves to the same folder and
-  **resumes**: tasks that already produced a valid measurement (`success`,
-  `failed`, `budget_exhausted`) are kept; only `error`/interrupted/missing tasks
-  recompute. Pass `overwrite=True` to force a full recompute. Reruns are
+  **resumes**: tasks whose record holds a measurement (`success`, `failed`,
+  `budget_exhausted`, and a truncated `timeout`) are kept; `error`,
+  `timeout_empty`, interrupted and missing tasks recompute. Ask
+  `superred.core.persistence.is_kept(status, n_runs)` rather than re-listing
+  them. Pass `overwrite=True` to force a full recompute. Reruns are
   crash-safe: the prior state is snapshotted into `previous_NN/` before any
   change.
 - **Metrics.** `result.json`'s `summary` carries the attack-success rate and a
   stop-reason histogram: `asr`, `n_tasks`, `n_success`, `n_completed`,
-  `n_failed`, `n_error`, `n_budget_exhausted`, `n_skipped`,
-  `max/mean_primary_score`, `total_llm_usage`. Each `task.json` holds that task's
+  `n_failed`, `n_error`, `n_budget_exhausted`, `n_timeout`, `n_timeout_empty`,
+  `n_skipped`, `max/mean_primary_score`, `total_llm_usage`. Each `task.json` holds that task's
   metrics and `error` traceback; `iterations.json` and the `trajectories/` files
   hold the per-run detail.
 

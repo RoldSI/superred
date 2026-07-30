@@ -208,6 +208,8 @@ class ThreatModelEndEvent:
             the ASR denominator (excludes error and skipped).
         n_error: Tasks abandoned with ``stop_reason == "error"``.
         n_budget_exhausted: Tasks stopped by the cost cap.
+        n_timeout: Tasks cut short by the wall-clock cap ``task_time_cap_s``
+            (excluded from ``n_completed``: truncated, not a verdict).
         n_skipped: Tasks skipped (NotApplicable).
         asr: ``n_success / n_completed``, or ``None`` when no completed task.
         max_primary_score: Max best-score over evaluated tasks, or ``None``.
@@ -230,6 +232,7 @@ class ThreatModelEndEvent:
     total_calls: int
     total_cost_usd: float
     duration_s: float | None = None
+    n_timeout: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +292,9 @@ _STATUS = {
     "max_runs": "FAIL",
     "budget_exhausted": "BUDGET",
     "error": "ERROR",
+    # A task the wall-clock cap cut short is not a failed attack; without its
+    # own tag it would print identically to one.
+    "timeout": "TIMEOUT",
 }
 
 
@@ -348,7 +354,9 @@ class PlainReporter:
 
     def on_task_complete(self, ev: TaskCompleteEvent) -> None:
         tag = _STATUS.get(ev.stop_reason, "OK" if ev.success else "FAIL")
-        if ev.success:
+        # A truncated task keeps its own tag even when one of its runs
+        # succeeded: the operator needs to see that the cap cut it short.
+        if ev.success and ev.stop_reason != "timeout":
             tag = "OK"
         self._print(
             f"  [{tag}] {ev.goal}"
@@ -370,10 +378,10 @@ class PlainReporter:
         self._print(
             f"  Overall: {ev.n_success}/{ev.n_completed} completed tasks succeeded (ASR {asr})"
         )
-        if ev.n_error or ev.n_budget_exhausted or ev.n_skipped:
+        if ev.n_error or ev.n_budget_exhausted or ev.n_timeout or ev.n_skipped:
             self._print(
                 f"  Errors: {ev.n_error}  Budget-exhausted: {ev.n_budget_exhausted}  "
-                f"Skipped: {ev.n_skipped}"
+                f"Timed-out: {ev.n_timeout}  Skipped: {ev.n_skipped}"
             )
         self._print(f"  Highest score: {best}")
         self._print(
