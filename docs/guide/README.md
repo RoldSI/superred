@@ -189,5 +189,9 @@ From there, two paths lead out: run existing pieces, or build your own.
   attackers, targets, and benchmarks from the [module catalogue](/modules).
 - [Running Evaluations](/guide/running-evaluations) covers sweeping several
   threat models at once, scaling up runs, and saving results to disk.
-- [Writing a Target](/guide/writing-a-target) walks through wrapping your own AI
+- [Writing an Optimizer](/guide/writing-an-optimizer) walks through building your
+  own attack strategy.<br>
+  [Writing Tasks](/guide/writing-tasks) covers defining the objective and what
+  counts as a break.<br>
+  [Writing a Target](/guide/writing-a-target) walks through wrapping your own AI
   system as a target.
