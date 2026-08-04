@@ -9,6 +9,8 @@
       url: /guide/using-modules
     - title: Running Evaluations
       url: /guide/running-evaluations
+    - title: Models
+      url: /guide/models
     - title: Writing a Target
       url: /guide/writing-a-target
     - title: Writing an Optimizer
