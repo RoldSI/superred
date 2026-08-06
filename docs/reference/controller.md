@@ -167,9 +167,8 @@ For each task:
      `include_feedback=True`, the filtered evaluation is attached.
    - Close the trajectory; call `target.reset_ephemeral_state()` for the next run.
    - Track best score and success across runs.
-8. Close the channel, await the optimizer task, `optimizer.teardown()`. A final
-   `target.reset_ephemeral_state()` then `target.teardown()`, and the instance is
-   discarded.
+8. Close the channel, await the optimizer task, `optimizer.teardown()`, then
+   `target.teardown()`, and the instance is discarded.
 
 A **run** is one full pass of the target plus its evaluation. A task may take many
 runs; the loop ends when the optimizer returns `RunEndResponse(done=True)`, a
@@ -279,9 +278,11 @@ correctly, but does not coordinate the live display. If they share one
 - **The optimizer outlives the runs.** `optimizer.run(channel)` is one task that
   stays alive across every run of the task; only the target is reset between runs.
 - **Ephemeral reset between runs; fresh instance between tasks.**
-  `target.reset_ephemeral_state()` runs after each evaluation and once more at task
-  end (in a `finally`, so it runs even after an error). Durable state survives it;
-  it is discarded only when the next task gets a fresh instance.
+  `target.reset_ephemeral_state()` runs after each evaluation, to clean up before
+  the next run. There is no reset at task end: the target is torn down and
+  discarded right after (see below), so resetting it first would be wasted work.
+  Durable state survives resets between runs; it is discarded only when the next
+  task gets a fresh instance.
 - **Per-task error containment.** An unexpected exception escaping the optimizer,
   target, or evaluator is caught inside the run loop: the task ends with
   `stop_reason="error"`, its partial trajectory and traceback are preserved, and
