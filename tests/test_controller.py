@@ -470,9 +470,10 @@ class TestControllerRun:
             max_runs_per_task=3,
         )
         await controller.run()
-        # 3 inner resets (one after each run's evaluation) + 1 post-task
-        # reset invoked from the finally block.
-        assert target.reset_count == 4
+        # 3 inner resets (one after each run's evaluation). No extra
+        # post-task reset: the target is torn down immediately after and
+        # never reused, so resetting it first would be wasted work.
+        assert target.reset_count == 3
 
     async def test_best_score_tracks_highest(self) -> None:
         controller = Controller(
@@ -970,9 +971,11 @@ class TestExceptionSafety:
         assert len(tr.runs) == 1
         assert opt.torn_down
 
-    async def test_target_reset_ephemeral_state_invoked_in_finally_after_failed_run(self) -> None:
-        """A failed task still calls target.reset_ephemeral_state in the finally block so
-        the next task starts against a clean target."""
+    async def test_target_torn_down_after_failed_run_without_reset(self) -> None:
+        """A failed task still tears the target down even though reset_ephemeral_state
+        never ran (every run failed before reaching the inner-loop reset call).
+        Teardown does not depend on a preceding reset — the target is discarded
+        either way, so no post-task reset is attempted."""
         target = FailingRunTarget()  # raises on every target.run
         controller = Controller(
             scope=EXTERNAL_SCOPE,
@@ -986,8 +989,8 @@ class TestExceptionSafety:
         tr = result.task_results[0]
         assert tr.stop_reason == "error"
         # The inner-loop reset-after-success never ran (every run failed),
-        # so the only reset attempt comes from the outer finally.
-        assert target.reset_count == 1
+        # and there is no post-task reset attempt either.
+        assert target.reset_count == 0
         assert target.torn_down
 
     async def test_target_reset_ephemeral_state_error_treated_as_error(self) -> None:
@@ -1012,6 +1015,9 @@ class TestExceptionSafety:
         assert tr.error is not None
         assert "reset_ephemeral_state exploded" in tr.error
         assert target.torn_down
+        # Exactly one reset attempt (the inner-loop one that failed) — no
+        # post-task retry from the finally block.
+        assert target.reset_count == 1
 
     async def test_optimizer_raises_post_loop_is_captured_on_task_error(self) -> None:
         """An optimizer whose ``run()`` raises *after* the run loop has exited

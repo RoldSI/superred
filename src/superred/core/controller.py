@@ -1373,10 +1373,12 @@ class Controller:
                 if error_text is None:
                     error_text = _format_exception(exc)
             await _swallow(optimizer.teardown(), "optimizer.teardown post-run")
-            # Final reset_ephemeral_state so the target ends in a reset state even when the
-            # inner-loop reset-after-success was skipped. Target teardown
-            # itself happens in the caller before the next semaphore slot opens.
-            await _swallow(target.reset_ephemeral_state(), "target.reset_ephemeral_state post-task")
+            # No post-task reset_ephemeral_state() here: the caller
+            # (_execute_task) tears the target down immediately after this
+            # method returns, and the target is never reused across tasks
+            # (TargetFactory.create() hands out a fresh instance per task).
+            # Resetting ephemeral state right before discarding the whole
+            # instance is pure waste.
 
         # If the loop ended before any run completed (budget exhausted or
         # error on run 1), synthesize a zero-score result so the task still
