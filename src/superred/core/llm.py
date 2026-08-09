@@ -21,6 +21,26 @@ from litellm import ModelResponse, acompletion, completion_cost
 
 from superred.core.types.llm import BudgetExhaustedError, LLMConfig, LLMUsage
 
+#: Keys a caller must never set on a completion. The point of ``LLMClient`` is
+#: that the experiment, not the optimizer, decides which model is called, where,
+#: and with whose credentials, so every litellm parameter that can redirect the
+#: request or supply alternative credentials is stripped. ``base_url`` is
+#: litellm's alias for ``api_base``: left in place, it sends the locked
+#: ``api_key`` to a caller-chosen host.
+_LOCKED_PARAMS = frozenset(
+    {
+        "api_base",
+        "api_key",
+        "api_version",
+        "base_url",
+        "custom_llm_provider",
+        "extra_headers",
+        "headers",
+        "model",
+        "model_list",
+    }
+)
+
 
 class LLMClient:
     """Constrained LLM client for optimizer use.
@@ -74,9 +94,10 @@ class LLMClient:
             messages: OpenAI-format messages list.
             **kwargs: Additional parameters forwarded to litellm
                 (e.g. ``temperature``, ``max_tokens``, ``stop``).
-                ``model``, ``api_base``, and ``api_key`` cannot be
-                overridden. ``drop_params`` defaults to ``True`` (see below)
-                but may be overridden by the caller.
+                Parameters that would redirect the request or supply other
+                credentials cannot be overridden (see ``_LOCKED_PARAMS``).
+                ``drop_params`` defaults to ``True`` (see below) but may be
+                overridden by the caller.
 
         Returns:
             A ``litellm.ModelResponse`` (OpenAI ``ChatCompletion`` format).
@@ -85,9 +106,8 @@ class LLMClient:
             BudgetExhaustedError: If the cost budget has been reached.
         """
         # Strip keys that would escape the locked configuration.
-        kwargs.pop("model", None)
-        kwargs.pop("api_base", None)
-        kwargs.pop("api_key", None)
+        for locked in _LOCKED_PARAMS:
+            kwargs.pop(locked, None)
 
         # Drop provider-unsupported sampling params instead of raising. An
         # optimizer is general-purpose: it does not know which model it is
