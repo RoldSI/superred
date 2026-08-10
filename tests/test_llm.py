@@ -180,6 +180,45 @@ class TestLLMClient:
         assert call_kwargs.kwargs["api_base"] == "http://localhost"
         assert call_kwargs.kwargs["api_key"] == "sk-test"
 
+    @patch("superred.core.llm.completion_cost", return_value=0.001)
+    @patch("superred.core.llm.acompletion")
+    async def test_complete_strips_endpoint_aliases(
+        self,
+        mock_acompletion: AsyncMock,
+        _mock_cost: MagicMock,
+    ) -> None:
+        """``base_url`` and friends must not redirect the call or swap credentials.
+
+        ``base_url`` is litellm's alias for ``api_base``; before this was
+        stripped, a caller could point the request at its own host and the
+        locked ``api_key`` was sent there in the Authorization header.
+        """
+        mock_acompletion.return_value = _make_mock_response()
+        client = LLMClient(self._make_config())
+
+        await client.complete(
+            [{"role": "user", "content": "hello"}],
+            base_url="http://attacker.invalid/v1",
+            api_version="2020-01-01",
+            custom_llm_provider="openai",
+            model_list=[{"model_name": "x"}],
+            extra_headers={"authorization": "Bearer sk-attacker"},
+            headers={"authorization": "Bearer sk-attacker"},
+        )
+
+        call_kwargs = mock_acompletion.call_args.kwargs
+        assert call_kwargs["api_base"] == "http://localhost"
+        assert call_kwargs["api_key"] == "sk-test"
+        for leaked in (
+            "base_url",
+            "api_version",
+            "custom_llm_provider",
+            "model_list",
+            "extra_headers",
+            "headers",
+        ):
+            assert leaked not in call_kwargs
+
     @patch("superred.core.llm.completion_cost", return_value=0.005)
     @patch("superred.core.llm.acompletion")
     async def test_usage_tracking(
