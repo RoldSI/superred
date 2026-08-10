@@ -25,6 +25,45 @@ class TestEventEnvelope:
         result = await future
         assert result is response
 
+    async def test_respond_after_the_sender_was_cancelled_is_quiet(self) -> None:
+        """A cancelled sender leaves a done future; completing it must not throw.
+
+        ``task_time_cap_s`` cancels a task that may be parked in
+        ``channel.send``, which cancels the future.  The receiver -- a separate
+        task, unaware -- then answers the envelope it already holds.  Setting a
+        result on the cancelled future raised ``InvalidStateError`` from inside
+        the ``call_soon_threadsafe`` callback, where no caller could catch it:
+        it surfaced only as a loop-level "Exception in callback".
+        """
+        loop = asyncio.get_running_loop()
+        errors: list[dict] = []
+        loop.set_exception_handler(lambda _loop, ctx: errors.append(ctx))
+
+        event = Event()
+        future: asyncio.Future[EventResponse] = loop.create_future()
+        envelope = EventEnvelope(event=event, future=future, loop=loop)
+        future.cancel()
+
+        envelope.respond(EventResponse(event=event))
+        await asyncio.sleep(0)
+        assert errors == []
+
+    async def test_reject_after_the_sender_was_cancelled_is_quiet(self) -> None:
+        """Same for the error path: ``set_error`` drains and rejects queued
+        envelopes, whose senders may already have been cancelled."""
+        loop = asyncio.get_running_loop()
+        errors: list[dict] = []
+        loop.set_exception_handler(lambda _loop, ctx: errors.append(ctx))
+
+        event = Event()
+        future: asyncio.Future[EventResponse] = loop.create_future()
+        envelope = EventEnvelope(event=event, future=future, loop=loop)
+        future.cancel()
+
+        envelope.reject(RuntimeError("boom"))
+        await asyncio.sleep(0)
+        assert errors == []
+
     async def test_double_respond_raises_runtime_error(self) -> None:
         loop = asyncio.get_running_loop()
         event = Event()

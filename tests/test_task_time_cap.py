@@ -77,6 +77,38 @@ class TruncatedTarget(StubTarget):
         await super().run(emit, send_event)
 
 
+class HangingOptimizer(StubOptimizer):
+    """Blocks inside ``on_event``, where closing the channel cannot reach it.
+
+    The target-side hangs above are interrupted by the cap itself, because the
+    task is parked in the cancelled coroutine when the deadline lands.  This
+    one hangs the optimizer, which runs as a separate task the controller only
+    joins during cleanup -- after the cancellation has already been delivered,
+    so nothing is left to interrupt the join.
+    """
+
+    async def on_event(self, event: Event) -> EventResponse:
+        await asyncio.Event().wait()
+
+
+class WarmupTimeoutOptimizer(StubOptimizer):
+    """Raises a TimeoutError of its own from ``initialize``.
+
+    The shape of a provider client read timeout during a warmup call.  It is
+    the same exception type the wall-clock cap raises, and it reaches the same
+    handler.
+    """
+
+    async def initialize(
+        self,
+        goal: Any,
+        controllables: Any,
+        observables: Any,
+        llm_client: Any,
+    ) -> None:
+        raise TimeoutError("HTTPReadTimeout: warmup call to the provider timed out")
+
+
 def _controller(
     *,
     target_factory: TargetFactory,
@@ -203,6 +235,52 @@ async def test_a_hanging_task_is_cancelled_and_recorded_as_timeout() -> None:
     assert tr.success is False
     assert tr.runs == []
     assert "task_time_cap_s" in (tr.best_evaluation.rationale or "")
+
+
+@pytest.mark.asyncio
+async def test_the_cap_also_bounds_a_task_whose_optimizer_hangs() -> None:
+    """The cap must bound the task even when the hang is in cleanup.
+
+    The controller joins the optimizer task in the ``finally`` of the very
+    coroutine the cap cancels.  An unbounded join there defeated the bound that
+    cancelled it: the cancellation had already been delivered, so a fresh
+    suspend in the ``finally`` had nothing left to interrupt it and the task ran
+    forever.  ``asyncio.wait_for`` below is the test's own backstop -- if the
+    cap does not hold, it raises rather than hanging the suite.
+    """
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=0.25,
+        optimizer_factory=lambda: HangingOptimizer(),
+    )
+    result = await asyncio.wait_for(controller.run(), timeout=30)
+
+    tr = result.task_results[0]
+    assert tr.stop_reason == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_a_timeout_the_task_raised_itself_is_not_blamed_on_the_cap() -> None:
+    """A client read timeout is an error, not a cap expiry.
+
+    Both arrive as ``TimeoutError``.  Catching the type alone recorded a task
+    that ran for milliseconds under a 60s cap as ``stop_reason="timeout"``,
+    with a rationale asserting the cap "was exceeded", and dropped the real
+    exception entirely.
+    """
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=60.0,
+        optimizer_factory=lambda: WarmupTimeoutOptimizer(),
+    )
+    result = await asyncio.wait_for(controller.run(), timeout=30)
+
+    tr = result.task_results[0]
+    assert tr.stop_reason == "error"
+    assert "task_time_cap_s" not in (tr.best_evaluation.rationale or "")
+    assert "HTTPReadTimeout" in (tr.error or "")
 
 
 @pytest.mark.asyncio

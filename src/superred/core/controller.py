@@ -426,6 +426,13 @@ def _truncated_task_result(
     )
 
 
+#: Grace period an optimizer gets to return after the event channel closes
+#: before the controller cancels it. Closing the channel is the cooperative
+#: signal; this bounds the case where the optimizer is blocked on something
+#: else entirely and would otherwise hang the task past every configured cap.
+_OPTIMIZER_SHUTDOWN_GRACE_S = 5.0
+
+
 async def _swallow(coro: Awaitable[None], description: str) -> None:
     """Await *coro*, logging and swallowing any Exception.
 
@@ -608,6 +615,13 @@ class Controller:
             ``stop_reason="timeout"``, KEEPING every run it had already
             completed and had judged, together with their trajectories and the
             attacker spend they cost. Truncation is not data loss.
+
+            The cap bounds the task's own work, not the optimizer's exit. An
+            optimizer that does not return when the event channel closes is
+            given ``_OPTIMIZER_SHUTDOWN_GRACE_S`` to unwind and is then
+            cancelled, so a cancelled task can overrun its cap by up to that
+            much. A TimeoutError the task raises itself -- a provider client
+            read timeout, say -- is recorded as an error, not as cap expiry.
 
             The record then splits by what survived. With at least one judged
             run the persisted status is ``"timeout"``: a real measurement,
@@ -1100,12 +1114,21 @@ class Controller:
                 # coroutine; the caller's finally still tears the target down.
                 # The runs it had already completed survive in ``progress``,
                 # which the loop writes to as it goes.
+                # ``asyncio.timeout`` rather than ``wait_for`` so the cap can
+                # be told apart from a TimeoutError the task raised itself --
+                # a provider client read timeout, say, which reaches here from
+                # optimizer.initialize(). ``wait_for`` raises the same type for
+                # both, so a client timeout was recorded as stop_reason
+                # "timeout" with a rationale asserting a cap that had not
+                # expired, and the real exception was dropped.
                 try:
-                    return await asyncio.wait_for(
-                        self._run_task(task, target, task_scope, reporter, index, progress),
-                        timeout=self._task_time_cap_s,
-                    )
+                    async with asyncio.timeout(self._task_time_cap_s) as cap:
+                        return await self._run_task(
+                            task, target, task_scope, reporter, index, progress
+                        )
                 except TimeoutError:
+                    if not cap.expired():
+                        raise  # the task's own timeout; the handler below records it
                     logger.warning(
                         "Task %r: exceeded task_time_cap_s=%s, cancelled after %d run(s)",
                         task.goal.description,
@@ -1359,8 +1382,40 @@ class Controller:
 
         finally:
             channel.close()
+            # A well-behaved optimizer returns as soon as the channel closes.
+            # One that is blocked elsewhere -- a provider call that never
+            # returns -- is not unblocked by closing the channel, and this
+            # await would pin the task forever. That is worst in the `finally`
+            # of the very coroutine ``task_time_cap_s`` cancels: an unbounded
+            # wait here defeats the wall-clock bound that cancelled us. Give
+            # the optimizer a grace period to unwind, then cancel it.
+            #
+            # ``asyncio.wait`` is used rather than ``wait_for`` because it
+            # times out without cancelling the *current* task, which may
+            # already be unwinding a cancellation of its own.
+            settled, _pending = await asyncio.wait(
+                {optimizer_task}, timeout=_OPTIMIZER_SHUTDOWN_GRACE_S
+            )
+            if not settled:
+                logger.warning(
+                    "Task %r: optimizer still running %.1fs after the channel "
+                    "closed, cancelling it",
+                    task.goal.description,
+                    _OPTIMIZER_SHUTDOWN_GRACE_S,
+                )
+                optimizer_task.cancel()
             try:
                 await optimizer_task
+            except asyncio.CancelledError:
+                if not optimizer_task.cancelled():
+                    # Not the optimizer's cancellation but our own, arriving
+                    # while we waited. Never swallow that.
+                    raise
+                if error_text is None:
+                    error_text = (
+                        f"Optimizer did not return within "
+                        f"{_OPTIMIZER_SHUTDOWN_GRACE_S}s of channel close and was cancelled."
+                    )
             except Exception as exc:
                 # Optimizer raised outside any in-flight channel.send
                 # (background work, or its own teardown after the run loop

@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 from superred.core.types.event import Event, EventResponse
 
@@ -83,7 +84,24 @@ class EventEnvelope:
             if self._responded:
                 raise RuntimeError("EventEnvelope already responded/rejected")
             self._responded = True
-        self._loop.call_soon_threadsafe(self._future.set_result, response)
+        self._loop.call_soon_threadsafe(self._settle, self._future.set_result, response)
+
+    def _settle(self, complete: Callable[[Any], None], value: Any) -> None:
+        """Complete the sender's future, unless the sender is already gone.
+
+        The ``await`` in :meth:`EventChannel.send` can be cancelled out from
+        under us -- ``task_time_cap_s`` does exactly that -- which cancels the
+        future. Calling ``set_result``/``set_exception`` on it then raises
+        ``InvalidStateError`` from inside a ``call_soon_threadsafe`` callback,
+        where no caller can catch it: it surfaces only as a loop-level
+        "Exception in callback" and the responding thread never learns of it.
+
+        Checking ``done()`` here is race-free even though ``respond`` may be
+        called from any thread, because this runs on the loop thread, which is
+        the only thread that ever completes the future.
+        """
+        if not self._future.done():
+            complete(value)
 
     def reject(self, error: BaseException) -> None:
         """Propagate an exception to the sender.
@@ -99,7 +117,7 @@ class EventEnvelope:
             if self._responded:
                 return
             self._responded = True
-        self._loop.call_soon_threadsafe(self._future.set_exception, error)
+        self._loop.call_soon_threadsafe(self._settle, self._future.set_exception, error)
 
 
 class EventChannel:
