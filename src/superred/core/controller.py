@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import traceback
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -426,11 +427,59 @@ def _truncated_task_result(
     )
 
 
-#: Grace period an optimizer gets to return after the event channel closes
-#: before the controller cancels it. Closing the channel is the cooperative
-#: signal; this bounds the case where the optimizer is blocked on something
-#: else entirely and would otherwise hang the task past every configured cap.
-_OPTIMIZER_SHUTDOWN_GRACE_S = 5.0
+#: Budget for the cleanup that follows a task, when ``task_time_cap_s`` is set.
+#: Cleanup runs in the ``finally`` of the coroutine the cap cancels, so it
+#: cannot rely on a second cancellation to interrupt it -- the cap fires once.
+#: Every await down there therefore needs its own bound, or the cap does not
+#: hold. ``_run_task`` spends one budget across the optimizer join and the
+#: optimizer teardown; ``_execute_task`` spends another on the target teardown.
+_CLEANUP_GRACE_S = 5.0
+
+
+async def _finish_or_abandon(
+    work: Awaitable[None] | asyncio.Task[None],
+    description: str,
+    deadline: float,
+) -> BaseException | None:
+    """Await *work* until *deadline*; past it, cancel *work* and stop waiting.
+
+    Cleanup that runs in the ``finally`` of a coroutine the wall-clock cap has
+    already cancelled has nothing left to interrupt it: the cap fires once, so
+    a fresh suspend down there is unbounded no matter what cancelled the body.
+    That is how an optimizer -- or its teardown -- blocked on something the
+    channel close cannot reach pins a task past every configured bound.
+
+    Abandoning rather than awaiting the cancellation is deliberate.  Awaiting a
+    cancel the work is slow to honour reintroduces the unbounded wait this
+    exists to remove; an abandoned task is cancelled and simply not joined.
+
+    The caller's own cancellation is never swallowed: *work* is cancelled so it
+    is not left running behind us, and the exception propagates.
+
+    Args:
+        work: Coroutine or task to finish.
+        description: Used in the log line if *work* has to be abandoned.
+        deadline: Loop-clock time to stop waiting, or ``math.inf`` for no bound.
+
+    Returns:
+        The exception *work* completed with, or ``None`` if it completed
+        cleanly, was cancelled, or was abandoned.
+    """
+    loop = asyncio.get_running_loop()
+    fut = asyncio.ensure_future(work)
+    timeout = None if deadline == math.inf else max(0.0, deadline - loop.time())
+    try:
+        done, _pending = await asyncio.wait({fut}, timeout=timeout)
+    except BaseException:
+        fut.cancel()
+        raise
+    if not done:
+        logger.warning("%s did not finish within the cleanup budget, abandoning it", description)
+        fut.cancel()
+        return None
+    if fut.cancelled():
+        return None
+    return fut.exception()
 
 
 async def _swallow(coro: Awaitable[None], description: str) -> None:
@@ -616,12 +665,19 @@ class Controller:
             completed and had judged, together with their trajectories and the
             attacker spend they cost. Truncation is not data loss.
 
-            The cap bounds the task's own work, not the optimizer's exit. An
-            optimizer that does not return when the event channel closes is
-            given ``_OPTIMIZER_SHUTDOWN_GRACE_S`` to unwind and is then
-            cancelled, so a cancelled task can overrun its cap by up to that
-            much. A TimeoutError the task raises itself -- a provider client
-            read timeout, say -- is recorded as an error, not as cap expiry.
+            The cap bounds the task's own work; the cleanup that follows is
+            bounded separately, because it runs in the ``finally`` of the
+            coroutine the cap cancels and so cannot be interrupted by the cap
+            again. Setting a cap therefore also bounds cleanup: the optimizer
+            join and the optimizer teardown share one ``_CLEANUP_GRACE_S``
+            budget, and the target teardown gets its own, so a cancelled task
+            can overrun its cap by at most twice that. Work that does not
+            finish inside its budget is cancelled and abandoned rather than
+            joined. With no cap set nothing here is bounded, which is what
+            ``None`` means.
+
+            A TimeoutError the task raises itself -- a provider client read
+            timeout, say -- is recorded as an error, not as cap expiry.
 
             The record then splits by what survived. With at least one judged
             run the persisted status is ``"timeout"``: a real measurement,
@@ -1162,7 +1218,19 @@ class Controller:
                     read_only=task_scope.read_only,
                 )
         finally:
-            await _swallow(target.teardown(), "target.teardown post-task")
+            # Bounded for the same reason as the cleanup in _run_task: a
+            # target whose teardown blocks would otherwise hold the task open
+            # indefinitely, cap or no cap.
+            target_deadline = (
+                asyncio.get_running_loop().time() + _CLEANUP_GRACE_S
+                if self._task_time_cap_s is not None
+                else math.inf
+            )
+            target_exc = await _finish_or_abandon(
+                target.teardown(), "target.teardown post-task", target_deadline
+            )
+            if target_exc is not None:
+                logger.error("target.teardown post-task failed", exc_info=target_exc)
 
     # ------------------------------------------------------------------
     # Per-task run
@@ -1382,52 +1450,44 @@ class Controller:
 
         finally:
             channel.close()
-            # A well-behaved optimizer returns as soon as the channel closes.
-            # One that is blocked elsewhere -- a provider call that never
-            # returns -- is not unblocked by closing the channel, and this
-            # await would pin the task forever. That is worst in the `finally`
-            # of the very coroutine ``task_time_cap_s`` cancels: an unbounded
-            # wait here defeats the wall-clock bound that cancelled us. Give
-            # the optimizer a grace period to unwind, then cancel it.
-            #
-            # ``asyncio.wait`` is used rather than ``wait_for`` because it
-            # times out without cancelling the *current* task, which may
-            # already be unwinding a cancellation of its own.
-            settled, _pending = await asyncio.wait(
-                {optimizer_task}, timeout=_OPTIMIZER_SHUTDOWN_GRACE_S
+            # Closing the channel is the cooperative stop signal, and a
+            # well-behaved optimizer returns on it. One blocked elsewhere -- a
+            # provider call that never returns -- does not, and neither the
+            # join nor the teardown below can be interrupted by the cap, which
+            # has already fired. Both get a shared budget; see
+            # ``_finish_or_abandon``. Without a cap the caller asked for no
+            # wall-clock bound, so cleanup keeps its original unbounded wait.
+            deadline = (
+                asyncio.get_running_loop().time() + _CLEANUP_GRACE_S
+                if self._task_time_cap_s is not None
+                else math.inf
             )
-            if not settled:
-                logger.warning(
-                    "Task %r: optimizer still running %.1fs after the channel "
-                    "closed, cancelling it",
-                    task.goal.description,
-                    _OPTIMIZER_SHUTDOWN_GRACE_S,
-                )
-                optimizer_task.cancel()
-            try:
-                await optimizer_task
-            except asyncio.CancelledError:
-                if not optimizer_task.cancelled():
-                    # Not the optimizer's cancellation but our own, arriving
-                    # while we waited. Never swallow that.
-                    raise
-                if error_text is None:
-                    error_text = (
-                        f"Optimizer did not return within "
-                        f"{_OPTIMIZER_SHUTDOWN_GRACE_S}s of channel close and was cancelled."
-                    )
-            except Exception as exc:
+            optimizer_exc = await _finish_or_abandon(
+                optimizer_task,
+                f"Task {task.goal.description!r}: optimizer",
+                deadline,
+            )
+            if optimizer_exc is not None and not isinstance(optimizer_exc, Exception):
+                # BaseException that is not an Exception (SystemExit,
+                # KeyboardInterrupt): not ours to turn into a diagnostic.
+                raise optimizer_exc
+            if optimizer_exc is not None:
                 # Optimizer raised outside any in-flight channel.send
                 # (background work, or its own teardown after the run loop
                 # exited). Captured as a diagnostic without changing
-                # stop_reason — the run loop's classification is authoritative.
-                logger.exception(
+                # stop_reason -- the run loop's classification is authoritative.
+                logger.error(
                     "Task %r: optimizer task raised during teardown",
                     task.goal.description,
+                    exc_info=optimizer_exc,
                 )
                 if error_text is None:
-                    error_text = _format_exception(exc)
-            await _swallow(optimizer.teardown(), "optimizer.teardown post-run")
+                    error_text = _format_exception(optimizer_exc)
+            teardown_exc = await _finish_or_abandon(
+                optimizer.teardown(), "optimizer.teardown post-run", deadline
+            )
+            if teardown_exc is not None:
+                logger.error("optimizer.teardown post-run failed", exc_info=teardown_exc)
             # No post-task reset_ephemeral_state() here: the caller
             # (_execute_task) tears the target down immediately after this
             # method returns, and the target is never reused across tasks

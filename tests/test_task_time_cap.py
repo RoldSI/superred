@@ -109,6 +109,20 @@ class WarmupTimeoutOptimizer(StubOptimizer):
         raise TimeoutError("HTTPReadTimeout: warmup call to the provider timed out")
 
 
+class HangingTeardownOptimizer(StubOptimizer):
+    """Blocks forever in ``teardown``, which runs after the cap has fired."""
+
+    async def teardown(self) -> None:
+        await asyncio.Event().wait()
+
+
+class HangingTeardownTarget(HangingTarget):
+    """Blocks forever in ``run`` and again in ``teardown``."""
+
+    async def teardown(self) -> None:
+        await asyncio.Event().wait()
+
+
 def _controller(
     *,
     target_factory: TargetFactory,
@@ -281,6 +295,103 @@ async def test_a_timeout_the_task_raised_itself_is_not_blamed_on_the_cap() -> No
     assert tr.stop_reason == "error"
     assert "task_time_cap_s" not in (tr.best_evaluation.rationale or "")
     assert "HTTPReadTimeout" in (tr.error or "")
+
+
+@pytest.mark.parametrize(
+    ("label", "overrides"),
+    [
+        ("optimizer teardown", {"optimizer_factory": lambda: HangingTeardownOptimizer()}),
+        ("target teardown", {"target_factory": TargetFactory(create=HangingTeardownTarget)}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cleanup_that_blocks_cannot_outlive_the_cap(
+    label: str, overrides: dict[str, Any]
+) -> None:
+    """Every await in the cleanup path needs its own bound.
+
+    The cap cancels the task body, so the ``finally`` runs while a cancellation
+    is already unwinding -- and the cap fires only once, so a fresh suspend
+    down there has nothing left to interrupt it.  A teardown that blocks
+    therefore pinned the task forever despite the cap.  Both the optimizer's
+    teardown and the target's are on that path.
+    """
+    kwargs: dict[str, Any] = dict(
+        target_factory=TargetFactory(create=HangingTarget),
+        tasks=[StubTask()],
+        cap=0.25,
+    )
+    kwargs.update(overrides)
+    controller = _controller(**kwargs)
+
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.2):
+        started = asyncio.get_running_loop().time()
+        result = await asyncio.wait_for(controller.run(), timeout=30)
+        elapsed = asyncio.get_running_loop().time() - started
+
+    assert result.task_results[0].stop_reason == "timeout"
+    # cap + at most two cleanup budgets, plus slack for a loaded machine.
+    assert elapsed < 0.25 + 2 * 0.2 + 5.0, f"{label}: cleanup overran its budget ({elapsed:.2f}s)"
+
+
+@pytest.mark.asyncio
+async def test_the_cap_does_not_leave_the_optimizer_running() -> None:
+    """An abandoned optimizer must still be cancelled, not merely unjoined.
+
+    The controller stops waiting for an optimizer that will not return, but it
+    must not walk away leaving one executing -- with its LLM client and its
+    spend -- after the task result has been recorded.
+    """
+    started: list[asyncio.Task[Any]] = []
+
+    class TrackedHangingOptimizer(HangingOptimizer):
+        async def run(self, channel: Any) -> None:
+            current = asyncio.current_task()
+            assert current is not None
+            started.append(current)
+            await super().run(channel)
+
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=0.25,
+        optimizer_factory=lambda: TrackedHangingOptimizer(),
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.2):
+        await asyncio.wait_for(controller.run(), timeout=30)
+
+    assert started, "the optimizer never started; the test proves nothing"
+    await asyncio.sleep(0.05)
+    assert all(t.cancelled() or t.done() for t in started), (
+        "an optimizer task was left running after the run finished"
+    )
+
+
+@pytest.mark.asyncio
+async def test_without_a_cap_cleanup_is_not_bounded() -> None:
+    """``task_time_cap_s=None`` means unbounded, cleanup included.
+
+    A slow but finite teardown must run to completion rather than being
+    cancelled by a budget the caller never asked for.
+    """
+    finished = False
+
+    class SlowTeardownOptimizer(StubOptimizer):
+        async def teardown(self) -> None:
+            nonlocal finished
+            await asyncio.sleep(0.3)
+            finished = True
+
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=None,
+        optimizer_factory=lambda: SlowTeardownOptimizer(),
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.05):
+        await asyncio.wait_for(controller.run(), timeout=30)
+
+    assert finished, "teardown was cut short even though no cap was set"
 
 
 @pytest.mark.asyncio
