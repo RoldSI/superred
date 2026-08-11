@@ -368,6 +368,42 @@ async def test_the_cap_does_not_leave_the_optimizer_running() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_healthy_task_under_a_cap_gets_an_unbounded_teardown() -> None:
+    """The cleanup budget is for a task the cap cut short, not for every task.
+
+    Keying it on the cap merely being SET cancelled the teardown of a task that
+    finished normally, well inside a generous cap -- so a target that stops
+    containers or closes a proxy in teardown leaked exactly what it was about to
+    release. A leak, introduced by the fix meant to prevent one.
+    """
+    finished: dict[str, bool] = {}
+
+    class SlowTeardownTarget(StubTarget):
+        async def teardown(self) -> None:
+            await asyncio.sleep(0.3)
+            finished["target"] = True
+
+    class SlowTeardownOptimizer(StubOptimizer):
+        async def teardown(self) -> None:
+            await asyncio.sleep(0.3)
+            finished["optimizer"] = True
+
+    controller = _controller(
+        target_factory=TargetFactory(create=SlowTeardownTarget),
+        tasks=[StubTask()],
+        cap=30.0,  # generous; never expires
+        optimizer_factory=lambda: SlowTeardownOptimizer(),
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.05):
+        result = await asyncio.wait_for(controller.run(), timeout=30)
+
+    assert result.task_results[0].stop_reason != "timeout"
+    assert finished == {"target": True, "optimizer": True}, (
+        f"a teardown was cut short on a task the cap never touched: {finished}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_without_a_cap_cleanup_is_not_bounded() -> None:
     """``task_time_cap_s=None`` means unbounded, cleanup included.
 
