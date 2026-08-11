@@ -723,10 +723,17 @@ class Controller:
             The record then splits by what survived. With at least one judged
             run the persisted status is ``"timeout"``: a real measurement,
             truncated, kept by a resume exactly as ``"budget_exhausted"`` is.
+            It counts in the ASR denominator as a non-success: an attacker
+            that has not succeeded inside its time budget has failed under the
+            threat model being measured, exactly as one that exhausted its cost
+            budget has.
+
             With nothing judged the status is ``"timeout_empty"``: no
-            measurement at all, so a resume recomputes it. Either way the task
-            is excluded from the ASR numerator and denominator -- a truncated
-            task is a lower bound on the attacker, not a verdict.
+            measurement at all, so a resume recomputes it and it is excluded
+            from the ASR entirely. After a full time budget with nothing judged,
+            a hung provider call is far likelier than an attacker working to the
+            wire, and counting an outage as attacker failure is the one error
+            this must not make.
 
             Deliberately NOT part of the experiment identity (it does not
             appear in ``ExperimentMeta.identity_hash``), unlike the cost and run
