@@ -688,3 +688,26 @@ def test_a_truncated_task_does_not_print_as_a_failed_attack() -> None:
         )
     )
     assert "TIMEOUT" in out.text
+
+
+@pytest.mark.asyncio
+async def test_an_interrupt_is_not_pinned_by_a_hanging_teardown() -> None:
+    """Ctrl-C must not be swallowed by cleanup that will not return.
+
+    The cleanup budget keys on a cancellation being in flight rather than on
+    the cap having fired, so an outer cancellation of the run bounds cleanup
+    the same way the cap does.  Keyed on the cap alone, a target whose teardown
+    blocks pinned the interrupt forever.
+    """
+    controller = _controller(
+        target_factory=TargetFactory(create=HangingTeardownTarget),
+        tasks=[StubTask()],
+        cap=60.0,  # generous; the interrupt, not the cap, is what bounds this
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.2):
+        run = asyncio.ensure_future(controller.run())
+        await asyncio.sleep(0.2)  # let the task park inside target.run()
+        run.cancel()
+        done, _pending = await asyncio.wait({run}, timeout=10)
+
+    assert done, "the interrupt was pinned by a teardown that never returns"

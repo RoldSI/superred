@@ -1273,14 +1273,16 @@ class Controller:
                     read_only=task_scope.read_only,
                 )
         finally:
-            # Bounded only when the cap actually expired. By the time this runs
-            # the timeout context has exited and its cancellation has been
-            # uncancelled, so unlike _run_task there is nothing left to detect:
-            # the handler records it instead. A task that ended normally gets an
-            # unbounded teardown, because cutting one short leaks whatever it
-            # was releasing.
+            # Bounded whenever a cancellation put us here. The cap's own is
+            # already spent by now -- the timeout context has exited and
+            # uncancelled it -- so it takes a flag; an outer cancellation
+            # (Ctrl-C) is still in flight and reads directly, exactly as in
+            # _run_task. A task that ended normally gets an unbounded teardown,
+            # because cutting one short leaks whatever it was releasing.
             target_deadline = (
-                asyncio.get_running_loop().time() + _CLEANUP_GRACE_S if cap_expired else math.inf
+                asyncio.get_running_loop().time() + _CLEANUP_GRACE_S
+                if cap_expired or _cancellation_in_flight()
+                else math.inf
             )
             target_exc = await _finish_or_abandon(
                 target.teardown(), "target.teardown post-task", target_deadline
