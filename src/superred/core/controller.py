@@ -714,8 +714,11 @@ class Controller:
             budget, and the target teardown gets its own, so a cancelled task
             can overrun its cap by at most twice that. Work that does not
             finish inside its budget is cancelled and abandoned rather than
-            joined. With no cap set nothing here is bounded, which is what
-            ``None`` means.
+            joined. The budget is keyed on a cancellation actually being in
+            flight -- normally the cap's, though an outer cancellation of the
+            run (Ctrl-C) bounds cleanup the same way. A task that ends
+            normally always gets an unbounded teardown, and with no cap set
+            the controller never cancels, which is what ``None`` means.
 
             A TimeoutError the task raises itself -- a provider client read
             timeout, say -- is recorded as an error, not as cap expiry.
@@ -1510,9 +1513,10 @@ class Controller:
             # provider call that never returns -- does not, and neither the
             # join nor the teardown below can be interrupted by the cap, which
             # has already fired. Both get a shared budget; see
-            # ``_finish_or_abandon``. Without a cap the caller asked for no
-            # wall-clock bound, so cleanup keeps its original unbounded wait.
-            # Bound cleanup only while a cancellation is actually in flight.
+            # ``_finish_or_abandon``. Bound cleanup only while a cancellation
+            # is actually in flight -- the cap's, or an outer one such as
+            # Ctrl-C, which must not be pinned by a hanging teardown either.
+            # A task that ends normally keeps its original unbounded wait.
             # That is the case the budget exists for: the cap fires once, so a
             # fresh suspend in this `finally` has nothing left to interrupt it.
             # On a healthy task the enclosing `asyncio.timeout` is still armed

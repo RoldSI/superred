@@ -309,10 +309,11 @@ Closing the event channel is the signal to stop, and returning from `run()` on
 it is your side of the contract. If the cap cancels the task and you do not
 return -- because you are blocked on something the channel close cannot reach --
 you are cancelled once the cleanup budget is spent, and so is a `teardown()`
-that does not finish inside it. That budget applies only to a task the cap cut
-short; one that ends normally, and any task run without `task_time_cap_s`, gets
-an unbounded teardown. Even so, do work that must complete before the channel
-closes, not after.
+that does not finish inside it. That budget applies while the task is being
+cancelled -- normally because the cap cut it short, though an outer
+cancellation of the whole run is bounded the same way. A task that ends
+normally gets an unbounded teardown, with or without a cap. Even so, do work
+that must complete before the channel closes, not after.
 
 If the experiment did not grant an LLM (no `llm_config`), `self.llm` is a noop
 client that raises `BudgetExhaustedError` on the first call. Non-LLM optimizers

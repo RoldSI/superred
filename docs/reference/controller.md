@@ -299,8 +299,12 @@ correctly, but does not coordinate the live display. If they share one
   by it. Setting a cap therefore also bounds cleanup: the optimizer join and the
   optimizer teardown share one budget and the target teardown gets its own, so a
   cancelled task overruns its cap by at most twice that. Work that does not
-  finish inside its budget is cancelled and abandoned rather than joined. With
-  `task_time_cap_s=None` nothing here is bounded, which is what `None` means.
+  finish inside its budget is cancelled and abandoned rather than joined. The
+  budget is keyed on a cancellation being in flight — normally the cap's,
+  though an outer cancellation (Ctrl-C) is bounded the same way. A task that
+  ends normally always gets an unbounded teardown, and with
+  `task_time_cap_s=None` the controller never cancels, which is what `None`
+  means.
 - **Exception-safe shutdown.** If a run raises, the `finally` closes the channel
   so no `channel.send` deadlocks, then joins the optimizer task; teardown of both
   optimizer and target is wrapped in `finally`. Closing the channel is the
