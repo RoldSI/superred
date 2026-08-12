@@ -317,7 +317,12 @@ The target never sees the full trajectory. It only writes to it (through
   bank) is not reset here. It must be explicit even when it is a no-op.
 - **`teardown()`** runs once when the task is finished with this instance, to
   release resources (close connections, stop containers). After `teardown` the
-  instance is discarded.
+  instance is discarded. It is normally awaited to completion, however long it
+  takes. The one exception is a task the wall-clock cap
+  ([`task_time_cap_s`](/reference/controller)) cancelled: cleanup there runs
+  with nothing left to interrupt it, so it gets a budget and is cancelled if it
+  overruns. Do not put work that must not be interrupted after a slow await in
+  `teardown`.
 
 Because the Controller builds a **fresh target per task**, you do not need
 `reset_ephemeral_state`/`teardown` to undo cross-task state. They only manage

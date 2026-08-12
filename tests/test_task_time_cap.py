@@ -77,6 +77,52 @@ class TruncatedTarget(StubTarget):
         await super().run(emit, send_event)
 
 
+class HangingOptimizer(StubOptimizer):
+    """Blocks inside ``on_event``, where closing the channel cannot reach it.
+
+    The target-side hangs above are interrupted by the cap itself, because the
+    task is parked in the cancelled coroutine when the deadline lands.  This
+    one hangs the optimizer, which runs as a separate task the controller only
+    joins during cleanup -- after the cancellation has already been delivered,
+    so nothing is left to interrupt the join.
+    """
+
+    async def on_event(self, event: Event) -> EventResponse:
+        await asyncio.Event().wait()
+
+
+class WarmupTimeoutOptimizer(StubOptimizer):
+    """Raises a TimeoutError of its own from ``initialize``.
+
+    The shape of a provider client read timeout during a warmup call.  It is
+    the same exception type the wall-clock cap raises, and it reaches the same
+    handler.
+    """
+
+    async def initialize(
+        self,
+        goal: Any,
+        controllables: Any,
+        observables: Any,
+        llm_client: Any,
+    ) -> None:
+        raise TimeoutError("HTTPReadTimeout: warmup call to the provider timed out")
+
+
+class HangingTeardownOptimizer(StubOptimizer):
+    """Blocks forever in ``teardown``, which runs after the cap has fired."""
+
+    async def teardown(self) -> None:
+        await asyncio.Event().wait()
+
+
+class HangingTeardownTarget(HangingTarget):
+    """Blocks forever in ``run`` and again in ``teardown``."""
+
+    async def teardown(self) -> None:
+        await asyncio.Event().wait()
+
+
 def _controller(
     *,
     target_factory: TargetFactory,
@@ -203,6 +249,185 @@ async def test_a_hanging_task_is_cancelled_and_recorded_as_timeout() -> None:
     assert tr.success is False
     assert tr.runs == []
     assert "task_time_cap_s" in (tr.best_evaluation.rationale or "")
+
+
+@pytest.mark.asyncio
+async def test_the_cap_also_bounds_a_task_whose_optimizer_hangs() -> None:
+    """The cap must bound the task even when the hang is in cleanup.
+
+    The controller joins the optimizer task in the ``finally`` of the very
+    coroutine the cap cancels.  An unbounded join there defeated the bound that
+    cancelled it: the cancellation had already been delivered, so a fresh
+    suspend in the ``finally`` had nothing left to interrupt it and the task ran
+    forever.  ``asyncio.wait_for`` below is the test's own backstop -- if the
+    cap does not hold, it raises rather than hanging the suite.
+    """
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=0.25,
+        optimizer_factory=lambda: HangingOptimizer(),
+    )
+    result = await asyncio.wait_for(controller.run(), timeout=30)
+
+    tr = result.task_results[0]
+    assert tr.stop_reason == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_a_timeout_the_task_raised_itself_is_not_blamed_on_the_cap() -> None:
+    """A client read timeout is an error, not a cap expiry.
+
+    Both arrive as ``TimeoutError``.  Catching the type alone recorded a task
+    that ran for milliseconds under a 60s cap as ``stop_reason="timeout"``,
+    with a rationale asserting the cap "was exceeded", and dropped the real
+    exception entirely.
+    """
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=60.0,
+        optimizer_factory=lambda: WarmupTimeoutOptimizer(),
+    )
+    result = await asyncio.wait_for(controller.run(), timeout=30)
+
+    tr = result.task_results[0]
+    assert tr.stop_reason == "error"
+    assert "task_time_cap_s" not in (tr.best_evaluation.rationale or "")
+    assert "HTTPReadTimeout" in (tr.error or "")
+
+
+@pytest.mark.parametrize(
+    ("label", "overrides"),
+    [
+        ("optimizer teardown", {"optimizer_factory": lambda: HangingTeardownOptimizer()}),
+        ("target teardown", {"target_factory": TargetFactory(create=HangingTeardownTarget)}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_cleanup_that_blocks_cannot_outlive_the_cap(
+    label: str, overrides: dict[str, Any]
+) -> None:
+    """Every await in the cleanup path needs its own bound.
+
+    The cap cancels the task body, so the ``finally`` runs while a cancellation
+    is already unwinding -- and the cap fires only once, so a fresh suspend
+    down there has nothing left to interrupt it.  A teardown that blocks
+    therefore pinned the task forever despite the cap.  Both the optimizer's
+    teardown and the target's are on that path.
+    """
+    kwargs: dict[str, Any] = dict(
+        target_factory=TargetFactory(create=HangingTarget),
+        tasks=[StubTask()],
+        cap=0.25,
+    )
+    kwargs.update(overrides)
+    controller = _controller(**kwargs)
+
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.2):
+        started = asyncio.get_running_loop().time()
+        result = await asyncio.wait_for(controller.run(), timeout=30)
+        elapsed = asyncio.get_running_loop().time() - started
+
+    assert result.task_results[0].stop_reason == "timeout"
+    # cap + at most two cleanup budgets, plus slack for a loaded machine.
+    assert elapsed < 0.25 + 2 * 0.2 + 5.0, f"{label}: cleanup overran its budget ({elapsed:.2f}s)"
+
+
+@pytest.mark.asyncio
+async def test_the_cap_does_not_leave_the_optimizer_running() -> None:
+    """An abandoned optimizer must still be cancelled, not merely unjoined.
+
+    The controller stops waiting for an optimizer that will not return, but it
+    must not walk away leaving one executing -- with its LLM client and its
+    spend -- after the task result has been recorded.
+    """
+    started: list[asyncio.Task[Any]] = []
+
+    class TrackedHangingOptimizer(HangingOptimizer):
+        async def run(self, channel: Any) -> None:
+            current = asyncio.current_task()
+            assert current is not None
+            started.append(current)
+            await super().run(channel)
+
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=0.25,
+        optimizer_factory=lambda: TrackedHangingOptimizer(),
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.2):
+        await asyncio.wait_for(controller.run(), timeout=30)
+
+    assert started, "the optimizer never started; the test proves nothing"
+    await asyncio.sleep(0.05)
+    assert all(t.cancelled() or t.done() for t in started), (
+        "an optimizer task was left running after the run finished"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_task_under_a_cap_gets_an_unbounded_teardown() -> None:
+    """The cleanup budget is for a task the cap cut short, not for every task.
+
+    Keying it on the cap merely being SET cancelled the teardown of a task that
+    finished normally, well inside a generous cap -- so a target that stops
+    containers or closes a proxy in teardown leaked exactly what it was about to
+    release. A leak, introduced by the fix meant to prevent one.
+    """
+    finished: dict[str, bool] = {}
+
+    class SlowTeardownTarget(StubTarget):
+        async def teardown(self) -> None:
+            await asyncio.sleep(0.3)
+            finished["target"] = True
+
+    class SlowTeardownOptimizer(StubOptimizer):
+        async def teardown(self) -> None:
+            await asyncio.sleep(0.3)
+            finished["optimizer"] = True
+
+    controller = _controller(
+        target_factory=TargetFactory(create=SlowTeardownTarget),
+        tasks=[StubTask()],
+        cap=30.0,  # generous; never expires
+        optimizer_factory=lambda: SlowTeardownOptimizer(),
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.05):
+        result = await asyncio.wait_for(controller.run(), timeout=30)
+
+    assert result.task_results[0].stop_reason != "timeout"
+    assert finished == {"target": True, "optimizer": True}, (
+        f"a teardown was cut short on a task the cap never touched: {finished}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_without_a_cap_cleanup_is_not_bounded() -> None:
+    """``task_time_cap_s=None`` means unbounded, cleanup included.
+
+    A slow but finite teardown must run to completion rather than being
+    cancelled by a budget the caller never asked for.
+    """
+    finished = False
+
+    class SlowTeardownOptimizer(StubOptimizer):
+        async def teardown(self) -> None:
+            nonlocal finished
+            await asyncio.sleep(0.3)
+            finished = True
+
+    controller = _controller(
+        target_factory=TargetFactory(create=StubTarget),
+        tasks=[StubTask()],
+        cap=None,
+        optimizer_factory=lambda: SlowTeardownOptimizer(),
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.05):
+        await asyncio.wait_for(controller.run(), timeout=30)
+
+    assert finished, "teardown was cut short even though no cap was set"
 
 
 @pytest.mark.asyncio
@@ -463,3 +688,26 @@ def test_a_truncated_task_does_not_print_as_a_failed_attack() -> None:
         )
     )
     assert "TIMEOUT" in out.text
+
+
+@pytest.mark.asyncio
+async def test_an_interrupt_is_not_pinned_by_a_hanging_teardown() -> None:
+    """Ctrl-C must not be swallowed by cleanup that will not return.
+
+    The cleanup budget keys on a cancellation being in flight rather than on
+    the cap having fired, so an outer cancellation of the run bounds cleanup
+    the same way the cap does.  Keyed on the cap alone, a target whose teardown
+    blocks pinned the interrupt forever.
+    """
+    controller = _controller(
+        target_factory=TargetFactory(create=HangingTeardownTarget),
+        tasks=[StubTask()],
+        cap=60.0,  # generous; the interrupt, not the cap, is what bounds this
+    )
+    with patch("superred.core.controller._CLEANUP_GRACE_S", 0.2):
+        run = asyncio.ensure_future(controller.run())
+        await asyncio.sleep(0.2)  # let the task park inside target.run()
+        run.cancel()
+        done, _pending = await asyncio.wait({run}, timeout=10)
+
+    assert done, "the interrupt was pinned by a teardown that never returns"

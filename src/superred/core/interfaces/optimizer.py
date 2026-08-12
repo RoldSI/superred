@@ -237,4 +237,9 @@ class Optimizer(ABC):
     # ------------------------------------------------------------------
 
     async def teardown(self) -> None:
-        """Release resources. Override for cleanup."""
+        """Release resources. Override for cleanup.
+
+        Awaited to completion, except while the task is unwinding a
+        cancellation (the wall-clock cap's, or an outer one): cleanup there is
+        bounded and a teardown that overruns is cancelled.
+        """

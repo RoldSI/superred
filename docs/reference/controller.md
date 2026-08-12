@@ -294,9 +294,22 @@ correctly, but does not coordinate the live display. If they share one
   destroy work: the runs the task had completed and had judged, their
   trajectories, and the attacker spend they cost are all carried out of the
   cancelled coroutine and into the result.
+- **Bounded cleanup.** Cleanup runs in the `finally` of the coroutine the cap
+  cancels, and the cap fires only once, so nothing down there can be interrupted
+  by it. Setting a cap therefore also bounds cleanup: the optimizer join and the
+  optimizer teardown share one budget and the target teardown gets its own, so a
+  cancelled task overruns its cap by at most twice that. Work that does not
+  finish inside its budget is cancelled and abandoned rather than joined. The
+  budget is keyed on a cancellation being in flight — normally the cap's,
+  though an outer cancellation (Ctrl-C) is bounded the same way. A task that
+  ends normally always gets an unbounded teardown, and with
+  `task_time_cap_s=None` the controller never cancels, which is what `None`
+  means.
 - **Exception-safe shutdown.** If a run raises, the `finally` closes the channel
-  and awaits the optimizer task, so no `channel.send` deadlocks; teardown of both
-  optimizer and target is wrapped in `finally`.
+  so no `channel.send` deadlocks, then joins the optimizer task; teardown of both
+  optimizer and target is wrapped in `finally`. Closing the channel is the
+  cooperative stop signal, and an optimizer that does not return on it is
+  cancelled once its budget is spent.
 - **The trajectory is the single event log.** Events and responses are recorded
   directly onto the trajectory, the
   [`trajectory_recorder`](/reference/events-and-trajectory#middleware-where-scope-and-recording-live)

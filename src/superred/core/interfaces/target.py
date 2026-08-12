@@ -176,5 +176,9 @@ class Target(ABC):
 
     @abstractmethod
     async def teardown(self) -> None:
-        """Release resources. Called after all evaluation is done."""
+        """Release resources. Called after all evaluation is done.
+
+        Awaited to completion, except on a task the wall-clock cap cancelled:
+        cleanup there is bounded and a teardown that overruns is cancelled.
+        """
         ...
