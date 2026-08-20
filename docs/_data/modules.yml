@@ -2,6 +2,9 @@
 # repo: the module's folder in the RoldSI/superred-modules repository. The tile
 #       links to that folder's README, which is the module's documentation:
 #       parameters, deviations from the paper, and caveats.
+#       For a module that lives in its own separate repository (not a
+#       superred-modules subfolder), give repo a full https:// URL instead
+#       (optionally to a specific branch); the tile links there directly.
 # pip:  the published PyPI package name. Omit it for a module that is not on
 #       PyPI yet, and the tile shows no install command.
 # pending: the module is pending publishing, so it has neither a package nor a
@@ -33,6 +36,8 @@ optimizers:
   - { name: Chord/XTHP,         repo: optimizers/chord_xthp,       pending: true,                                emoji: "🪝", suit: [agentic, assistant], blurb: "Tool-control-flow hijack for agents", paper: "https://arxiv.org/abs/2504.03111" }
   - { name: EIA,                repo: optimizers/eia_agent,        pending: true,                                emoji: "🕸️", suit: [agentic, assistant], blurb: "Environmental injection for web agents", paper: "https://arxiv.org/abs/2409.11295" }
   - { name: MUZZLE,             repo: optimizers/muzzle,           pip: superred-optimizer-muzzle,           emoji: "🤐", suit: [agentic, assistant], blurb: "Adaptive indirect prompt injection for agents", paper: "https://arxiv.org/abs/2602.09222" }
+  - { name: Libertas,           repo: optimizers/libertas,         pip: superred-optimizer-libertas,         emoji: "🔓", suit: [chatbot], blurb: "Byte-faithful replay of Pliny's L1B3RT4S jailbreak corpus" }
+  - { name: Attack Anything,    repo: optimizers/attack_anything,  pip: superred-optimizer-attack-anything,  emoji: "♟️", suit: [chatbot], blurb: "Self-evolving attack-tree search for multi-turn jailbreaks" }
   - { name: Goal passthrough,   repo: optimizers/goal_passthrough, pip: superred-optimizer-goal-passthrough, emoji: "➡️", suit: [chatbot, agentic, assistant], first_party: true, blurb: "Direct-request baseline (no attack)" }
 
 targets:
@@ -42,6 +47,7 @@ targets:
   - { name: Inspect agent,        repo: targets/inspect_agent,    pip: superred-target-inspect-agent,    emoji: "🔍", suit: [agentic], first_party: true, blurb: "General inspect-ai tool-calling agent", paper: "https://inspect.aisi.org.uk" }
   - { name: Claude Code (DTAP),   repo: targets/dtap_claudecode,  pip: superred-target-dtap-claudecode,  emoji: "💻", suit: [assistant], blurb: "Claude Code coding agent with execution access" }
   - { name: OpenClaw (DTAP),      repo: targets/dtap_openclaw,    pip: superred-target-dtap-openclaw,    emoji: "🖱️", suit: [assistant], blurb: "OpenClaw computer-use assistant" }
+  - { name: OpenClaw,             repo: targets/openclaw,         pip: superred-target-openclaw,         emoji: "🦞", suit: [assistant], blurb: "General-purpose OpenClaw personal-assistant agent" }
 
 security_claims:
   - { name: HarmBench,            repo: security_claims/harmbench,                 pip: superred-claim-harmbench,    emoji: "📊", suit: [chatbot], blurb: "Standardized red-teaming benchmark", paper: "https://arxiv.org/abs/2402.04249", hf: "https://huggingface.co/datasets/walledai/HarmBench" }
@@ -52,3 +58,4 @@ security_claims:
   - { name: Agent Security Bench, repo: security_claims/asb,                       pip: superred-claim-asb,          emoji: "🧮", suit: [agentic], blurb: "Attack-success / utility / refusal tasks", paper: "https://arxiv.org/abs/2410.02644" }
   - { name: DecodingTrust-Agent,  repo: security_claims/dtap,                      pip: superred-claim-dtap,         emoji: "🧭", suit: [assistant], blurb: "Agent trustworthiness across 14 domains", paper: "https://arxiv.org/abs/2605.04808" }
   - { name: Chatbot suite,        repo: security_claims/chatbot_suite,             emoji: "📦", suit: [chatbot], first_party: true, blurb: "HarmBench + SORRY-Bench + StrongREJECT combined" }
+  - { name: MalTool,              repo: "https://github.com/RoldSI/MalTool/tree/init/maltool-claim", pending: true, emoji: "🧰", suit: [chatbot], blurb: "Malicious agent-tool generation benchmark", paper: "https://arxiv.org/abs/2602.12194" }
