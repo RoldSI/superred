@@ -232,10 +232,14 @@ permalink: /modules
 
     // The module's own guide is the next step after installing, so it gets a
     // block of its own. A module still pending publishing has no README yet, so
-    // the same button points at its folder until one lands.
-    var guide = pending
-      ? REPO + "/tree/main/" + d.repo
-      : REPO + "/blob/main/" + d.repo + "/README.md";
+    // the same button points at its folder until one lands. A module living in
+    // its own separate repository (not a superred-modules subfolder) carries a
+    // full URL in `repo` already, and is linked to directly.
+    var guide = /^https?:\/\//.test(d.repo)
+      ? d.repo
+      : pending
+        ? REPO + "/tree/main/" + d.repo
+        : REPO + "/blob/main/" + d.repo + "/README.md";
     mCta.innerHTML =
       '<a class="mod-guide" href="' + guide + '" target="_blank" rel="noopener noreferrer">' +
         '<span class="mod-guide-text">' +
