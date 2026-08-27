@@ -102,9 +102,14 @@ def security_domain_filter(scope: Scope) -> Middleware:
             if isinstance(event, (ControllablePreCallEvent, ControllablePostCallEvent)):
                 controllable_domain = event.controllable.security_domain
                 if not scope_includes(scope, controllable_domain):
+                    # Marked so the trajectory records that the FRAMEWORK
+                    # declined this, not the attacker. The optimizer is not
+                    # consulted here, so reading this as an attacker decision
+                    # inverts the finding.
                     return ControllableNoInjection(
                         event=event,
                         controllable=event.controllable,
+                        declined_by="scope",
                     )
 
             return await handler(event)

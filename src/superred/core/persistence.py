@@ -337,6 +337,7 @@ def _serialize_response(resp: EventResponse) -> dict[str, Any]:
         payload["value"] = resp.value
     elif isinstance(resp, ControllableNoInjection):
         payload["controllable"] = resp.controllable.name
+        payload["declined_by"] = resp.declined_by
     elif isinstance(resp, RunEndResponse):
         payload["done"] = resp.done
     return payload

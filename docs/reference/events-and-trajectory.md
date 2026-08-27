@@ -91,11 +91,20 @@ trajectory validation.
 
 - `ControllableInjection` carries `value: str` (the text to inject) and the
   `controllable` it targets. It is the answer to either controllable event.
-- `ControllableNoInjection` carries just the `controllable`. It means "do not
-  inject; the target falls back to its own default value." The **Controller
-  itself** returns this automatically for any controllable outside the write
-  scope, so the optimizer is never even asked about surfaces it cannot inject
-  into.
+- `ControllableNoInjection` carries the `controllable` and
+  `declined_by: Literal["scope", "optimizer"]`. It means "do not inject; the
+  target falls back to its own default value." The **Controller itself**
+  returns this automatically for any controllable outside the write scope, so
+  the optimizer is never even asked about surfaces it cannot inject into.
+
+  **Always read `declined_by` before interpreting a decline.** `"scope"` means
+  the framework blocked it and the optimizer never saw it; `"optimizer"` means
+  the optimizer saw it and passed. Those are opposite findings, and only the
+  second says anything about the attacker: the first is "no access here", which
+  belongs in a not-applicable bucket, not in a defence rate. Both appear on the
+  trajectory, and before this field existed they were indistinguishable, which
+  is a mistake that has been made on real results. Optimizer-constructed
+  responses get `"optimizer"` by default, so no optimizer needs to set it.
 - `RunEndResponse` carries `done: bool = False`. `done=True` tells the Controller
   the optimizer wants to stop (goal reached, or budget spent); `done=False` asks
   for another run.
