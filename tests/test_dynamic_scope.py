@@ -21,6 +21,7 @@ from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.persistence import (
+    SCHEMA_VERSION,
     ExperimentMeta,
     iter_task_dirs,
     load_manifest,
@@ -626,7 +627,7 @@ class TestDynamicScopePersistence:
 
         exp_dir = self._experiment_dir(tmp_path)
         for payload in (load_manifest(exp_dir), load_result(exp_dir)):
-            assert payload["schema_version"] == 4
+            assert payload["schema_version"] == SCHEMA_VERSION
             exp = payload["experiment"]
             assert exp["scope_label"] == "my-label"
             assert exp["scope"] == []
