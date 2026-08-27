@@ -183,6 +183,7 @@ class ExperimentMeta:
     task_time_cap_s: float | None = None
     max_runs_per_task: int = 0
     include_feedback: bool = True
+    stop_on_success: bool = True
     concurrency: int = 1
     n_tasks: int | None = None
 
@@ -209,6 +210,12 @@ class ExperimentMeta:
             "task_cost_cap_usd": self.task_cost_cap_usd,
             "max_runs_per_task": self.max_runs_per_task,
             "include_feedback": self.include_feedback,
+            # Keyed for the same reason as include_feedback: it changes what
+            # is measured. Without it a reliability run (stop_on_success=False)
+            # resolves to the stop-on-win directory, and because a won task is
+            # persisted with a KEPT status, resume returns that tree verbatim
+            # and executes nothing.
+            "stop_on_success": self.stop_on_success,
         }
         canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:_HASH_LEN]
@@ -231,6 +238,7 @@ class ExperimentMeta:
             "task_time_cap_s": self.task_time_cap_s,
             "max_runs_per_task": self.max_runs_per_task,
             "include_feedback": self.include_feedback,
+            "stop_on_success": self.stop_on_success,
             "concurrency": self.concurrency,
             "n_tasks": self.n_tasks,
         }

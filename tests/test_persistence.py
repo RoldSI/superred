@@ -712,3 +712,41 @@ def test_unreadable_task_record_is_skipped_not_fatal(tmp_path: Path) -> None:
         assert session.plan.rerun == frozenset({1})
     finally:
         session.abort()
+
+
+def test_stop_on_success_changes_identity_hash() -> None:
+    """A reliability run must not resolve to the stop-on-win directory.
+
+    A won task is persisted with status "success", which ``_KEPT_STATUSES``
+    keeps, so if the two regimes shared a hash a ``stop_on_success=False`` run
+    would resume the stop-on-win tree and execute nothing at all.
+    """
+    a = ExperimentMeta(attacker="a", target="t", claim="c", model="m", scope=("external",))
+    b = ExperimentMeta(
+        attacker="a",
+        target="t",
+        claim="c",
+        model="m",
+        scope=("external",),
+        stop_on_success=False,
+    )
+    assert a.identity_hash() != b.identity_hash()
+
+
+def test_experiment_block_records_stop_on_success() -> None:
+    """The record must say which regime produced its run counts."""
+    meta = ExperimentMeta(
+        attacker="a",
+        target="t",
+        claim="c",
+        model="m",
+        scope=("external",),
+        stop_on_success=False,
+    )
+    assert meta.experiment_block()["stop_on_success"] is False
+    assert (
+        ExperimentMeta(
+            attacker="a", target="t", claim="c", model="m", scope=("external",)
+        ).experiment_block()["stop_on_success"]
+        is True
+    )

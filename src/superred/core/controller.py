@@ -1058,6 +1058,7 @@ class Controller:
             task_time_cap_s=self._task_time_cap_s,
             max_runs_per_task=self._max_runs_per_task,
             include_feedback=self._include_feedback,
+            stop_on_success=self._stop_on_success,
             concurrency=self._target_factory.concurrency,
             n_tasks=n_tasks,
         )
