@@ -371,13 +371,15 @@ function metricCard(label, num, sub, barPct){
   return m;
 }
 var OUTCOME_DEFS = [
-  ["done", "done", "#111111"],
+  ["success", "success", "#111111"],
+  ["done", "done", "#3a3a3a"],
   ["max_runs", "max runs", "#5a5a5a"],
+  ["timeout", "timeout", "#7a7a7a"],
   ["budget_exhausted", "budget", "#9a9a9a"],
   ["error", "error", "#d0d0d0"]
 ];
 function buildOutcomes(tasks){
-  var counts = {done:0, max_runs:0, budget_exhausted:0, error:0};
+  var counts = {success:0, done:0, max_runs:0, timeout:0, budget_exhausted:0, error:0};
   tasks.forEach(function(t){
     if (Object.prototype.hasOwnProperty.call(counts, t.stop_reason)) counts[t.stop_reason]++;
     else if (t.status === "error") counts.error++;
