@@ -340,7 +340,7 @@ class TestControllerRun:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: CountingOptimizer(stop_after=3),
             target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
@@ -351,7 +351,7 @@ class TestControllerRun:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=3,
         )
@@ -364,7 +364,7 @@ class TestControllerRun:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=True),
             target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
         )
         result = await controller.run()
@@ -376,12 +376,109 @@ class TestControllerRun:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=2,
         )
         result = await controller.run()
         assert result.task_results[0].stop_reason == "max_runs"
+
+    # -- stop_on_success -------------------------------------------------
+
+    async def test_success_stops_a_blind_attacker_that_never_says_done(self) -> None:
+        """The regression this exists for.
+
+        Under a blind threat model the optimizer is never told it won, so it
+        cannot stop itself.  The claim's verdict must end the task anyway,
+        instead of spending the whole run budget against a broken target.
+        """
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            optimizer_factory=lambda: NeverDoneOptimizer(),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=True)]),
+            llm_config=STUB_LLM_CONFIG,
+            max_runs_per_task=20,
+            include_feedback=False,  # blind: the attacker cannot see the win
+        )
+        result = await controller.run()
+        tr = result.task_results[0]
+        assert tr.stop_reason == "success"
+        assert len(tr.runs) == 1
+        assert tr.success is True
+
+    async def test_stop_on_success_false_keeps_running_after_a_win(self) -> None:
+        """The opt-out an attack-reliability study needs."""
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            optimizer_factory=lambda: NeverDoneOptimizer(),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=True)]),
+            llm_config=STUB_LLM_CONFIG,
+            max_runs_per_task=3,
+            stop_on_success=False,
+        )
+        result = await controller.run()
+        tr = result.task_results[0]
+        assert len(tr.runs) == 3
+        assert tr.stop_reason == "max_runs"
+        assert tr.success is True
+
+    async def test_success_beats_the_optimizers_own_done(self) -> None:
+        """When both fire, the claim's verdict is the recorded reason.
+
+        ``"done"`` would be ambiguous: it is also what an attacker that gave
+        up reports.  ``"success"`` says the framework ended it on a win.
+        """
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            optimizer_factory=lambda: StubOptimizer(done=True),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=True)]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        result = await controller.run()
+        assert result.task_results[0].stop_reason == "success"
+
+    async def test_stop_on_success_skips_the_final_reset(self) -> None:
+        """There is no next run to reset for, and reset can be very expensive
+        (a container rebuild), so a won task must not pay for one."""
+        target = StubTarget()
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            optimizer_factory=lambda: NeverDoneOptimizer(),
+            target_factory=TargetFactory.singleton(target),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=True)]),
+            llm_config=STUB_LLM_CONFIG,
+            max_runs_per_task=5,
+        )
+        await controller.run()
+        assert target.reset_count == 0
+
+    async def test_a_win_still_counts_in_the_asr(self) -> None:
+        """``"success"`` must be a COMPLETED reason.
+
+        If it were missing from the completed-reason tuples, every win would
+        drop out of both the numerator and the denominator and a perfect
+        sweep would report 0/0.
+        """
+        controller = Controller(
+            scope=EXTERNAL_SCOPE,
+            optimizer_factory=lambda: NeverDoneOptimizer(),
+            target_factory=TargetFactory.singleton(StubTarget()),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=True)]),
+            llm_config=STUB_LLM_CONFIG,
+        )
+        from datetime import UTC, datetime
+
+        from superred.core.controller import _threat_model_end_event
+
+        result = await controller.run()
+        assert result.task_results[0].stop_reason == "success"
+        ev = _threat_model_end_event(None, result, datetime.now(UTC), datetime.now(UTC))
+        assert ev.n_success == 1
+        assert ev.n_completed == 1
+        assert ev.asr == 1.0
 
     async def test_stop_reason_budget_exhausted(self) -> None:
         """BudgetExhaustedError mid-run -> stop_reason='budget_exhausted'."""
@@ -405,7 +502,7 @@ class TestControllerRun:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(BudgetBlowingTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=10,
         )
@@ -465,7 +562,7 @@ class TestControllerRun:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(target),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=3,
         )
@@ -882,6 +979,9 @@ class TestExceptionSafety:
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=5,
+            # Premise: a run WINS and the loop continues past it, so the
+            # claim-verdict stop must be off for this scenario to exist.
+            stop_on_success=False,
         )
         result = await controller.run()
         tr = result.task_results[0]
@@ -915,7 +1015,7 @@ class TestExceptionSafety:
         assert len(trs) == 2
         assert trs[0].stop_reason == "error"
         assert trs[0].success is False
-        assert trs[1].stop_reason == "done"
+        assert trs[1].stop_reason == "success"
         assert trs[1].success is True
 
     async def test_configure_target_error_synthesizes_task_result(self) -> None:
@@ -933,7 +1033,7 @@ class TestExceptionSafety:
         assert trs[0].stop_reason == "error"
         assert trs[0].runs == []
         assert trs[0].best_score.value == 0.0
-        assert trs[1].stop_reason == "done"
+        assert trs[1].stop_reason == "success"
 
     async def test_teardown_failure_during_init_error_does_not_propagate(self) -> None:
         """A raising teardown in the init-failure path must not mask the
@@ -967,7 +1067,7 @@ class TestExceptionSafety:
         tr = result.task_results[0]
         # The task completed normally; the swallowed teardown failure does
         # not flip the stop_reason or strip the run.
-        assert tr.stop_reason == "done"
+        assert tr.stop_reason == "success"
         assert len(tr.runs) == 1
         assert opt.torn_down
 
@@ -1003,6 +1103,9 @@ class TestExceptionSafety:
             security_claim=SecurityClaim.from_tasks([StubTask()]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=5,
+            # Premise: a run WINS and the loop continues past it, so the
+            # claim-verdict stop must be off for this scenario to exist.
+            stop_on_success=False,
         )
         result = await controller.run()
         tr = result.task_results[0]
@@ -1027,7 +1130,7 @@ class TestExceptionSafety:
         is no in-flight ``channel.send`` to receive the poison. The
         finally-block in ``_run_task`` is the only place this exception
         is observable, so a ``pass`` there silently drops it. ``stop_reason``
-        stays as the legitimate ``"done"`` (the task did complete); the
+        stays as the legitimate ``"success"`` (the task did complete); the
         traceback lands in ``error`` for offline inspection.
         """
 
@@ -1046,7 +1149,7 @@ class TestExceptionSafety:
         result = await controller.run()
         tr = result.task_results[0]
         # The run loop itself completed normally (one successful run, done).
-        assert tr.stop_reason == "done"
+        assert tr.stop_reason == "success"
         assert len(tr.runs) == 1
         assert tr.runs[0].evaluation.success is True
         # The post-loop exception is captured on TaskResult.error so it
@@ -1137,6 +1240,8 @@ class TestRunLoopEdgeCases:
             target_factory=TargetFactory.singleton(StubTarget()),
             security_claim=SecurityClaim.from_tasks([AlternatingSuccessTask()]),
             llm_config=STUB_LLM_CONFIG,
+            # This test is ABOUT what happens after a win, so it must keep running.
+            stop_on_success=False,
         )
         result = await controller.run()
         tr = result.task_results[0]
@@ -1149,7 +1254,7 @@ class TestRunLoopEdgeCases:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: NeverDoneOptimizer(),
             target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=3,
         )
@@ -1508,6 +1613,8 @@ class TestScopedScoreFiltering:
             security_claim=SecurityClaim.from_tasks([_ScopedScoresTask()]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=2,
+            # Run 2 must happen so it can read run 1's feedback.
+            stop_on_success=False,
         )
         await controller.run()
 
@@ -1819,7 +1926,7 @@ class TestParallelExecution:
         assert len(trs) == 4
         assert trs[0].stop_reason == "error"
         for tr in trs[1:]:
-            assert tr.stop_reason == "done"
+            assert tr.stop_reason == "success"
             assert tr.success is True
 
     async def test_factory_create_raises_is_contained_per_task(self) -> None:
@@ -1855,7 +1962,7 @@ class TestParallelExecution:
         assert trs[0].success is False
         assert trs[0].runs == []
         for tr in trs[1:]:
-            assert tr.stop_reason == "done"
+            assert tr.stop_reason == "success"
             assert tr.success is True
 
 

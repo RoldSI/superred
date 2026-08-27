@@ -137,7 +137,7 @@ async def test_publish_task_failure_is_swallowed(
 
     # The in-memory result is preserved even though persistence failed.
     assert len(result.task_results) == 1
-    assert result.task_results[0].stop_reason == "done"
+    assert result.task_results[0].stop_reason == "success"
 
 
 async def test_finalize_failure_is_swallowed(

@@ -701,7 +701,7 @@ class Dashboard:
         lane.in_flight = max(0, lane.in_flight - 1)
         lane.n_terminal += 1
         lane.total_cost += ev.cost_usd
-        completed = ev.stop_reason in ("done", "max_runs", "budget_exhausted")
+        completed = ev.stop_reason in ("success", "done", "max_runs", "budget_exhausted")
         # Count a success only among completed tasks so the lane ASR
         # (n_success / n_completed) stays in [0, 1]: a task can be success=True
         # yet stop_reason="error" (goal met, then reset_ephemeral_state failed).

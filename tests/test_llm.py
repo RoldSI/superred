@@ -505,7 +505,7 @@ class TestBudgetExhaustionGraceful:
             scope=scope,
             optimizer_factory=lambda: LLMEveryRunOptimizer(done=False),
             target_factory=TargetFactory.singleton(target),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=config,
             task_cost_cap_usd=1.00,
             max_runs_per_task=10,

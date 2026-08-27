@@ -121,6 +121,9 @@ async def test_lifecycle_sequence_success_and_skip() -> None:
         target_factory=TargetFactory(create=StubTarget),
         security_claim=SecurityClaim.from_tasks([StubTask(goal_text="alpha"), NotApplicableTask()]),
         scope=EXTERNAL_SCOPE,
+        # This asserts the MULTI-run lifecycle sequence, so the task must be
+        # allowed its second run after winning the first.
+        stop_on_success=False,
     )
     await controller.run(reporter=reporter)
 
