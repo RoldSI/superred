@@ -358,7 +358,7 @@ class TestResolverContainment:
         assert result.skipped_tasks == [skip_me]
         # Sibling unaffected, runs normally.
         assert [tr.task for tr in result.task_results] == [good]
-        assert result.task_results[0].stop_reason == "done"
+        assert result.task_results[0].stop_reason == "success"
         assert result.task_results[0].success is True
 
     async def test_resolver_generic_exception_is_contained_error(self) -> None:
@@ -391,7 +391,7 @@ class TestResolverContainment:
         # result records an empty scope (not a resolved one).
         assert by_goal["boom"].scope == frozenset()
         assert by_goal["boom"].read_only == frozenset()
-        assert by_goal["fine"].stop_reason == "done"
+        assert by_goal["fine"].stop_reason == "success"
         assert result.skipped_tasks == []
 
     async def test_resolved_scope_recorded_on_post_resolution_error(self) -> None:
@@ -446,7 +446,7 @@ class TestResolverContainment:
         result = await controller.run()
         assert result.skipped_tasks == [opt_out]
         assert [tr.task for tr in result.task_results] == [keep_me]
-        assert result.task_results[0].stop_reason == "done"
+        assert result.task_results[0].stop_reason == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -885,7 +885,7 @@ class TestReadOnlyResolverTruthTable:
         )
         result = await controller.run()
         tr = result.task_results[0]
-        assert tr.stop_reason == "done"
+        assert tr.stop_reason == "success"
         assert tr.scope == frozenset()
         assert tr.read_only == EXTERNAL_SCOPE
         # Nothing is injectable, so the optimizer is never offered the event.
@@ -914,7 +914,7 @@ class TestReadOnlyResolverTruthTable:
         )
         result = await controller.run()
         tr = result.task_results[0]
-        assert tr.stop_reason == "done"
+        assert tr.stop_reason == "success"
         assert tr.scope == EXTERNAL_SCOPE
         assert tr.read_only == frozenset()
         # The write-scoped controllable was offered and injected.
@@ -949,7 +949,7 @@ class TestReadOnlyResolverTruthTable:
         assert result.skipped_tasks == [skip_me]
         # good: W=EXTERNAL, R=empty -> runs.
         assert [tr.task for tr in result.task_results] == [good]
-        assert result.task_results[0].stop_reason == "done"
+        assert result.task_results[0].stop_reason == "success"
         assert result.task_results[0].success is True
 
     async def test_row7_both_resolvers_empty_skips_task(self) -> None:
@@ -978,7 +978,7 @@ class TestReadOnlyResolverTruthTable:
         # skip_me: visibility empty -> skipped.
         assert result.skipped_tasks == [skip_me]
         assert [tr.task for tr in result.task_results] == [good]
-        assert result.task_results[0].stop_reason == "done"
+        assert result.task_results[0].stop_reason == "success"
         assert result.task_results[0].success is True
 
 
@@ -1090,5 +1090,5 @@ class TestReadOnlyResolverContainment:
         assert "read_only resolver exploded" in by_goal["boom"].error
         assert "RuntimeError" in by_goal["boom"].error
         assert by_goal["boom"].runs == []
-        assert by_goal["fine"].stop_reason == "done"
+        assert by_goal["fine"].stop_reason == "success"
         assert result.skipped_tasks == []

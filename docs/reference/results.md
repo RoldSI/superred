@@ -50,8 +50,8 @@ All runs for one task.
 - `best_evaluation: EvaluationResult` the evaluation that produced `best_score`.
 - `success: bool` whether any run achieved the goal.
 - `llm_usage: LLMUsage` total optimizer usage for the task.
-- `stop_reason: Literal["done", "max_runs", "budget_exhausted", "error", "timeout"]` why the
-  loop ended (see below).
+- `stop_reason: Literal["success", "done", "max_runs", "budget_exhausted", "error", "timeout"]`
+  why the loop ended (see below).
 - `scope: Scope` (default `frozenset()`) the read & write scope enforced for
   **this** task. In static mode it equals the Controller's `scope`; with a
   resolver it is the per-task resolved scope.
@@ -67,12 +67,29 @@ All runs for one task.
   **resumed** task, whose `runs` list is intentionally empty (its trajectories
   stay on disk, unread); `None` means "use `len(runs)`".
 
-The five **stop reasons**: `"done"` (the optimizer returned
-`RunEndResponse(done=True)`), `"max_runs"` (hit `max_runs_per_task`),
+The six **stop reasons**: `"success"` (the security claim judged a run
+successful and `stop_on_success` ended the task), `"done"` (the optimizer
+returned `RunEndResponse(done=True)`), `"max_runs"` (hit `max_runs_per_task`),
 `"budget_exhausted"` (a `BudgetExhaustedError` ended the loop), `"error"` (an
 unexpected exception escaped the optimizer, target, or evaluator and the task was
 abandoned with its partial trajectory preserved), and `"timeout"` (the per-task
 wall-clock cap `task_time_cap_s` expired and the task was cancelled).
+
+`"success"` and `"done"` are both "the task finished on purpose", but they are
+not interchangeable. `"success"` is the **claim's** verdict; `"done"` is the
+**attacker's** self-report, which an attacker that simply gave up also returns.
+Only `"success"` tells you the task ended because it was won. When both would
+apply, `"success"` wins.
+
+`"success"` counts as a completed task for the ASR exactly as `"done"` does.
+
+> **Behaviour change.** `stop_on_success` defaults to `True`, so a task that
+> previously ran on after a win now ends at it. Results written before this
+> record such a task under whatever reason it eventually stopped for — usually
+> `"done"` or `"max_runs"`, and `"timeout"` if the cap caught it — so run counts
+> and stop reasons are not directly comparable across the change. ASR is
+> unaffected: `success` latched then and latches now. Pass
+> `stop_on_success=False` to reproduce the old loop exactly.
 
 A timed-out task **keeps the runs it had already completed and had judged**,
 with their evaluations, their trajectories, and the attacker spend they cost.

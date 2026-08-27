@@ -355,7 +355,7 @@ class TestControllerRunMutations:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(StubTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=3,
         )
@@ -946,7 +946,7 @@ class TestBudgetExhaustedStopsTask:
             scope=EXTERNAL_SCOPE,
             optimizer_factory=lambda: StubOptimizer(done=False),
             target_factory=TargetFactory.singleton(BudgetBlowingTarget()),
-            security_claim=SecurityClaim.from_tasks([StubTask()]),
+            security_claim=SecurityClaim.from_tasks([StubTask(success=False)]),
             llm_config=STUB_LLM_CONFIG,
             max_runs_per_task=10,
         )

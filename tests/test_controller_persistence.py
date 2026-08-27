@@ -152,7 +152,7 @@ async def test_full_v4_tree(tmp_path: Path) -> None:
     assert task1["goal"] == "alpha goal"
     assert task1["status"] == "success"
     assert task1["success"] is True
-    assert task1["stop_reason"] == "done"
+    assert task1["stop_reason"] == "success"
     assert task1["scope"] == ["external"]
     assert task1["read_only"] == []
     assert task1["n_runs"] == 1
@@ -173,7 +173,7 @@ async def test_full_v4_tree(tmp_path: Path) -> None:
     assert run["primary_score"] == 0.8
     assert run["success"] is True
     assert run["evaluated"] is True
-    assert run["done"] is True
+    assert run["success"] is True
     assert run["usage_delta"] == {"calls": 0, "cost": 0.0}
     assert run["usage_cumulative"] == {"calls": 0, "cost": 0.0}
     assert run["trajectory"] == "trajectories/run_00001.json"
@@ -293,4 +293,4 @@ async def test_persist_false_writes_nothing(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
     # The run still completed normally and returned a result.
     assert len(result.task_results) == 1
-    assert result.task_results[0].stop_reason == "done"
+    assert result.task_results[0].stop_reason == "success"
