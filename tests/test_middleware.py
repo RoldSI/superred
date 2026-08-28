@@ -255,3 +255,43 @@ class TestTrajectoryRecorder:
     @staticmethod
     async def _unreachable_handler(event: Event) -> EventResponse:
         raise AssertionError("Should not be called for out-of-scope events")
+
+
+# ---------------------------------------------------------------------------
+# Who declined: the scope filter, or the optimizer?
+# ---------------------------------------------------------------------------
+
+
+async def test_scope_filter_marks_its_own_declines() -> None:
+    """A framework decline must be distinguishable from an attacker decline.
+
+    Both are a ``ControllableNoInjection``. Without ``declined_by`` they are
+    identical on the trajectory, and "the attacker had no access here" reads
+    exactly like "the attacker had access and passed" -- opposite findings.
+    """
+    out_of_scope = Controllable(name="c", security_domain=SIBLING_TAG)
+
+    async def handler(event: Event) -> EventResponse:  # pragma: no cover - never reached
+        raise AssertionError("the optimizer must not be consulted for an out-of-scope event")
+
+    filtered = security_domain_filter(frozenset({CHILD_TAG}))(handler)
+    resp = await filtered(ControllablePreCallEvent(controllable=out_of_scope, request="q"))
+
+    assert isinstance(resp, ControllableNoInjection)
+    assert resp.declined_by == "scope"
+
+
+async def test_an_optimizer_decline_defaults_to_optimizer() -> None:
+    """In-scope events reach the handler, whose decline stays attributed to it."""
+    in_scope = Controllable(name="c", security_domain=CHILD_TAG)
+
+    async def handler(event: Event) -> EventResponse:
+        assert isinstance(event, ControllablePreCallEvent)
+        # Constructed the way every optimizer constructs it: no declined_by.
+        return ControllableNoInjection(event=event, controllable=event.controllable)
+
+    filtered = security_domain_filter(frozenset({CHILD_TAG}))(handler)
+    resp = await filtered(ControllablePreCallEvent(controllable=in_scope, request="q"))
+
+    assert isinstance(resp, ControllableNoInjection)
+    assert resp.declined_by == "optimizer"

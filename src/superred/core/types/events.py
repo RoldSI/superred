@@ -10,7 +10,7 @@ from the referenced observable/controllable via ``__post_init__``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult
@@ -108,16 +108,31 @@ class ControllableInjection(EventResponse):
 
 @dataclass(frozen=True, kw_only=True)
 class ControllableNoInjection(EventResponse):
-    """No injection — controllable is outside the active security domain scope.
+    """No injection: this controllable was left unmodified.
 
-    Returned by the controller when an event's controllable falls outside
-    the security domain tag being tested, so the optimizer is not consulted.
+    Two very different things produce this, and telling them apart is what
+    ``declined_by`` is for:
+
+    - ``"scope"`` — the controller's :func:`security_domain_filter` declined
+      the event because the controllable is outside the threat model's write
+      scope (or is read-only). **The optimizer was never consulted.**
+    - ``"optimizer"`` — the optimizer was consulted and chose not to inject.
+
+    Without the distinction the two are identical on the trajectory, and a
+    zero-injection result cannot be read: "the attacker had no access here"
+    and "the attacker had access and passed" are opposite findings, and only
+    the second says anything about the attacker. Analyses that conflated them
+    have drawn the wrong conclusion from a results tree.
 
     Attributes:
         controllable: The injection point that was not modified.
+        declined_by: Who declined. Defaults to ``"optimizer"``, which is
+            correct for every optimizer-constructed response; the scope
+            filter sets ``"scope"`` explicitly.
     """
 
     controllable: Controllable
+    declined_by: Literal["scope", "optimizer"] = "optimizer"
 
 
 # -- Run lifecycle events ----------------------------------------------------

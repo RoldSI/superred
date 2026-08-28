@@ -92,7 +92,12 @@ except ImportError:  # pragma: no cover - platform-specific
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+# 5: ``ControllableNoInjection`` entries carry ``declined_by``. A tree at
+# version 4 or lower does NOT record who declined, and the field must be
+# read as UNKNOWN there, never defaulted to "optimizer": defaulting would
+# silently re-commit the very conflation the field exists to prevent, by
+# reporting the framework's own scope policy as attacker behaviour.
+SCHEMA_VERSION = 5
 
 _SAFE_SEGMENT_RE = re.compile(r"[^a-z0-9._-]")
 _SLUG_MAXLEN = 24
@@ -337,6 +342,7 @@ def _serialize_response(resp: EventResponse) -> dict[str, Any]:
         payload["value"] = resp.value
     elif isinstance(resp, ControllableNoInjection):
         payload["controllable"] = resp.controllable.name
+        payload["declined_by"] = resp.declined_by
     elif isinstance(resp, RunEndResponse):
         payload["done"] = resp.done
     return payload

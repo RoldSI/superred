@@ -941,7 +941,12 @@ class TestPerTaskScopeEndToEnd:
         run-level scope/read_only, and each per-task ``task.json`` records THAT
         task's own resolved scope -- so the two task files differ.
         """
-        from superred.core.persistence import iter_task_dirs, load_result, load_task
+        from superred.core.persistence import (
+            SCHEMA_VERSION,
+            iter_task_dirs,
+            load_result,
+            load_task,
+        )
 
         task_user = SecretExtractionTask(secret="PERSIST_USER")
         task_internal = SecretExtractionTask(secret="PERSIST_INTERNAL")
@@ -978,7 +983,7 @@ class TestPerTaskScopeEndToEnd:
         # Claim-level result.json: label carries identity; run-level
         # scope/read_only are empty arrays (dynamic mode has no single scope).
         result = load_result(exp_dir)
-        assert result["schema_version"] == 4
+        assert result["schema_version"] == SCHEMA_VERSION
         exp_block = result["experiment"]
         assert exp_block["scope_label"] == "persist label/v1"
         assert exp_block["scope"] == []
