@@ -68,7 +68,7 @@ All runs for one task.
   stay on disk, unread); `None` means "use `len(runs)`".
 
 The six **stop reasons**: `"success"` (the security claim judged a run
-successful and `stop_on_success` ended the task), `"done"` (the optimizer
+successful and the controller ended the task), `"done"` (the optimizer
 returned `RunEndResponse(done=True)`), `"max_runs"` (hit `max_runs_per_task`),
 `"budget_exhausted"` (a `BudgetExhaustedError` ended the loop), `"error"` (an
 unexpected exception escaped the optimizer, target, or evaluator and the task was
@@ -83,13 +83,12 @@ apply, `"success"` wins.
 
 `"success"` counts as a completed task for the ASR exactly as `"done"` does.
 
-> **Behaviour change.** `stop_on_success` defaults to `True`, so a task that
-> previously ran on after a win now ends at it. Results written before this
-> record such a task under whatever reason it eventually stopped for — usually
-> `"done"` or `"max_runs"`, and `"timeout"` if the cap caught it — so run counts
-> and stop reasons are not directly comparable across the change. ASR is
-> unaffected: `success` latched then and latches now. Pass
-> `stop_on_success=False` to reproduce the old loop exactly.
+> **Behaviour change.** A task that previously ran on after a win now ends at
+> it, unconditionally. Results written before this record such a task under
+> whatever reason it eventually stopped for, usually `"done"` or `"max_runs"`,
+> and `"timeout"` if the cap caught it, so run counts and stop reasons are not
+> directly comparable across the change. ASR is unaffected: `success` latched
+> then and latches now.
 
 A timed-out task **keeps the runs it had already completed and had judged**,
 with their evaluations, their trajectories, and the attacker spend they cost.

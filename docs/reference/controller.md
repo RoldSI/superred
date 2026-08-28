@@ -171,20 +171,20 @@ For each task:
    `target.teardown()`, and the instance is discarded.
 
 A **run** is one full pass of the target plus its evaluation. A task may take many
-runs; the loop ends when the security claim judges a run successful (unless
-`stop_on_success=False`), the optimizer returns `RunEndResponse(done=True)`, a
+runs; the loop ends when the security claim judges a run successful, the
+optimizer returns `RunEndResponse(done=True)`, a
 `BudgetExhaustedError` is raised, or `max_runs_per_task` is reached. The
 `stop_reason` on each [`TaskResult`](/reference/results#taskresult) records which.
 
 ### Stopping on the claim's verdict
 
-`stop_on_success` (default `True`) ends a task as soon as the security claim
-returns `success=True`, without consulting the optimizer. The claim, not the
-attacker, decides success, so the attacker does not get to decide when a won
-task is over.
+A task ends as soon as the security claim returns `success=True`, without
+consulting the optimizer. The claim, not the attacker, decides success, so the
+attacker does not get to decide when a won task is over. This is unconditional:
+there is no way to run on after a win.
 
-This matters most under a **blind threat model**. With `include_feedback=False`
-the optimizer is never told it won, so it cannot stop itself, and it will spend
+It matters most under a **blind threat model**. With `include_feedback=False`
+the optimizer is never told it won, so it cannot stop itself, and it would spend
 its entire run budget attacking a target it already broke. Ending the task leaks
 nothing back to it: the optimizer is torn down and no evaluation is ever sent, so
 a blind threat model stays blind.
@@ -193,13 +193,10 @@ The task also skips its final `reset_ephemeral_state()`, since there is no next
 run to reset for. For a container-backed target that reset can be the single most
 expensive step in the loop.
 
-Set `stop_on_success=False` when you are measuring attack **reliability** — how
-many of N attempts succeed, rather than whether any did. The task then ends on
-the optimizer's `done`, the run cap, or a budget, as it did before.
-
-Throughout, the Controller streams live progress to a
-[reporter](/reference/results#live-progress-reporting) and, unless `persist=False`,
-[persists](/reference/results#persistence) each task the moment it finishes.
+One consequence worth knowing when reading results: a won task can no longer
+also be a timed-out or budget-exhausted one, because it stops at the win. A
+`TaskResult` with `success=True` therefore always carries
+`stop_reason="success"`.
 
 ## Security domain filtering
 

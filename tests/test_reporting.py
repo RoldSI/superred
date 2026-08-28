@@ -113,17 +113,20 @@ def _ctx(**overrides: Any) -> ThreatModelContext:
 
 
 async def test_lifecycle_sequence_success_and_skip() -> None:
-    """A success task (2 runs, done) + a NotApplicable task (skipped) produces
-    the full ordered lifecycle and matching end aggregates."""
+    """A multi-run task (2 runs, done) + a NotApplicable task (skipped)
+    produces the full ordered lifecycle and matching end aggregates.
+
+    The task deliberately does not win: a won task ends at run 1, and this
+    exercises the MULTI-run sequence.
+    """
     reporter = RecordingReporter()
     controller = Controller(
         optimizer_factory=lambda: CountingOptimizer(stop_after=2),
         target_factory=TargetFactory(create=StubTarget),
-        security_claim=SecurityClaim.from_tasks([StubTask(goal_text="alpha"), NotApplicableTask()]),
+        security_claim=SecurityClaim.from_tasks(
+            [StubTask(goal_text="alpha", success=False), NotApplicableTask()]
+        ),
         scope=EXTERNAL_SCOPE,
-        # This asserts the MULTI-run lifecycle sequence, so the task must be
-        # allowed its second run after winning the first.
-        stop_on_success=False,
     )
     await controller.run(reporter=reporter)
 
@@ -142,7 +145,7 @@ async def test_lifecycle_sequence_success_and_skip() -> None:
     completes = reporter.events("task_complete")
     assert [ev.task_index for ev in completes] == [1]
     assert completes[0].stop_reason == "done"
-    assert completes[0].success is True
+    assert completes[0].success is False
 
     skips = reporter.events("task_skipped")
     assert [ev.task_index for ev in skips] == [2]
@@ -163,9 +166,9 @@ async def test_lifecycle_sequence_success_and_skip() -> None:
     end = reporter.events("end")[0]
     assert end.n_tasks == 1
     assert end.n_completed == 1
-    assert end.n_success == 1
+    assert end.n_success == 0
     assert end.n_skipped == 1
-    assert end.asr == 1.0
+    assert end.asr == 0.0
 
 
 async def test_lifecycle_ordering_within_task() -> None:

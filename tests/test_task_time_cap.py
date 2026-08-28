@@ -455,24 +455,6 @@ async def test_a_truncated_task_keeps_the_runs_it_completed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_truncated_task_reports_a_success_it_actually_achieved() -> None:
-    controller = _controller(
-        target_factory=TargetFactory(create=lambda: TruncatedTarget(runs_before_hang=1)),
-        tasks=[StubTask(score=1.0, success=True)],
-        cap=0.5,
-        # The scenario IS a win followed by a hang, so the task must not stop
-        # on the win: that is what makes it a truncated-but-successful record.
-        stop_on_success=False,
-    )
-    result = await asyncio.wait_for(controller.run(), timeout=20)
-
-    tr = result.task_results[0]
-    assert tr.stop_reason == "timeout"
-    assert tr.success is True
-    assert len(tr.runs) == 1
-
-
-@pytest.mark.asyncio
 async def test_the_cap_bounds_each_task_independently() -> None:
     """Three hanging tasks each time out; one slow task cannot consume another's budget."""
     controller = _controller(
@@ -508,11 +490,9 @@ async def test_attacker_spend_survives_the_cancellation() -> None:
     ):
         controller = _controller(
             target_factory=TargetFactory(create=lambda: TruncatedTarget(runs_before_hang=1)),
-            tasks=[StubTask()],
+            tasks=[StubTask(success=False)],
             cap=0.5,
             optimizer_factory=SpendingOptimizer,
-            # The cap must be what ends this task, so the win must not.
-            stop_on_success=False,
         )
         result = await asyncio.wait_for(controller.run(), timeout=20)
 
