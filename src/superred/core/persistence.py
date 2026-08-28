@@ -210,13 +210,16 @@ class ExperimentMeta:
             "task_cost_cap_usd": self.task_cost_cap_usd,
             "max_runs_per_task": self.max_runs_per_task,
             "include_feedback": self.include_feedback,
-            # Keyed for the same reason as include_feedback: it changes what
-            # is measured. Without it a reliability run (stop_on_success=False)
-            # resolves to the stop-on-win directory, and because a won task is
-            # persisted with a KEPT status, resume returns that tree verbatim
-            # and executes nothing.
-            "stop_on_success": self.stop_on_success,
         }
+        # Keyed only when DISABLED. It changes what is measured, so the two
+        # regimes must not share a directory: a won task is persisted with a
+        # KEPT status, so a reliability run (stop_on_success=False) that
+        # resolved to the stop-on-win tree would resume it and execute nothing.
+        # But adding a key unconditionally changes the digest even at the
+        # default, which would orphan every results tree written before this.
+        # Omitting it at the default keeps those hashes exactly as they were.
+        if not self.stop_on_success:
+            identity["stop_on_success"] = False
         canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:_HASH_LEN]
 

@@ -750,3 +750,33 @@ def test_experiment_block_records_stop_on_success() -> None:
         ).experiment_block()["stop_on_success"]
         is True
     )
+
+
+def test_default_identity_hash_is_frozen() -> None:
+    """Pins the on-disk directory name for the default configuration.
+
+    ``identity_hash`` hashes a dict, so ADDING A KEY changes the digest even
+    when the value is the default. Every prior results tree would then be
+    orphaned: ``dirname()`` resolves somewhere new, ``plan_resume`` sees a
+    fresh experiment, and finished work is recomputed. The whole existing
+    suite passed with exactly that change in it, because every other test
+    asserts only that a field does or does not CHANGE the hash, never what it
+    IS. If this test fails, do not update the constant: key the new field
+    conditionally so the default keeps this digest.
+    """
+    meta = ExperimentMeta(attacker="a", target="t", claim="c", model="m", scope=("external",))
+    assert meta.identity_hash() == "ef26fece"
+
+
+def test_stop_on_success_default_does_not_rekey_existing_trees() -> None:
+    """The default regime must hash exactly as it did before the flag existed."""
+    default = ExperimentMeta(attacker="a", target="t", claim="c", model="m", scope=("external",))
+    explicit = ExperimentMeta(
+        attacker="a",
+        target="t",
+        claim="c",
+        model="m",
+        scope=("external",),
+        stop_on_success=True,
+    )
+    assert default.identity_hash() == explicit.identity_hash() == "ef26fece"

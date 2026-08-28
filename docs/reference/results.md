@@ -137,7 +137,7 @@ readable data.)
   list scope tags), taken from `attacker_label` / `target_label` / `claim_label`,
   each falling back to a factory or class name. `{hash8}` is eight hex of a
   sha256 over the **measurement identity** (attacker, target, claim, model, scope,
-  read_only, budget, max_runs, feedback, stop_on_success), so two distinct threat models never
+  read_only, budget, max_runs, feedback, and stop_on_success when it is disabled), so two distinct threat models never
   collide and an identical re-run resolves to the same folder (and resumes). The
   schema version is deliberately **excluded** from the identity, so a framework
   upgrade still resumes a prior run. `task_time_cap_s` is excluded too -- a
