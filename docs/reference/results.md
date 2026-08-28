@@ -101,7 +101,9 @@ nothing. When on, each run lands in one self-describing directory tree that the
 [reader API](#reading-results-back), the [resume engine](#resume), and the
 [web report](#the-web-report-and-superred-serve) all consume without hand-parsing.
 
-The current on-disk schema is **version 4** (`SCHEMA_VERSION = 4`). Note this is
+The current on-disk schema is **version 5** (`SCHEMA_VERSION = 5`). Version 5
+adds `declined_by` to every `ControllableNoInjection` entry; in a version 4 or
+older tree that field is absent and must be read as UNKNOWN, never defaulted. Note this is
 the persistence schema version, distinct from the framework version.
 
 {% include diagrams/d5.html %}
