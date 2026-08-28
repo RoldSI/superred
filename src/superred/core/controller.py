@@ -215,10 +215,10 @@ class TaskResult:
         success: Whether any run achieved the adversarial goal.
         llm_usage: Total optimizer LLM usage across all runs.
         stop_reason: Why the run loop ended.  ``"success"`` means the
-            security claim judged a run successful and ``stop_on_success``
-            ended the task; the optimizer's own ``done`` is not consulted in
-            that case, so this is distinguishable from an attacker that
-            stopped itself after winning.  ``"done"`` means the optimizer
+            security claim judged a run successful and the controller ended
+            the task; the optimizer's own ``done`` is not consulted in that
+            case, so this is distinguishable from an attacker that stopped
+            itself after winning.  ``"done"`` means the optimizer
             returned ``RunEndResponse(done=True)``.  ``"max_runs"`` means
             the safety cap ``max_runs_per_task`` was reached.
             ``"budget_exhausted"`` means a :class:`BudgetExhaustedError`
@@ -591,7 +591,7 @@ def _threat_model_end_event(
     # Count a success only among completed tasks: a task can be success=True yet
     # stop_reason="error" (goal met, then reset_ephemeral_state failed), so an
     # unguarded numerator would push ASR above 100%.  "success" must be in this
-    # tuple: it is the reason a stop_on_success task ends, so omitting it would
+    # tuple: it is the reason a won task ends, so omitting it would
     # drop every win from BOTH the numerator and the denominator.
     n_success = sum(1 for t in trs if t.success and t.stop_reason in completed_reasons)
     n_completed = sum(1 for t in trs if t.stop_reason in completed_reasons)
@@ -761,21 +761,6 @@ class Controller:
         max_runs_per_task: Safety limit on runs per task. ``None`` (default)
             uses the built-in cap of 100; pass an explicit positive int to
             override.
-        stop_on_success: End a task as soon as the security claim judges a
-            run successful, without consulting the optimizer's own
-            ``RunEndResponse``.  ``True`` (default) because the claim, not the
-            attacker, decides success: an attacker that cannot see the verdict
-            -- a blind threat model built with ``include_feedback=False`` --
-            would otherwise keep spending runs against a target it has already
-            broken, and record the task under whatever reason it eventually
-            stopped for.  Ending the task leaks nothing: the optimizer is torn
-            down and no evaluation is ever sent to it, so a blind threat model
-            stays blind.
-
-            Set ``False`` to keep running after a win, which is what an
-            experiment measuring attack RELIABILITY wants (how many of N
-            attempts succeed, not whether any did).  The task then ends on the
-            optimizer's ``done``, the run cap, or a budget, exactly as before.
         results_dir: Optional directory for persisted artifacts. When set,
             the completed threat model is written atomically to
             ``{results_dir}/{scope}__{model}.json`` (plus a sibling
@@ -805,7 +790,6 @@ class Controller:
         task_time_cap_s: float | None = None,
         max_runs_per_task: int | None = None,
         include_feedback: bool = True,
-        stop_on_success: bool = True,
         results_dir: str | Path | None = None,
         scope_label: str | None = None,
         persist: bool = True,
@@ -874,7 +858,6 @@ class Controller:
         self._task_time_cap_s: float | None = task_time_cap_s
         self._max_runs_per_task = resolved_max_runs
         self._include_feedback = include_feedback
-        self._stop_on_success = stop_on_success
         self._results_dir: Path | None = Path(results_dir) if results_dir is not None else None
         self._persist = persist
         self._overwrite = overwrite
@@ -1510,14 +1493,15 @@ class Controller:
                     _run_complete_event(index, task.goal.description, run_number, run_result)
                 )
 
-                # The claim, not the attacker, decides success.  Stop here
-                # rather than asking the optimizer, which under a blind threat
-                # model (``include_feedback=False``) is not told it has won and
-                # would spend the rest of its budget against an already-broken
-                # target.  Checked BEFORE reset_ephemeral_state: there is no
-                # next run to reset for, and targets already document that
-                # reset is not called after the final run.
-                if self._stop_on_success and evaluation.success:
+                # The claim, not the attacker, decides success, so the loop
+                # ends here without asking the optimizer.  Under a blind threat
+                # model (``include_feedback=False``) the optimizer is not told
+                # it has won and would otherwise spend the rest of its budget
+                # against an already-broken target.  Checked BEFORE
+                # reset_ephemeral_state: there is no next run to reset for, and
+                # targets already document that reset is not called after the
+                # final run.
+                if evaluation.success:
                     stop_reason = "success"
                     break
 
